@@ -318,3 +318,21 @@ body.dark .operation-location-status.valid.imprecise{background:#3d3218;color:#f
 @media(max-width:1100px){.advanced-filter-panel{grid-template-columns:repeat(3,minmax(0,1fr))}.advanced-filter-panel .btn{width:100%}}
 @media(max-width:720px){.advanced-filter-panel{grid-template-columns:1fr 1fr}.advanced-filter-panel label:nth-of-type(2){grid-column:1/-1}.advanced-filter-panel>[data-filter-count]{text-align:left}.operation-availability small{width:100%;margin-left:0}}
 @media(max-width:480px){.advanced-filter-panel{grid-template-columns:1fr}.advanced-filter-panel label:nth-of-type(2){grid-column:auto}}
+
+
+/* Versión 3.11.0 · carga rápida de documentos y boletas a Google Drive */
+.drive-fast-upload{display:grid;gap:10px;width:100%}
+.drive-file-picker{display:flex;align-items:center;gap:13px;padding:15px 16px;border:2px dashed color-mix(in srgb,var(--primary,#0e9f91) 38%,var(--border,#dce6ec));border-radius:16px;background:color-mix(in srgb,var(--primary,#0e9f91) 6%,var(--surface,#fff));cursor:pointer;transition:.18s ease}
+.drive-file-picker:hover{border-color:var(--primary,#0e9f91);transform:translateY(-1px)}
+.drive-file-picker input{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}
+.drive-file-picker>i{display:grid;place-items:center;width:42px;height:42px;flex:0 0 42px;border-radius:13px;background:var(--primary,#0e9f91);color:#fff;font-style:normal;font-size:21px;font-weight:900}
+.drive-file-picker span{display:grid;gap:3px}.drive-file-picker b{font-size:14px}.drive-file-picker small{color:var(--muted,#65798b);line-height:1.4}
+.drive-upload-status{display:flex;align-items:center;gap:9px;min-height:42px;padding:10px 12px;border:1px solid var(--border,#dce6ec);border-radius:12px;background:var(--surface,#fff);font-size:12px;color:var(--muted,#65798b)}
+.drive-upload-status>i{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;font-style:normal;font-weight:900;background:color-mix(in srgb,var(--border,#dce6ec) 60%,transparent)}
+.drive-upload-status.loading>i{border:2px solid var(--border,#dce6ec);border-top-color:var(--primary,#0e9f91);background:transparent;animation:spin .75s linear infinite}
+.drive-upload-status.ready{border-color:color-mix(in srgb,var(--success,#0e9f91) 38%,var(--border,#dce6ec));background:color-mix(in srgb,var(--success,#0e9f91) 8%,var(--surface,#fff));color:var(--text,#173047)}
+.drive-upload-status.ready>i{background:var(--success,#0e9f91);color:#fff}.drive-upload-status.error{border-color:color-mix(in srgb,var(--danger,#dc4d60) 38%,var(--border,#dce6ec));background:color-mix(in srgb,var(--danger,#dc4d60) 8%,var(--surface,#fff));color:var(--danger,#dc4d60)}
+.drive-upload-status a{font-weight:800;color:var(--primary,#0e9f91)}
+.drive-folder-links{display:flex;gap:8px;flex-wrap:wrap}.drive-folder-links a{display:inline-flex;align-items:center;min-height:34px;padding:7px 10px;border:1px solid var(--border,#dce6ec);border-radius:10px;background:var(--surface,#fff);color:var(--primary,#0e9f91);font-size:11px;font-weight:800;text-decoration:none}
+.drive-fast-upload>input[data-drive-url]{font-size:12px;background:color-mix(in srgb,var(--surface,#fff) 94%,var(--primary,#0e9f91) 6%)}
+@media(max-width:560px){.drive-file-picker{align-items:flex-start}.drive-folder-links{display:grid;grid-template-columns:1fr 1fr}.drive-folder-links a{justify-content:center;text-align:center}}

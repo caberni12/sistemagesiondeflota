@@ -1,5 +1,5 @@
 /**
- * Sistema de Gestión de Flotas 3.10.1
+ * Sistema de Gestión de Flotas 3.11.0
  * Archivo consolidado generado automáticamente.
  * Use este archivo o los módulos numerados, nunca ambos simultáneamente.
  */
@@ -10,7 +10,7 @@
  * Si el proyecto Apps Script está vinculado a la hoja, instalarSistema() guardará
  * automáticamente el ID. Para un proyecto independiente, pegue el ID aquí.
  */
-const VERSION_APLICACION = '3.10.1';
+const VERSION_APLICACION = '3.11.0';
 
 const CONFIGURACION_APLICACION = Object.freeze({
   ID_HOJA_CALCULO: '1onJJEN1rgz0N9GXOiUqV7ong4-nlbdAjzMyW_rumXCM',
@@ -29,6 +29,10 @@ const CONFIGURACION_APLICACION = Object.freeze({
   SEGUNDOS_CACHE_METADATOS_TIEMPO_REAL: 10,
   MAXIMO_FILAS_IMPORTACION: 1500,
   TOLERANCIA_GPS_IMPRECISA_FIN_METROS: 500,
+  ID_CARPETA_DOCUMENTOS_FOTOS: '1lWKDp7E28XU2D45ihvZctIq29Ji_aoq9',
+  ID_CARPETA_DOCUMENTOS_PDF: '1_2TgmSkzhRzcOQvw0_-ZiHfLTdUuQD2M',
+  ID_CARPETA_BOLETAS_COMBUSTIBLE: '1JE9_yNAo0gpCZ1CnAnXMN8bhNh6fZTPj',
+  MAXIMO_ARCHIVO_DRIVE_BYTES: 12582912,
 });
 
 const ESQUEMAS_APLICACION = Object.freeze({
@@ -164,6 +168,7 @@ function enrutarSolicitud_(request, event) {
     case 'limpiarDatosOperativos': return limpiarDatosOperativosServicio_(request, session);
     case 'importarMasivo': return importarMasivoServicio_(request, session);
     case 'registrarIpConexion': return registrarIpConexion_(request, session);
+    case 'subirArchivoDrive': return subirArchivoDrive_(request, session);
     default: throw new Error('ACCION_NO_ENCONTRADA');
   }
 }
@@ -1096,7 +1101,7 @@ function actualizarSistema() {
   try { repararModuloCheckin(); } catch (error) { Logger.log('Reparación de check-in: ' + error.message); }
   try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
   reiniciarCachesEjecucion_();
-  resultado.message = 'Sistema 3.10.1 actualizado: inicio de operación con captura GPS rápida, estructura, combustible, permisos, GPS, check-in y punto operacional verificados.';
+  resultado.message = 'Sistema 3.11.0 actualizado: inicio de operación con captura GPS rápida, estructura, combustible, permisos, GPS, check-in y punto operacional verificados.';
   return resultado;
 }
 
@@ -2036,6 +2041,89 @@ function obtenerDireccionCoordenadas_(latitude, longitude) {
 function mantencionesAbiertas_() {
   return listarRegistros_('MANTENCIONES', {}).filter(function(row) {
     return ['Programada','En proceso','Atrasada'].indexOf(row.ESTADO) >= 0;
+  });
+}
+
+/** ===== 15B_Archivos_Drive.gs ===== */
+/** Carga rápida y segura de archivos en las carpetas configuradas de Google Drive. */
+function subirArchivoDrive_(request, session) {
+  const data = request.datos || {};
+  const destino = String(data.DESTINO || '').trim().toUpperCase();
+  const destinos = {
+    DOCUMENTO_FOTO: {
+      folderId: CONFIGURACION_APLICACION.ID_CARPETA_DOCUMENTOS_FOTOS,
+      module: 'DOCUMENTOS',
+      mime: /^image\//i,
+      label: 'Fotos de documentos',
+    },
+    DOCUMENTO_PDF: {
+      folderId: CONFIGURACION_APLICACION.ID_CARPETA_DOCUMENTOS_PDF,
+      module: 'DOCUMENTOS',
+      mime: /^application\/pdf$/i,
+      label: 'PDF de documentos',
+    },
+    BOLETA_COMBUSTIBLE: {
+      folderId: CONFIGURACION_APLICACION.ID_CARPETA_BOLETAS_COMBUSTIBLE,
+      module: 'COMBUSTIBLE',
+      mime: /^image\//i,
+      label: 'Boletas de combustible',
+    },
+  };
+  const configDestino = destinos[destino];
+  if (!configDestino) throw new Error('DESTINO_ARCHIVO_INVALIDO');
+  const puedeCrear = tienePermiso_(session.user, configDestino.module, 'CREAR');
+  const puedeActualizar = tienePermiso_(session.user, configDestino.module, 'ACTUALIZAR');
+  if (!puedeCrear && !puedeActualizar) throw new Error('PERMISO_DENEGADO');
+
+  let base64 = String(data.ARCHIVO_BASE64 || '').trim();
+  let tipoMime = String(data.TIPO_MIME || '').trim().toLowerCase();
+  const matchDataUrl = base64.match(/^data:([^;,]+);base64,(.+)$/s);
+  if (matchDataUrl) {
+    tipoMime = String(matchDataUrl[1] || tipoMime).toLowerCase();
+    base64 = matchDataUrl[2];
+  }
+  if (!base64) throw new Error('ARCHIVO_REQUERIDO');
+  if (!tipoMime || !configDestino.mime.test(tipoMime)) throw new Error('FORMATO_ARCHIVO_DRIVE_INVALIDO');
+
+  let bytes;
+  try { bytes = Utilities.base64Decode(base64); }
+  catch (error) { throw new Error('ARCHIVO_BASE64_INVALIDO'); }
+  if (!bytes || !bytes.length) throw new Error('ARCHIVO_REQUERIDO');
+  if (bytes.length > Number(CONFIGURACION_APLICACION.MAXIMO_ARCHIVO_DRIVE_BYTES || 12582912)) {
+    throw new Error('ARCHIVO_DRIVE_DEMASIADO_GRANDE');
+  }
+
+  const original = String(data.NOMBRE_ARCHIVO || 'archivo').trim();
+  const seguro = original
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._ -]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .slice(0, 120) || 'archivo';
+  const contexto = String(data.CONTEXTO || '').trim()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._ -]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .slice(0, 60);
+  const sello = Utilities.formatDate(new Date(), CONFIGURACION_APLICACION.ZONA_HORARIA, 'yyyyMMdd_HHmmss');
+  const nombreFinal = (contexto ? contexto + ' - ' : '') + sello + ' - ' + seguro;
+
+  let folder;
+  try { folder = DriveApp.getFolderById(configDestino.folderId); }
+  catch (error) { throw new Error('CARPETA_DRIVE_NO_DISPONIBLE'); }
+  const file = folder.createFile(Utilities.newBlob(bytes, tipoMime, nombreFinal));
+  file.setDescription('Cargado desde el Sistema de Gestión de Flotas por ' + session.user.NOMBRE + ' (' + session.user.CORREO + '). Destino: ' + configDestino.label + '.');
+
+  registrarBitacora_(session.user, 'SUBIR_ARCHIVO', configDestino.module, file.getId(),
+    'Archivo cargado en ' + configDestino.label + ': ' + nombreFinal + '. Tamaño: ' + bytes.length + ' bytes.',
+    String(data.IP_PUBLICA || ''));
+  return ok_({
+    id: file.getId(),
+    nombre: file.getName(),
+    tipoMime: file.getMimeType(),
+    tamanoBytes: bytes.length,
+    url: file.getUrl(),
+    carpetaId: configDestino.folderId,
+    destino: destino,
   });
 }
 

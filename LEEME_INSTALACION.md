@@ -21,3 +21,10 @@
 
 ## Rendimiento 3.5.0
 El menú mantiene un solo iframe activo. Al cambiar de módulo, la vista se abre desde la memoria local y no se recargan todos los archivos comunes. Use el botón **Sincronizar** dentro de cada módulo para consultar nuevamente la base central. Para limpiar la memoria del navegador, cierre sesión o borre los datos del sitio.
+
+## Carpetas de Google Drive integradas
+- Fotos de documentos: `1lWKDp7E28XU2D45ihvZctIq29Ji_aoq9`
+- PDF de documentos: `1_2TgmSkzhRzcOQvw0_-ZiHfLTdUuQD2M`
+- Fotos de boletas de combustible: `1JE9_yNAo0gpCZ1CnAnXMN8bhNh6fZTPj`
+
+La cuenta que publica o ejecuta Google Apps Script debe tener permiso de edición en las tres carpetas. Las fotos se optimizan automáticamente en el navegador y comienzan a subirse apenas se seleccionan.

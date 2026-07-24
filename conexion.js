@@ -15,7 +15,7 @@
     validateVehicleQr:'validarQrVehiculo', createVehicleCheckin:'crearCheckinVehicular',
     reviewVehicleCheckin:'revisarCheckinVehicular', availableCheckins:'checkinsDisponibles',
     bulkImport:'importarMasivo', registerConnectionIp:'registrarIpConexion', fuelSummary:'resumenCombustible',
-    requestFuelDeletion:'solicitarEliminacionCombustible', resolveFuelDeletion:'resolverSolicitudEliminacionCombustible', deleteFuel:'eliminarCargaCombustible'
+    requestFuelDeletion:'solicitarEliminacionCombustible', resolveFuelDeletion:'resolverSolicitudEliminacionCombustible', deleteFuel:'eliminarCargaCombustible', uploadDriveFile:'subirArchivoDrive'
   });
   const recursosAplicacion = Object.freeze({
     users:'usuarios', roles:'roles', permissions:'permisos', vehicles:'vehiculos', drivers:'conductores',
@@ -293,6 +293,7 @@
       requestFuelDeletion: { actions:['fuelSummary'], resources:['fuelAuthorizations','audit'] },
       resolveFuelDeletion: { actions:['fuelSummary'], resources:['fuelAuthorizations','audit'] },
       deleteFuel: { actions:['dashboard','fuelSummary'], resources:['fuel','fuelAuthorizations','vehicles','audit'] },
+      uploadDriveFile: { actions:[], resources:['audit'] },
     };
     if (action === 'logout' || action === 'clearOperationalData') return limpiarCache();
     const impact = impacts[action];
@@ -460,7 +461,7 @@
   async function remoteRequest(action, payload) {
     if (!config.DIRECCION_APLICACION) throw new Error('DIRECCION_APLICACION_NO_CONFIGURADA');
     const controller = new AbortController();
-    const timeoutOperaciones=new Set(['operationsSummary','startOperation','finishOperation','editOperationAdmin','deleteOperationAdmin']);
+    const timeoutOperaciones=new Set(['operationsSummary','startOperation','finishOperation','editOperationAdmin','deleteOperationAdmin','uploadDriveFile']);
     const timeout=timeoutOperaciones.has(action)?Number(config.TIEMPO_ESPERA_OPERACIONES_MILISEGUNDOS||60000):Number(config.TIEMPO_ESPERA_MILISEGUNDOS||30000);
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
@@ -541,7 +542,7 @@
   async function localRequest(action, payload) {
     await Promise.resolve();
     switch (action) {
-      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.10.1', now:iso() };
+      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.11.0', now:iso() };
       case 'status': return {
         connected:true, needsSetup:activeRows(localDb.users).length === 0, spreadsheetName:'Base local del navegador',
         rows:{ users:activeRows(localDb.users).length, vehicles:activeRows(localDb.vehicles).length,
@@ -621,6 +622,7 @@
       case 'requestFuelDeletion': return localRequestFuelDeletion(payload);
       case 'resolveFuelDeletion': return localResolveFuelDeletion(payload);
       case 'deleteFuel': return localDeleteFuel(payload);
+      case 'uploadDriveFile': throw new Error('DRIVE_REQUIERE_CONEXION_CENTRAL');
       case 'clearOperationalData': return localClear(payload);
       default: throw new Error('ACCION_NO_ENCONTRADA');
     }
@@ -1125,7 +1127,7 @@
       alerts:{nombre:'Alertas',estado:'OK',detalle:`${activeRows(localDb.alerts).length} registros`},
       history:{nombre:'Historiales',estado:'OK',detalle:`${activeRows(localDb.history).length} eventos operativos · ${activeRows(localDb.checkins).length} check-ins`}
     };
-    return{version:'3.10.1',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
+    return{version:'3.11.0',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
   }
   function localRepairSystem(){
     const user=requireLocalUser();requireLocalPermission(user,'CONFIGURACION','ACTUALIZAR');

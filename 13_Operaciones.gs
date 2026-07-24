@@ -20,27 +20,11 @@ function distanciaGeograficaMetros_(lat1, lng1, lat2, lng2) {
 }
 
 function obtenerPuntoOperacionConfigurado_() {
-  const company = listarRegistros_('EMPRESAS', {})[0] || null;
-  if (!company) throw new Error('PUNTO_OPERACION_NO_CONFIGURADO');
-  const enabled = String(company.VALIDAR_UBICACION_OPERACION || 'SI') !== 'NO';
-  if (!enabled) throw new Error('VALIDACION_UBICACION_DESACTIVADA');
-  const latitudeText = String(company.PUNTO_OPERACION_LATITUD == null ? '' : company.PUNTO_OPERACION_LATITUD).trim();
-  const longitudeText = String(company.PUNTO_OPERACION_LONGITUD == null ? '' : company.PUNTO_OPERACION_LONGITUD).trim();
-  const latitude = Number(latitudeText);
-  const longitude = Number(longitudeText);
-  if (!latitudeText || !longitudeText || !isFinite(latitude) || !isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
-    throw new Error('PUNTO_OPERACION_NO_CONFIGURADO');
-  }
-  return {
-    NOMBRE: String(company.PUNTO_OPERACION_NOMBRE || 'Base operacional').trim(),
-    DIRECCION: String(company.PUNTO_OPERACION_DIRECCION || company.DIRECCION || 'Base operacional').trim(),
-    LATITUD: latitude,
-    LONGITUD: longitude,
-    RADIO_INICIO_METROS: Math.max(10, Number(company.RADIO_INICIO_METROS || 150)),
-    RADIO_FIN_METROS: Math.max(10, Number(company.RADIO_FIN_METROS || 150)),
-    PRECISION_GPS_MAXIMA_METROS: Math.max(10, Number(company.PRECISION_GPS_MAXIMA_METROS || 120)),
-    RETORNO_BASE_OBLIGATORIO: String(company.RETORNO_BASE_OBLIGATORIO || 'SI') !== 'NO' ? 'SI' : 'NO'
-  };
+  const company = obtenerEmpresaPrincipal_();
+  if (company && String(company.VALIDAR_UBICACION_OPERACION || 'SI') === 'NO') throw new Error('VALIDACION_UBICACION_DESACTIVADA');
+  const point = puntoOperacionDesdeEmpresa_(company) || obtenerRespaldoPuntoOperacion_();
+  if (!point) throw new Error('PUNTO_OPERACION_NO_CONFIGURADO');
+  return point;
 }
 
 function validarUbicacionEnPuntoOperacion_(data, point, phase) {

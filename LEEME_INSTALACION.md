@@ -1,3 +1,15 @@
+# Corrección obligatoria 3.1.2 — Punto operacional
+
+1. Reemplace los archivos de la versión anterior.
+2. En Google Apps Script use todos los `.gs` numerados **o** solamente `Codigo_Completo.gs`. No combine ambas alternativas.
+3. Ejecute `actualizarSistema()`. La actualización intentará restaurar automáticamente cualquier punto operacional guardado anteriormente.
+4. Publique una nueva versión del despliegue web y copie la dirección terminada en `/exec` a `configuracion.js`.
+5. Recargue con `Ctrl + F5`.
+6. Ingrese como Administrador y abra **Operaciones**. Si la base sigue pendiente, estando físicamente en ella pulse **Configurar con mi ubicación**.
+7. El mensaje de éxito debe indicar que el punto fue confirmado en la base central.
+
+---
+
 # Sistema de Gestión de Flotas 2.8.0 — carpeta única
 
 ## Flujo de la aplicación
@@ -106,3 +118,16 @@ Después de copiar el backend, ejecute `actualizarSistema()`. Opcionalmente ejec
 5. Guarde la configuración.
 6. Los usuarios deberán permitir el GPS del navegador para iniciar y finalizar operaciones.
 7. Las operaciones sin ruta regresan al mismo punto base; las rutas asignadas mantienen su destino y también deben retornar a la base para cerrar.
+
+
+## Reparación integral 3.1.1
+
+Después de reemplazar el frontend y Google Apps Script:
+
+1. Ejecute `actualizarSistema()` en el editor de Apps Script.
+2. Publique una versión nueva del despliegue web.
+3. Ingrese como Administrador a **Configuración → Diagnóstico y reparación**.
+4. Pulse **Reparar estructura** y luego **Revisar sistema**.
+5. Puede asignar rutas inmediatamente. Configure el punto operacional antes de iniciar o finalizar operaciones, porque la geocerca no se aplica a la planificación de rutas.
+
+La reparación reordena columnas por nombre, crea hojas faltantes, actualiza permisos y catálogos, reconstruye `GPS_ACTUAL` y verifica `CHECKINS`. No elimina registros.

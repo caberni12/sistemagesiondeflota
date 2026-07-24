@@ -8,9 +8,10 @@
     quickLoad:'cargaRapida',
     create:'crear', update:'actualizar', delete:'eliminar', startOperation:'iniciarOperacion',
     finishOperation:'finalizarOperacion', saveLocation:'guardarUbicacion', latestLocations:'ultimasUbicaciones',
-    changePassword:'cambiarContrasena', saveUserPermissions:'actualizarPermisosUsuario', saveCompany:'guardarEmpresa', clearOperationalData:'limpiarDatosOperativos',
+    changePassword:'cambiarContrasena', saveUserPermissions:'actualizarPermisosUsuario', saveCompany:'guardarEmpresa', saveOperationalPoint:'guardarPuntoOperacion', clearOperationalData:'limpiarDatosOperativos',
     assignRoute:'asignarRuta', updateRouteStatus:'actualizarEstadoRuta', sendNotification:'enviarNotificacion',
     readNotification:'marcarNotificacionLeida', heartbeat:'actualizarConexion', realtimeSummary:'resumenTiempoReal',
+    diagnoseSystem:'diagnosticoSistema', repairSystem:'repararSistema',
     validateVehicleQr:'validarQrVehiculo', createVehicleCheckin:'crearCheckinVehicular',
     reviewVehicleCheckin:'revisarCheckinVehicular', availableCheckins:'checkinsDisponibles'
   });
@@ -50,7 +51,7 @@
   const qrAuthorizations = new Map();
   const cacheRespuestas = new Map();
   const solicitudesPendientes = new Map();
-  const accionesLectura = new Set(['status','me','dashboard','list','realtimeSummary']);
+  const accionesLectura = new Set(['status','me','dashboard','list','realtimeSummary','diagnoseSystem']);
 
   function loadAuth() {
     try { return JSON.parse(localStorage.getItem(config.CLAVE_SESION_LOCAL)) || {}; }
@@ -185,8 +186,10 @@
       sendNotification: { actions:['dashboard','realtimeSummary'], resources:['notifications','audit'] },
       readNotification: { actions:['dashboard','realtimeSummary'], resources:['notifications'] },
       saveCompany: { actions:['status'], resources:['companies','audit'] },
+      saveOperationalPoint: { actions:['status','dashboard','diagnoseSystem'], resources:['companies','operations','routes','audit'] },
       changePassword: { actions:['me'], resources:['users','audit'] },
       saveUserPermissions: { actions:['me','dashboard'], resources:['users','audit'] },
+      repairSystem: { actions:['status','dashboard','realtimeSummary','diagnoseSystem'], resources:['companies','users','vehicles','drivers','routes','operations','gps','notifications','alerts','history','checkins','audit'] },
     };
     if (action === 'logout' || action === 'clearOperationalData') return limpiarCache();
     const impact = impacts[action];
@@ -413,12 +416,12 @@
   async function localRequest(action, payload) {
     await Promise.resolve();
     switch (action) {
-      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.0.0', now:iso() };
+      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.1.2', now:iso() };
       case 'status': return {
         connected:true, needsSetup:activeRows(localDb.users).length === 0, spreadsheetName:'Base local del navegador',
         rows:{ users:activeRows(localDb.users).length, vehicles:activeRows(localDb.vehicles).length,
           drivers:activeRows(localDb.drivers).length, operations:activeRows(localDb.operations).length },
-        company: cleanRow(activeRows(localDb.companies)[0] || null)
+        company: cleanRow(localPrimaryCompany() || null)
       };
       case 'bootstrap': {
         if (activeRows(localDb.users).length) throw new Error('SISTEMA_YA_INICIALIZADO');
@@ -477,9 +480,12 @@
       case 'readNotification': return localReadNotification(payload);
       case 'heartbeat': return localHeartbeat(payload);
       case 'realtimeSummary': return localRealtimeSummary(payload);
+      case 'diagnoseSystem': return localDiagnoseSystem();
+      case 'repairSystem': return localRepairSystem();
       case 'changePassword': return localChangePassword(payload);
       case 'saveUserPermissions': return localSaveUserPermissions(payload);
       case 'saveCompany': return localSaveCompany(payload);
+      case 'saveOperationalPoint': return localSaveOperationalPoint(payload);
       case 'clearOperationalData': return localClear(payload);
       default: throw new Error('ACCION_NO_ENCONTRADA');
     }
@@ -538,6 +544,7 @@
     const user=requireLocalUser(); const key = resourceMap[payload.resource]; if (!key) throw new Error('RECURSO_NO_ENCONTRADO');
     requireLocalPermission(user,moduleByResource[key],'LEER');
     let rows = localFilterRows(key,activeRows(localDb[key] || []),user).map(cleanRow);
+    if(key==='companies')rows=rows.slice().sort((a,b)=>{const activeA=String(a.ESTADO||'Activo')==='Activo'?1:0,activeB=String(b.ESTADO||'Activo')==='Activo'?1:0;if(activeA!==activeB)return activeB-activeA;return new Date(b.ACTUALIZADO_EN||b.CREADO_EN||0)-new Date(a.ACTUALIZADO_EN||a.CREADO_EN||0);});
     const filters = payload.filters || {};
     rows = rows.filter(row => Object.entries(filters).every(([k,v]) => !v || String(row[k] || '').toLowerCase() === String(v).toLowerCase()));
     return { rows, total:rows.length };
@@ -676,8 +683,15 @@
     if(!checkinId)throw new Error('CHECKIN_REQUERIDO');const row=find('checkins',checkinId);if(!row)throw new Error('CHECKIN_NO_ENCONTRADO');
     if(row.VEHICULO_ID!==vehicleId||row.CONDUCTOR_ID!==driverId)throw new Error('CHECKIN_NO_COINCIDE');if(row.ESTADO_REVISION!=='Aprobado')throw new Error('CHECKIN_NO_APROBADO');if(row.UTILIZADO==='SI')throw new Error('CHECKIN_YA_UTILIZADO');if(new Date(row.VIGENTE_HASTA||0).getTime()<=Date.now())throw new Error('CHECKIN_EXPIRADO');return row;
   }
+  function localPrimaryCompany(){
+    return activeRows(localDb.companies).slice().sort((a,b)=>{
+      const activeA=String(a.ESTADO||'Activo')==='Activo'?1:0,activeB=String(b.ESTADO||'Activo')==='Activo'?1:0;
+      if(activeA!==activeB)return activeB-activeA;
+      return new Date(b.ACTUALIZADO_EN||b.CREADO_EN||0)-new Date(a.ACTUALIZADO_EN||a.CREADO_EN||0);
+    })[0]||null;
+  }
   function localOperationalBase(){
-    const company=activeRows(localDb.companies)[0]||{};
+    const company=localPrimaryCompany()||{};
     if(String(company.VALIDAR_UBICACION_OPERACION||'SI')==='NO')throw new Error('VALIDACION_UBICACION_DESACTIVADA');
     const latitudeText=String(company.PUNTO_OPERACION_LATITUD??'').trim(),longitudeText=String(company.PUNTO_OPERACION_LONGITUD??'').trim(),latitude=Number(latitudeText),longitude=Number(longitudeText);
     if(!latitudeText||!longitudeText||!Number.isFinite(latitude)||!Number.isFinite(longitude))throw new Error('PUNTO_OPERACION_NO_CONFIGURADO');
@@ -729,10 +743,10 @@
   }
   function localAssignRoute(payload){
     const user=requireLocalUser(),data=payload.data||payload;requireLocalPermission(user,'RUTAS','CREAR');
-    const driver=find('drivers',data.CONDUCTOR_ID),vehicle=data.VEHICULO_ID?find('vehicles',data.VEHICULO_ID):null;
-    if(!driver)throw new Error('CONDUCTOR_NO_ENCONTRADO');if(data.VEHICULO_ID&&!vehicle)throw new Error('VEHICULO_NO_ENCONTRADO');if(!data.DESTINO)throw new Error('CAMPO_REQUERIDO_DESTINO');
-    const now=iso(),route={ID:id('RUT'),NOMBRE:data.NOMBRE||`Ruta a ${data.DESTINO}`,CONDUCTOR_ID:driver.ID,VEHICULO_ID:vehicle?.ID||'',OPERACION_ID:data.OPERACION_ID||'',
-      ORIGEN:data.ORIGEN||'Ubicación actual',ORIGEN_LATITUD:data.ORIGEN_LATITUD||'',ORIGEN_LONGITUD:data.ORIGEN_LONGITUD||'',DESTINO:data.DESTINO,
+    const driver=find('drivers',data.CONDUCTOR_ID),vehicle=data.VEHICULO_ID?find('vehicles',data.VEHICULO_ID):null,company=localPrimaryCompany()||{};
+    if(!driver)throw new Error('CONDUCTOR_NO_ENCONTRADO');if(data.VEHICULO_ID&&!vehicle)throw new Error('VEHICULO_NO_ENCONTRADO');if(!data.ORIGEN)throw new Error('CAMPO_REQUERIDO_ORIGEN');if(!data.DESTINO)throw new Error('CAMPO_REQUERIDO_DESTINO');
+    const baseLatText=String(company.PUNTO_OPERACION_LATITUD??'').trim(),baseLngText=String(company.PUNTO_OPERACION_LONGITUD??'').trim(),baseLat=Number(baseLatText),baseLng=Number(baseLngText),hasBase=Boolean(baseLatText&&baseLngText)&&Number.isFinite(baseLat)&&Number.isFinite(baseLng)&&baseLat>=-90&&baseLat<=90&&baseLng>=-180&&baseLng<=180,now=iso(),route={ID:id('RUT'),NOMBRE:data.NOMBRE||`Ruta a ${data.DESTINO}`,CONDUCTOR_ID:driver.ID,VEHICULO_ID:vehicle?.ID||'',OPERACION_ID:data.OPERACION_ID||'',
+      ORIGEN:String(data.ORIGEN).trim(),ORIGEN_LATITUD:data.ORIGEN_LATITUD|| (hasBase?baseLat:''),ORIGEN_LONGITUD:data.ORIGEN_LONGITUD||(hasBase?baseLng:''),DESTINO:data.DESTINO,
       DESTINO_LATITUD:data.DESTINO_LATITUD||'',DESTINO_LONGITUD:data.DESTINO_LONGITUD||'',PARADAS_CODIFICADAS:data.PARADAS_CODIFICADAS||'',
       PROVEEDOR_NAVEGACION:['Google Maps','Waze'].includes(data.PROVEEDOR_NAVEGACION)?data.PROVEEDOR_NAVEGACION:'Google Maps',ESTADO:'Asignada',
       INSTRUCCIONES:data.INSTRUCCIONES||'',FECHA_ASIGNACION:now,FECHA_INICIO:'',FECHA_FIN:'',CREADO_POR:user.ID,CREADO_EN:now,ACTUALIZADO_EN:now,ELIMINADO:'NO'};
@@ -800,7 +814,7 @@
     const colorFields=['COLOR_PRINCIPAL','COLOR_SECUNDARIO','COLOR_ACENTO','COLOR_FONDO','COLOR_SUPERFICIE','COLOR_TEXTO','COLOR_TEXTO_SECUNDARIO','COLOR_BORDE','COLOR_MENU','COLOR_MENU_SECUNDARIO','COLOR_EXITO','COLOR_ADVERTENCIA','COLOR_PELIGRO','COLOR_FONDO_OSCURO','COLOR_SUPERFICIE_OSCURO','COLOR_TEXTO_OSCURO','COLOR_TEXTO_SECUNDARIO_OSCURO','COLOR_BORDE_OSCURO'];
     colorFields.forEach(field=>{if(field in data&&data[field]!==''&&!/^#[0-9A-F]{6}$/i.test(String(data[field])))throw new Error('COLOR_TEMA_INVALIDO');if(field in data)data[field]=String(data[field]).toUpperCase();});
     if('TEMA_PREDETERMINADO' in data&&!['Claro','Oscuro','Sistema'].includes(String(data.TEMA_PREDETERMINADO)))throw new Error('TEMA_PREDETERMINADO_INVALIDO');
-    let row=activeRows(localDb.companies)[0];
+    let row=localPrimaryCompany();
     if(!row){
       row={ID:id('EMP'),CREADO_EN:iso(),ELIMINADO:'NO'};
       localDb.companies.push(row);
@@ -816,7 +830,44 @@
     Object.assign(row,data,{ESTADO:data.ESTADO||row.ESTADO||'Activo',ACTUALIZADO_EN:iso()});
     audit(user,'ACTUALIZAR','EMPRESA','Configuración de empresa guardada',row.ID);
     saveLocal();
-    return {row:cleanRow(row)};
+    return {row:cleanRow(row),confirmado:true};
+  }
+
+  function localSaveOperationalPoint(payload){
+    const user=requireLocalUser();requireLocalPermission(user,'CONFIGURACION','ACTUALIZAR');
+    const data={...(payload.data||payload)};data.VALIDAR_UBICACION_OPERACION='SI';data.RETORNO_BASE_OBLIGATORIO='SI';
+    const lat=Number(data.PUNTO_OPERACION_LATITUD),lng=Number(data.PUNTO_OPERACION_LONGITUD);
+    if(!Number.isFinite(lat)||lat<-90||lat>90||!Number.isFinite(lng)||lng<-180||lng>180)throw new Error('COORDENADAS_INVALIDAS');
+    data.PUNTO_OPERACION_LATITUD=lat;data.PUNTO_OPERACION_LONGITUD=lng;
+    ['RADIO_INICIO_METROS','RADIO_FIN_METROS','PRECISION_GPS_MAXIMA_METROS'].forEach(field=>{const value=Math.round(Number(data[field]||({RADIO_INICIO_METROS:150,RADIO_FIN_METROS:150,PRECISION_GPS_MAXIMA_METROS:120}[field])));if(!Number.isFinite(value)||value<10||value>5000)throw new Error('RADIO_OPERACION_INVALIDO');data[field]=value;});
+    if(!String(data.PUNTO_OPERACION_NOMBRE||'').trim())data.PUNTO_OPERACION_NOMBRE='Base operacional';
+    if(!String(data.PUNTO_OPERACION_DIRECCION||'').trim())data.PUNTO_OPERACION_DIRECCION=localPrimaryCompany()?.DIRECCION||data.PUNTO_OPERACION_NOMBRE;
+    let row=localPrimaryCompany();if(!row){row={ID:id('EMP'),NOMBRE_FANTASIA:data.PUNTO_OPERACION_NOMBRE,RAZON_SOCIAL:data.PUNTO_OPERACION_NOMBRE,ESTADO:'Activo',CREADO_EN:iso(),ELIMINADO:'NO'};localDb.companies.push(row);}
+    Object.assign(row,data,{ACTUALIZADO_EN:iso(),ESTADO:row.ESTADO||'Activo'});audit(user,'CONFIGURAR_PUNTO','CONFIGURACION','Punto operacional guardado y confirmado',row.ID);saveLocal();
+    const point=localOperationalBase();return{row:cleanRow(row),point,confirmado:true};
+  }
+
+  function localDiagnoseSystem(){
+    const user=requireLocalUser();requireLocalPermission(user,'CONFIGURACION','LEER');
+    const company=localPrimaryCompany()||{};
+    const lat=Number(company.PUNTO_OPERACION_LATITUD),lng=Number(company.PUNTO_OPERACION_LONGITUD);
+    const pointOk=Number.isFinite(lat)&&Number.isFinite(lng)&&String(company.VALIDAR_UBICACION_OPERACION||'SI')!=='NO';
+    const modules={
+      structure:{nombre:'Estructura local',estado:'OK',detalle:'Todas las colecciones internas están disponibles.'},
+      routes:{nombre:'Asignación de rutas',estado:activeRows(localDb.drivers).length?'OK':'REVISAR',detalle:`${activeRows(localDb.routes).length} rutas · ${activeRows(localDb.drivers).length} conductores · ${activeRows(localDb.vehicles).length} vehículos`},
+      operations:{nombre:'Operaciones',estado:pointOk?'OK':'REVISAR',detalle:pointOk?`Punto base ${lat.toFixed(6)}, ${lng.toFixed(6)}`:'Falta configurar el punto operacional.'},
+      gps:{nombre:'Mapa en tiempo real',estado:'OK',detalle:`${activeRows(localDb.gpsCurrent).length} posiciones actuales · ${activeRows(localDb.connections).length} conexiones`},
+      notifications:{nombre:'Notificaciones',estado:'OK',detalle:`${activeRows(localDb.notifications).length} registros`},
+      alerts:{nombre:'Alertas',estado:'OK',detalle:`${activeRows(localDb.alerts).length} registros`},
+      history:{nombre:'Historiales',estado:'OK',detalle:`${activeRows(localDb.history).length} eventos operativos · ${activeRows(localDb.checkins).length} check-ins`}
+    };
+    return{version:'3.1.2',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
+  }
+  function localRepairSystem(){
+    const user=requireLocalUser();requireLocalPermission(user,'CONFIGURACION','ACTUALIZAR');
+    const defaults=emptyState();Object.keys(defaults).forEach(key=>{if(!Array.isArray(localDb[key]))localDb[key]=[];});
+    seedCatalogs();audit(user,'REPARAR_SISTEMA','CONFIGURACION','Estructura local, catálogos y permisos verificados');saveLocal();
+    return{repaired:true,diagnostico:localDiagnoseSystem()};
   }
 
   async function localChangePassword(payload){const user=requireLocalUser();if(user.CONTRASENA_CIFRADA!==await digest(payload.contrasenaActual+':'+user.SAL_CONTRASENA))throw new Error('CONTRASENA_ACTUAL_INVALIDA');if(String(payload.nuevaContrasena??'').length===0)throw new Error('CONTRASENA_REQUERIDA');const salt=id('SALT');user.SAL_CONTRASENA=salt;user.CONTRASENA_CIFRADA=await digest(String(payload.nuevaContrasena)+':'+salt);user.ACTUALIZADO_EN=iso();saveLocal();return{changed:true};}

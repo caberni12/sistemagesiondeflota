@@ -1,10 +1,15 @@
+/**
+ * SISTEMA DE GESTIÓN DE FLOTAS 3.1.2
+ * Archivo único alternativo. No usar junto con los archivos .gs numerados.
+ */
+
 /* ===== 00_Configuracion.gs ===== */
 /**
  * Sistema de Gestión de Flotas - Configuración central.
  * Si el proyecto Apps Script está vinculado a la hoja, instalarSistema() guardará
  * automáticamente el ID. Para un proyecto independiente, pegue el ID aquí.
  */
-const VERSION_APLICACION = '3.0.0';
+const VERSION_APLICACION = '3.1.2';
 
 const CONFIGURACION_APLICACION = Object.freeze({
   ID_HOJA_CALCULO: '1onJJEN1rgz0N9GXOiUqV7ong4-nlbdAjzMyW_rumXCM',
@@ -134,9 +139,12 @@ function enrutarSolicitud_(request, event) {
     case 'marcarNotificacionLeida': return marcarNotificacionLeida_(request, session);
     case 'actualizarConexion': return actualizarConexion_(request, session);
     case 'resumenTiempoReal': return resumenTiempoReal_(request, session);
+    case 'diagnosticoSistema': return diagnosticoSistema_(request, session);
+    case 'repararSistema': return repararSistema_(request, session);
     case 'cambiarContrasena': return cambiarPassword_(request, session);
     case 'actualizarPermisosUsuario': return actualizarPermisosUsuario_(request, session);
     case 'guardarEmpresa': return guardarEmpresaServicio_(request, session);
+    case 'guardarPuntoOperacion': return guardarPuntoOperacionServicio_(request, session);
     case 'limpiarDatosOperativos': return limpiarDatosOperativosServicio_(request, session);
     default: throw new Error('ACCION_NO_ENCONTRADA');
   }
@@ -178,6 +186,7 @@ function servicioListar_(request, session) {
   const resource = obtenerRecurso_(request.recurso);
   exigirPermiso_(session.user, resource.module, 'LEER');
   let rows = listarRegistros_(resource.sheet, request.filtros || {});
+  if (resource.sheet === 'EMPRESAS') rows = ordenarEmpresasPrincipal_(rows);
   rows = filtrarPorUsuario_(resource.sheet, rows, session.user);
   const limit = Math.min(Number(request.limite || CONFIGURACION_APLICACION.MAXIMO_FILAS_LISTADO), CONFIGURACION_APLICACION.MAXIMO_FILAS_LISTADO);
   return ok_({ rows: rows.slice(0, limit), total: rows.length });
@@ -297,7 +306,7 @@ function instalarSistemaInicial_(request) {
 
     const nombreEmpresa = String(request.nombreEmpresa || request.empresa || '').trim();
     if (nombreEmpresa) {
-      const actual = listarRegistros_('EMPRESAS', {})[0] || null;
+      const actual = obtenerEmpresaPrincipal_();
       const empresa = {
         RUT: String(request.rutEmpresa || '').trim(),
         RAZON_SOCIAL: String(request.razonSocial || nombreEmpresa).trim(),
@@ -633,10 +642,42 @@ function asegurarHoja_(sheetName) {
   if (!sheet) sheet = ss.insertSheet(sheetName);
   const headers = ESQUEMAS_APLICACION[sheetName];
   if (!headers) throw new Error('ESQUEMA_NO_ENCONTRADO_' + sheetName);
-  const current = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-  if (current.join('|') !== headers.join('|')) {
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+
+  if (sheet.getMaxColumns() < headers.length) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   }
+  const lastRow = Math.max(1, sheet.getLastRow());
+  const lastColumn = Math.max(1, sheet.getLastColumn());
+  const currentHeaders = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(function(value) {
+    return String(value || '').trim();
+  });
+  const currentSignature = currentHeaders.slice(0, headers.length).join('|');
+  const expectedSignature = headers.join('|');
+
+  if (currentSignature !== expectedSignature) {
+    const hasNamedHeaders = currentHeaders.some(function(value) { return Boolean(value); });
+    const existingRows = lastRow > 1
+      ? sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues()
+      : [];
+    let migratedRows = [];
+    if (hasNamedHeaders && existingRows.length) {
+      const indexes = {};
+      currentHeaders.forEach(function(header, index) {
+        if (header && !Object.prototype.hasOwnProperty.call(indexes, header)) indexes[header] = index;
+      });
+      migratedRows = existingRows.map(function(row) {
+        return headers.map(function(header) {
+          return Object.prototype.hasOwnProperty.call(indexes, header) ? row[indexes[header]] : '';
+        });
+      });
+    }
+    const clearRows = Math.max(lastRow, migratedRows.length + 1);
+    const clearColumns = Math.max(lastColumn, headers.length);
+    sheet.getRange(1, 1, clearRows, clearColumns).clearContent();
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    if (migratedRows.length) sheet.getRange(2, 1, migratedRows.length, headers.length).setValues(migratedRows);
+  }
+
   sheet.setFrozenRows(1);
   sheet.getRange(1, 1, 1, headers.length)
     .setBackground('#0B5F59')
@@ -1017,7 +1058,12 @@ function instalarSistema() {
 }
 
 function actualizarSistema() {
-  return instalarSistema();
+  const resultado = instalarSistema();
+  try { repararModuloCheckin(); } catch (error) { Logger.log('Reparación de check-in: ' + error.message); }
+  try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
+  reiniciarCachesEjecucion_();
+  resultado.message = 'Sistema 3.1.2 actualizado: estructura, catálogos, permisos, GPS actual, check-in y punto operacional verificados.';
+  return resultado;
 }
 
 function probarConexion() {
@@ -1158,27 +1204,11 @@ function distanciaGeograficaMetros_(lat1, lng1, lat2, lng2) {
 }
 
 function obtenerPuntoOperacionConfigurado_() {
-  const company = listarRegistros_('EMPRESAS', {})[0] || null;
-  if (!company) throw new Error('PUNTO_OPERACION_NO_CONFIGURADO');
-  const enabled = String(company.VALIDAR_UBICACION_OPERACION || 'SI') !== 'NO';
-  if (!enabled) throw new Error('VALIDACION_UBICACION_DESACTIVADA');
-  const latitudeText = String(company.PUNTO_OPERACION_LATITUD == null ? '' : company.PUNTO_OPERACION_LATITUD).trim();
-  const longitudeText = String(company.PUNTO_OPERACION_LONGITUD == null ? '' : company.PUNTO_OPERACION_LONGITUD).trim();
-  const latitude = Number(latitudeText);
-  const longitude = Number(longitudeText);
-  if (!latitudeText || !longitudeText || !isFinite(latitude) || !isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
-    throw new Error('PUNTO_OPERACION_NO_CONFIGURADO');
-  }
-  return {
-    NOMBRE: String(company.PUNTO_OPERACION_NOMBRE || 'Base operacional').trim(),
-    DIRECCION: String(company.PUNTO_OPERACION_DIRECCION || company.DIRECCION || 'Base operacional').trim(),
-    LATITUD: latitude,
-    LONGITUD: longitude,
-    RADIO_INICIO_METROS: Math.max(10, Number(company.RADIO_INICIO_METROS || 150)),
-    RADIO_FIN_METROS: Math.max(10, Number(company.RADIO_FIN_METROS || 150)),
-    PRECISION_GPS_MAXIMA_METROS: Math.max(10, Number(company.PRECISION_GPS_MAXIMA_METROS || 120)),
-    RETORNO_BASE_OBLIGATORIO: String(company.RETORNO_BASE_OBLIGATORIO || 'SI') !== 'NO' ? 'SI' : 'NO'
-  };
+  const company = obtenerEmpresaPrincipal_();
+  if (company && String(company.VALIDAR_UBICACION_OPERACION || 'SI') === 'NO') throw new Error('VALIDACION_UBICACION_DESACTIVADA');
+  const point = puntoOperacionDesdeEmpresa_(company) || obtenerRespaldoPuntoOperacion_();
+  if (!point) throw new Error('PUNTO_OPERACION_NO_CONFIGURADO');
+  return point;
 }
 
 function validarUbicacionEnPuntoOperacion_(data, point, phase) {
@@ -1800,6 +1830,75 @@ function validarTemaEmpresa_(data) {
 }
 
 
+function fechaEmpresaMilisegundos_(row) {
+  const value = row && (row.ACTUALIZADO_EN || row.CREADO_EN);
+  const time = value ? new Date(value).getTime() : 0;
+  return isFinite(time) ? time : 0;
+}
+
+function ordenarEmpresasPrincipal_(rows) {
+  return (rows || []).slice().sort(function(a, b) {
+    const activeA = String(a.ESTADO || 'Activo') === 'Activo' ? 1 : 0;
+    const activeB = String(b.ESTADO || 'Activo') === 'Activo' ? 1 : 0;
+    if (activeA !== activeB) return activeB - activeA;
+    return fechaEmpresaMilisegundos_(b) - fechaEmpresaMilisegundos_(a);
+  });
+}
+
+function obtenerEmpresaPrincipal_() {
+  asegurarHoja_('EMPRESAS');
+  return ordenarEmpresasPrincipal_(listarRegistros_('EMPRESAS', {}))[0] || null;
+}
+
+function puntoOperacionDesdeEmpresa_(company) {
+  if (!company || String(company.VALIDAR_UBICACION_OPERACION || 'SI') === 'NO') return null;
+  const latitudeText = String(company.PUNTO_OPERACION_LATITUD == null ? '' : company.PUNTO_OPERACION_LATITUD).trim();
+  const longitudeText = String(company.PUNTO_OPERACION_LONGITUD == null ? '' : company.PUNTO_OPERACION_LONGITUD).trim();
+  const latitude = Number(latitudeText);
+  const longitude = Number(longitudeText);
+  if (!latitudeText || !longitudeText || !isFinite(latitude) || !isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+  return {
+    NOMBRE: String(company.PUNTO_OPERACION_NOMBRE || 'Base operacional').trim(),
+    DIRECCION: String(company.PUNTO_OPERACION_DIRECCION || company.DIRECCION || 'Base operacional').trim(),
+    LATITUD: latitude,
+    LONGITUD: longitude,
+    RADIO_INICIO_METROS: Math.max(10, Number(company.RADIO_INICIO_METROS || 150)),
+    RADIO_FIN_METROS: Math.max(10, Number(company.RADIO_FIN_METROS || 150)),
+    PRECISION_GPS_MAXIMA_METROS: Math.max(10, Number(company.PRECISION_GPS_MAXIMA_METROS || 120)),
+    RETORNO_BASE_OBLIGATORIO: String(company.RETORNO_BASE_OBLIGATORIO || 'SI') !== 'NO' ? 'SI' : 'NO'
+  };
+}
+
+function guardarRespaldoPuntoOperacion_(company) {
+  const point = puntoOperacionDesdeEmpresa_(company);
+  if (!point) return null;
+  PropertiesService.getScriptProperties().setProperty('PUNTO_OPERACIONAL_RESPALDO', JSON.stringify(point));
+  return point;
+}
+
+function obtenerRespaldoPuntoOperacion_() {
+  const text = PropertiesService.getScriptProperties().getProperty('PUNTO_OPERACIONAL_RESPALDO');
+  if (!text) return null;
+  try {
+    const point = JSON.parse(text);
+    const company = {
+      VALIDAR_UBICACION_OPERACION: 'SI',
+      PUNTO_OPERACION_NOMBRE: point.NOMBRE,
+      PUNTO_OPERACION_DIRECCION: point.DIRECCION,
+      PUNTO_OPERACION_LATITUD: point.LATITUD,
+      PUNTO_OPERACION_LONGITUD: point.LONGITUD,
+      RADIO_INICIO_METROS: point.RADIO_INICIO_METROS,
+      RADIO_FIN_METROS: point.RADIO_FIN_METROS,
+      PRECISION_GPS_MAXIMA_METROS: point.PRECISION_GPS_MAXIMA_METROS,
+      RETORNO_BASE_OBLIGATORIO: point.RETORNO_BASE_OBLIGATORIO
+    };
+    return puntoOperacionDesdeEmpresa_(company);
+  } catch (error) {
+    return null;
+  }
+}
+
+
 function validarPuntoOperacionEmpresa_(data, current) {
   const merged = Object.assign({}, current || {}, data || {});
   const enabled = String(merged.VALIDAR_UBICACION_OPERACION || 'SI') !== 'NO';
@@ -1834,7 +1933,7 @@ function estadoSistema_() {
   asegurarCatalogos_();
   const users = listarRegistros_('USUARIOS', {});
   const usersWithAccess = users.filter(usuarioTieneAccesoConfigurado_);
-  const companies = listarRegistros_('EMPRESAS', {});
+  const companies = ordenarEmpresasPrincipal_(listarRegistros_('EMPRESAS', {}));
   return ok_({
     connected: true,
     version: VERSION_APLICACION,
@@ -1853,10 +1952,44 @@ function estadoSistema_() {
 }
 
 
+/** Repara o restaura el punto operacional sin eliminar información. */
+function repararPuntoOperacional() {
+  asegurarHoja_('EMPRESAS');
+  reiniciarCachesEjecucion_();
+  let company = obtenerEmpresaPrincipal_();
+  let point = puntoOperacionDesdeEmpresa_(company);
+  if (point) {
+    guardarRespaldoPuntoOperacion_(company);
+    return { ok:true, configurado:true, restaurado:false, empresaId:company.ID, point:point };
+  }
+  point = obtenerRespaldoPuntoOperacion_();
+  if (!point) return { ok:true, configurado:false, restaurado:false, message:'Configure la base desde Operaciones o Configuración.' };
+  const data = {
+    VALIDAR_UBICACION_OPERACION:'SI', RETORNO_BASE_OBLIGATORIO:'SI',
+    PUNTO_OPERACION_NOMBRE:point.NOMBRE, PUNTO_OPERACION_DIRECCION:point.DIRECCION,
+    PUNTO_OPERACION_LATITUD:point.LATITUD, PUNTO_OPERACION_LONGITUD:point.LONGITUD,
+    RADIO_INICIO_METROS:point.RADIO_INICIO_METROS, RADIO_FIN_METROS:point.RADIO_FIN_METROS,
+    PRECISION_GPS_MAXIMA_METROS:point.PRECISION_GPS_MAXIMA_METROS
+  };
+  if (!company) {
+    data.NOMBRE_FANTASIA = point.NOMBRE || 'Empresa'; data.RAZON_SOCIAL = data.NOMBRE_FANTASIA;
+    data.DIRECCION = point.DIRECCION || ''; data.ESTADO = 'Activo';
+    company = insertarRegistro_('EMPRESAS', data, 'EMP');
+  } else {
+    company = actualizarRegistro_('EMPRESAS', company.ID, data);
+  }
+  SpreadsheetApp.flush(); reiniciarCachesEjecucion_();
+  const confirmed = obtenerRegistro_('EMPRESAS', company.ID);
+  const confirmedPoint = puntoOperacionDesdeEmpresa_(confirmed);
+  if (!confirmedPoint) throw new Error('PUNTO_OPERACION_NO_CONFIRMADO');
+  return { ok:true, configurado:true, restaurado:true, empresaId:company.ID, point:confirmedPoint };
+}
+
 /** Guarda la identidad y los datos institucionales de la empresa. */
 function guardarEmpresaServicio_(request, session) {
   exigirPermiso_(session.user, 'CONFIGURACION', 'ACTUALIZAR');
-  const current = listarRegistros_('EMPRESAS', {})[0] || null;
+  asegurarHoja_('EMPRESAS');
+  const current = obtenerEmpresaPrincipal_();
   const data = validarPuntoOperacionEmpresa_(validarTemaEmpresa_(normalizarEntradaRecurso_('EMPRESAS', request.datos || {}, session.user)), current);
 
   if (String(request.eliminarLogotipo || '') === 'SI') {
@@ -1880,9 +2013,47 @@ function guardarEmpresaServicio_(request, session) {
   const row = current
     ? actualizarRegistro_('EMPRESAS', current.ID, data)
     : insertarRegistro_('EMPRESAS', data, 'EMP');
+  SpreadsheetApp.flush();
+  invalidarCacheHoja_('EMPRESAS');
+  const confirmed = obtenerRegistro_('EMPRESAS', row.ID) || row;
+  if (puntoOperacionDesdeEmpresa_(confirmed)) guardarRespaldoPuntoOperacion_(confirmed);
 
   registrarBitacora_(session.user, 'ACTUALIZAR', 'CONFIGURACION', row.ID, 'Configuración de empresa guardada');
-  return ok_({ row: limpiarSalidaRecurso_('EMPRESAS', row) });
+  return ok_({ row: limpiarSalidaRecurso_('EMPRESAS', confirmed), confirmado:true });
+}
+
+/** Guarda y confirma exclusivamente el punto operacional. */
+function guardarPuntoOperacionServicio_(request, session) {
+  exigirPermiso_(session.user, 'CONFIGURACION', 'ACTUALIZAR');
+  asegurarHoja_('EMPRESAS');
+  const current = obtenerEmpresaPrincipal_();
+  const raw = Object.assign({}, request.datos || request || {});
+  raw.VALIDAR_UBICACION_OPERACION = 'SI';
+  raw.RETORNO_BASE_OBLIGATORIO = 'SI';
+  if (!String(raw.PUNTO_OPERACION_NOMBRE || '').trim()) raw.PUNTO_OPERACION_NOMBRE = 'Base operacional';
+  if (!String(raw.PUNTO_OPERACION_DIRECCION || '').trim()) raw.PUNTO_OPERACION_DIRECCION = String((current && current.DIRECCION) || raw.PUNTO_OPERACION_NOMBRE || 'Base operacional');
+  const clean = normalizarEntradaRecurso_('EMPRESAS', raw, session.user);
+  const data = validarPuntoOperacionEmpresa_(clean, current);
+  const fields = ['VALIDAR_UBICACION_OPERACION','PUNTO_OPERACION_NOMBRE','PUNTO_OPERACION_DIRECCION','PUNTO_OPERACION_LATITUD','PUNTO_OPERACION_LONGITUD','RADIO_INICIO_METROS','RADIO_FIN_METROS','PRECISION_GPS_MAXIMA_METROS','RETORNO_BASE_OBLIGATORIO'];
+  const pointData = {};
+  fields.forEach(function(field) { if (Object.prototype.hasOwnProperty.call(data, field)) pointData[field] = data[field]; });
+  if (!current) {
+    pointData.NOMBRE_FANTASIA = pointData.PUNTO_OPERACION_NOMBRE || 'Empresa';
+    pointData.RAZON_SOCIAL = pointData.NOMBRE_FANTASIA;
+    pointData.DIRECCION = pointData.PUNTO_OPERACION_DIRECCION || '';
+    pointData.ESTADO = 'Activo';
+  }
+  const row = current
+    ? actualizarRegistro_('EMPRESAS', current.ID, pointData)
+    : insertarRegistro_('EMPRESAS', pointData, 'EMP');
+  SpreadsheetApp.flush();
+  reiniciarCachesEjecucion_();
+  const confirmed = obtenerRegistro_('EMPRESAS', row.ID);
+  const point = puntoOperacionDesdeEmpresa_(confirmed);
+  if (!confirmed || !point) throw new Error('PUNTO_OPERACION_NO_CONFIRMADO');
+  guardarRespaldoPuntoOperacion_(confirmed);
+  registrarBitacora_(session.user, 'CONFIGURAR_PUNTO', 'CONFIGURACION', row.ID, 'Punto operacional guardado y confirmado');
+  return ok_({ row: limpiarSalidaRecurso_('EMPRESAS', confirmed), point:point, confirmado:true });
 }
 
 function guardarLogoEmpresaEnDrive_(dataUrl, nombre, tipo) {
@@ -1931,24 +2102,32 @@ function eliminarLogoAnterior_(company) {
 function asignarRuta_(request, session) {
   exigirPermiso_(session.user, 'RUTAS', 'CREAR');
   const data = request.datos || request;
-  validarRequeridos_(data, ['CONDUCTOR_ID','DESTINO']);
+  validarRequeridos_(data, ['CONDUCTOR_ID','ORIGEN','DESTINO']);
   const driver = obtenerRegistro_('CONDUCTORES', data.CONDUCTOR_ID);
   if (!driver || driver.ESTADO === 'Inactivo') throw new Error('CONDUCTOR_NO_DISPONIBLE');
   const vehicle = data.VEHICULO_ID ? obtenerRegistro_('VEHICULOS', data.VEHICULO_ID) : null;
   if (data.VEHICULO_ID && !vehicle) throw new Error('VEHICULO_NO_ENCONTRADO');
   const provider = ['Google Maps','Waze'].indexOf(data.PROVEEDOR_NAVEGACION) >= 0
     ? data.PROVEEDOR_NAVEGACION : 'Google Maps';
-  let base = null;
-  try { base = obtenerPuntoOperacionConfigurado_(); } catch (error) { base = null; }
+  const company = obtenerEmpresaPrincipal_() || {};
+  const baseLatitudeText = String(company.PUNTO_OPERACION_LATITUD == null ? '' : company.PUNTO_OPERACION_LATITUD).trim();
+  const baseLongitudeText = String(company.PUNTO_OPERACION_LONGITUD == null ? '' : company.PUNTO_OPERACION_LONGITUD).trim();
+  const baseLatitude = Number(baseLatitudeText);
+  const baseLongitude = Number(baseLongitudeText);
+  const hasOperationalBase = Boolean(baseLatitudeText && baseLongitudeText)
+    && isFinite(baseLatitude) && isFinite(baseLongitude)
+    && baseLatitude >= -90 && baseLatitude <= 90 && baseLongitude >= -180 && baseLongitude <= 180;
+  const plannedOrigin = String(data.ORIGEN || (hasOperationalBase ? (company.PUNTO_OPERACION_DIRECCION || company.DIRECCION || 'Base operacional') : '')).trim();
+  if (!plannedOrigin) throw new Error('CAMPO_REQUERIDO_ORIGEN');
 
   const route = insertarRegistro_('RUTAS', {
     NOMBRE: data.NOMBRE || ('Ruta a ' + data.DESTINO),
     CONDUCTOR_ID: driver.ID,
     VEHICULO_ID: vehicle ? vehicle.ID : '',
     OPERACION_ID: data.OPERACION_ID || '',
-    ORIGEN: data.ORIGEN || (base ? base.DIRECCION : 'Ubicación actual'),
-    ORIGEN_LATITUD: data.ORIGEN_LATITUD || (base ? base.LATITUD : ''),
-    ORIGEN_LONGITUD: data.ORIGEN_LONGITUD || (base ? base.LONGITUD : ''),
+    ORIGEN: plannedOrigin,
+    ORIGEN_LATITUD: data.ORIGEN_LATITUD || (hasOperationalBase ? baseLatitude : ''),
+    ORIGEN_LONGITUD: data.ORIGEN_LONGITUD || (hasOperationalBase ? baseLongitude : ''),
     DESTINO: data.DESTINO,
     DESTINO_LATITUD: data.DESTINO_LATITUD || '',
     DESTINO_LONGITUD: data.DESTINO_LONGITUD || '',
@@ -2504,6 +2683,79 @@ function actualizarPermisosUsuario_(request, session) {
   registrarBitacora_(session.user, 'ACTUALIZAR_PERMISOS', 'USUARIOS', user.ID,
     modo === 'PERSONALIZADO' ? 'Permisos personalizados actualizados sin cerrar sesiones' : 'Permisos restaurados al rol');
   return ok_({ row:usuarioPublico_(updated), sessionPreserved:true });
+}
+
+/* ===== 24_Diagnostico_y_Reparacion.gs ===== */
+/** Diagnóstico y reparación segura de los módulos críticos. */
+function diagnosticarHojaSistema_(sheetName) {
+  const ss = obtenerSpreadsheet_();
+  const expected = ESQUEMAS_APLICACION[sheetName] || [];
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return { existe:false, columnas:false, filas:0, detalle:'Hoja no encontrada: ' + sheetName };
+  const lastColumn = Math.max(1, sheet.getLastColumn());
+  const current = sheet.getRange(1, 1, 1, Math.min(lastColumn, expected.length || lastColumn)).getValues()[0].map(function(value) { return String(value || '').trim(); });
+  const columnsOk = expected.length > 0 && current.slice(0, expected.length).join('|') === expected.join('|');
+  return {
+    existe:true,
+    columnas:columnsOk,
+    filas:Math.max(0, sheet.getLastRow() - 1),
+    detalle:(columnsOk ? 'Columnas correctas' : 'Columnas desactualizadas') + ' · ' + Math.max(0, sheet.getLastRow() - 1) + ' registros'
+  };
+}
+
+function estadoModuloDiagnostico_(nombre, sheetNames, extraOk, extraDetail) {
+  const sheets = sheetNames.map(diagnosticarHojaSistema_);
+  const structureOk = sheets.every(function(item) { return item.existe && item.columnas; });
+  const ok = structureOk && extraOk !== false;
+  return {
+    nombre:nombre,
+    estado:ok ? 'OK' : 'REVISAR',
+    detalle:sheets.map(function(item) { return item.detalle; }).join(' · ') + (extraDetail ? ' · ' + extraDetail : '')
+  };
+}
+
+function listarRegistrosDiagnosticoSeguro_(sheetName) {
+  try { return listarRegistros_(sheetName, {}); }
+  catch (error) { return []; }
+}
+
+function diagnosticoSistema_(request, session) {
+  exigirPermiso_(session.user, 'CONFIGURACION', 'LEER');
+  const company = obtenerEmpresaPrincipal_() || {};
+  const point = puntoOperacionDesdeEmpresa_(company) || obtenerRespaldoPuntoOperacion_();
+  const latitude = point ? Number(point.LATITUD) : NaN;
+  const longitude = point ? Number(point.LONGITUD) : NaN;
+  const pointOk = Boolean(point) && isFinite(latitude) && isFinite(longitude);
+  const drivers = listarRegistrosDiagnosticoSeguro_('CONDUCTORES').length;
+  const vehicles = listarRegistrosDiagnosticoSeguro_('VEHICULOS').length;
+  const approvedCheckins = listarRegistrosDiagnosticoSeguro_('CHECKINS').filter(function(row) {
+    return row.ESTADO_REVISION === 'Aprobado' && row.UTILIZADO !== 'SI' && (!row.VIGENTE_HASTA || new Date(row.VIGENTE_HASTA).getTime() > Date.now());
+  }).length;
+  const modules = {
+    structure: estadoModuloDiagnostico_('Estructura general', Object.keys(ESQUEMAS_APLICACION), true, 'Todas las hojas del sistema'),
+    routes: estadoModuloDiagnostico_('Asignación de rutas', ['RUTAS','CONDUCTORES','VEHICULOS'], drivers > 0, drivers + ' conductores · ' + vehicles + ' vehículos'),
+    operations: estadoModuloDiagnostico_('Operaciones y punto base', ['OPERACIONES','EMPRESAS','CHECKINS'], pointOk, pointOk ? 'Punto operacional configurado · ' + approvedCheckins + ' check-ins disponibles' : 'Falta configurar el punto operacional'),
+    gps: estadoModuloDiagnostico_('Mapa en tiempo real', ['GPS','GPS_ACTUAL','CONEXIONES'], true, listarRegistrosDiagnosticoSeguro_('GPS_ACTUAL').length + ' posiciones actuales'),
+    notifications: estadoModuloDiagnostico_('Notificaciones', ['NOTIFICACIONES'], true, listarRegistrosDiagnosticoSeguro_('NOTIFICACIONES').length + ' registros'),
+    alerts: estadoModuloDiagnostico_('Alertas', ['ALERTAS'], true, listarRegistrosDiagnosticoSeguro_('ALERTAS').length + ' registros'),
+    history: estadoModuloDiagnostico_('Historiales', ['HISTORIAL','BITACORA','CHECKINS'], true, listarRegistrosDiagnosticoSeguro_('HISTORIAL').length + ' eventos operativos')
+  };
+  const correct = Object.keys(modules).every(function(key) { return modules[key].estado === 'OK'; });
+  return ok_({ version:VERSION_APLICACION, fecha:fechaIso_(), correcto:correct, modules:modules });
+}
+
+function repararSistema_(request, session) {
+  exigirPermiso_(session.user, 'CONFIGURACION', 'ACTUALIZAR');
+  reiniciarCachesEjecucion_();
+  Object.keys(ESQUEMAS_APLICACION).forEach(function(sheetName) { asegurarHoja_(sheetName); });
+  reiniciarCachesEjecucion_();
+  asegurarCatalogos_();
+  migrarGpsActualDesdeHistorial_();
+  try { repararModuloCheckin(); } catch (error) { Logger.log('Check-in: ' + error.message); }
+  registrarBitacora_(session.user, 'REPARAR_SISTEMA', 'CONFIGURACION', '', 'Hojas, columnas, catálogos, permisos, GPS actual y check-in verificados');
+  reiniciarCachesEjecucion_();
+  const diagnostic = diagnosticoSistema_({}, session).data;
+  return ok_({ repaired:true, diagnostico:diagnostic });
 }
 
 /* ===== 99_Utilidades.gs ===== */

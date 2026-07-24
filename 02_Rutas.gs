@@ -37,9 +37,12 @@ function enrutarSolicitud_(request, event) {
     case 'marcarNotificacionLeida': return marcarNotificacionLeida_(request, session);
     case 'actualizarConexion': return actualizarConexion_(request, session);
     case 'resumenTiempoReal': return resumenTiempoReal_(request, session);
+    case 'diagnosticoSistema': return diagnosticoSistema_(request, session);
+    case 'repararSistema': return repararSistema_(request, session);
     case 'cambiarContrasena': return cambiarPassword_(request, session);
     case 'actualizarPermisosUsuario': return actualizarPermisosUsuario_(request, session);
     case 'guardarEmpresa': return guardarEmpresaServicio_(request, session);
+    case 'guardarPuntoOperacion': return guardarPuntoOperacionServicio_(request, session);
     case 'limpiarDatosOperativos': return limpiarDatosOperativosServicio_(request, session);
     default: throw new Error('ACCION_NO_ENCONTRADA');
   }
@@ -81,6 +84,7 @@ function servicioListar_(request, session) {
   const resource = obtenerRecurso_(request.recurso);
   exigirPermiso_(session.user, resource.module, 'LEER');
   let rows = listarRegistros_(resource.sheet, request.filtros || {});
+  if (resource.sheet === 'EMPRESAS') rows = ordenarEmpresasPrincipal_(rows);
   rows = filtrarPorUsuario_(resource.sheet, rows, session.user);
   const limit = Math.min(Number(request.limite || CONFIGURACION_APLICACION.MAXIMO_FILAS_LISTADO), CONFIGURACION_APLICACION.MAXIMO_FILAS_LISTADO);
   return ok_({ rows: rows.slice(0, limit), total: rows.length });

@@ -46,10 +46,42 @@ function asegurarHoja_(sheetName) {
   if (!sheet) sheet = ss.insertSheet(sheetName);
   const headers = ESQUEMAS_APLICACION[sheetName];
   if (!headers) throw new Error('ESQUEMA_NO_ENCONTRADO_' + sheetName);
-  const current = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-  if (current.join('|') !== headers.join('|')) {
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+
+  if (sheet.getMaxColumns() < headers.length) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), headers.length - sheet.getMaxColumns());
   }
+  const lastRow = Math.max(1, sheet.getLastRow());
+  const lastColumn = Math.max(1, sheet.getLastColumn());
+  const currentHeaders = sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(function(value) {
+    return String(value || '').trim();
+  });
+  const currentSignature = currentHeaders.slice(0, headers.length).join('|');
+  const expectedSignature = headers.join('|');
+
+  if (currentSignature !== expectedSignature) {
+    const hasNamedHeaders = currentHeaders.some(function(value) { return Boolean(value); });
+    const existingRows = lastRow > 1
+      ? sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues()
+      : [];
+    let migratedRows = [];
+    if (hasNamedHeaders && existingRows.length) {
+      const indexes = {};
+      currentHeaders.forEach(function(header, index) {
+        if (header && !Object.prototype.hasOwnProperty.call(indexes, header)) indexes[header] = index;
+      });
+      migratedRows = existingRows.map(function(row) {
+        return headers.map(function(header) {
+          return Object.prototype.hasOwnProperty.call(indexes, header) ? row[indexes[header]] : '';
+        });
+      });
+    }
+    const clearRows = Math.max(lastRow, migratedRows.length + 1);
+    const clearColumns = Math.max(lastColumn, headers.length);
+    sheet.getRange(1, 1, clearRows, clearColumns).clearContent();
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    if (migratedRows.length) sheet.getRange(2, 1, migratedRows.length, headers.length).setValues(migratedRows);
+  }
+
   sheet.setFrozenRows(1);
   sheet.getRange(1, 1, 1, headers.length)
     .setBackground('#0B5F59')

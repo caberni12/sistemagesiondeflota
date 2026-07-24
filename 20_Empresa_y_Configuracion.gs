@@ -21,6 +21,75 @@ function validarTemaEmpresa_(data) {
 }
 
 
+function fechaEmpresaMilisegundos_(row) {
+  const value = row && (row.ACTUALIZADO_EN || row.CREADO_EN);
+  const time = value ? new Date(value).getTime() : 0;
+  return isFinite(time) ? time : 0;
+}
+
+function ordenarEmpresasPrincipal_(rows) {
+  return (rows || []).slice().sort(function(a, b) {
+    const activeA = String(a.ESTADO || 'Activo') === 'Activo' ? 1 : 0;
+    const activeB = String(b.ESTADO || 'Activo') === 'Activo' ? 1 : 0;
+    if (activeA !== activeB) return activeB - activeA;
+    return fechaEmpresaMilisegundos_(b) - fechaEmpresaMilisegundos_(a);
+  });
+}
+
+function obtenerEmpresaPrincipal_() {
+  asegurarHoja_('EMPRESAS');
+  return ordenarEmpresasPrincipal_(listarRegistros_('EMPRESAS', {}))[0] || null;
+}
+
+function puntoOperacionDesdeEmpresa_(company) {
+  if (!company || String(company.VALIDAR_UBICACION_OPERACION || 'SI') === 'NO') return null;
+  const latitudeText = String(company.PUNTO_OPERACION_LATITUD == null ? '' : company.PUNTO_OPERACION_LATITUD).trim();
+  const longitudeText = String(company.PUNTO_OPERACION_LONGITUD == null ? '' : company.PUNTO_OPERACION_LONGITUD).trim();
+  const latitude = Number(latitudeText);
+  const longitude = Number(longitudeText);
+  if (!latitudeText || !longitudeText || !isFinite(latitude) || !isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+  return {
+    NOMBRE: String(company.PUNTO_OPERACION_NOMBRE || 'Base operacional').trim(),
+    DIRECCION: String(company.PUNTO_OPERACION_DIRECCION || company.DIRECCION || 'Base operacional').trim(),
+    LATITUD: latitude,
+    LONGITUD: longitude,
+    RADIO_INICIO_METROS: Math.max(10, Number(company.RADIO_INICIO_METROS || 150)),
+    RADIO_FIN_METROS: Math.max(10, Number(company.RADIO_FIN_METROS || 150)),
+    PRECISION_GPS_MAXIMA_METROS: Math.max(10, Number(company.PRECISION_GPS_MAXIMA_METROS || 120)),
+    RETORNO_BASE_OBLIGATORIO: String(company.RETORNO_BASE_OBLIGATORIO || 'SI') !== 'NO' ? 'SI' : 'NO'
+  };
+}
+
+function guardarRespaldoPuntoOperacion_(company) {
+  const point = puntoOperacionDesdeEmpresa_(company);
+  if (!point) return null;
+  PropertiesService.getScriptProperties().setProperty('PUNTO_OPERACIONAL_RESPALDO', JSON.stringify(point));
+  return point;
+}
+
+function obtenerRespaldoPuntoOperacion_() {
+  const text = PropertiesService.getScriptProperties().getProperty('PUNTO_OPERACIONAL_RESPALDO');
+  if (!text) return null;
+  try {
+    const point = JSON.parse(text);
+    const company = {
+      VALIDAR_UBICACION_OPERACION: 'SI',
+      PUNTO_OPERACION_NOMBRE: point.NOMBRE,
+      PUNTO_OPERACION_DIRECCION: point.DIRECCION,
+      PUNTO_OPERACION_LATITUD: point.LATITUD,
+      PUNTO_OPERACION_LONGITUD: point.LONGITUD,
+      RADIO_INICIO_METROS: point.RADIO_INICIO_METROS,
+      RADIO_FIN_METROS: point.RADIO_FIN_METROS,
+      PRECISION_GPS_MAXIMA_METROS: point.PRECISION_GPS_MAXIMA_METROS,
+      RETORNO_BASE_OBLIGATORIO: point.RETORNO_BASE_OBLIGATORIO
+    };
+    return puntoOperacionDesdeEmpresa_(company);
+  } catch (error) {
+    return null;
+  }
+}
+
+
 function validarPuntoOperacionEmpresa_(data, current) {
   const merged = Object.assign({}, current || {}, data || {});
   const enabled = String(merged.VALIDAR_UBICACION_OPERACION || 'SI') !== 'NO';
@@ -55,7 +124,7 @@ function estadoSistema_() {
   asegurarCatalogos_();
   const users = listarRegistros_('USUARIOS', {});
   const usersWithAccess = users.filter(usuarioTieneAccesoConfigurado_);
-  const companies = listarRegistros_('EMPRESAS', {});
+  const companies = ordenarEmpresasPrincipal_(listarRegistros_('EMPRESAS', {}));
   return ok_({
     connected: true,
     version: VERSION_APLICACION,
@@ -74,10 +143,44 @@ function estadoSistema_() {
 }
 
 
+/** Repara o restaura el punto operacional sin eliminar información. */
+function repararPuntoOperacional() {
+  asegurarHoja_('EMPRESAS');
+  reiniciarCachesEjecucion_();
+  let company = obtenerEmpresaPrincipal_();
+  let point = puntoOperacionDesdeEmpresa_(company);
+  if (point) {
+    guardarRespaldoPuntoOperacion_(company);
+    return { ok:true, configurado:true, restaurado:false, empresaId:company.ID, point:point };
+  }
+  point = obtenerRespaldoPuntoOperacion_();
+  if (!point) return { ok:true, configurado:false, restaurado:false, message:'Configure la base desde Operaciones o Configuración.' };
+  const data = {
+    VALIDAR_UBICACION_OPERACION:'SI', RETORNO_BASE_OBLIGATORIO:'SI',
+    PUNTO_OPERACION_NOMBRE:point.NOMBRE, PUNTO_OPERACION_DIRECCION:point.DIRECCION,
+    PUNTO_OPERACION_LATITUD:point.LATITUD, PUNTO_OPERACION_LONGITUD:point.LONGITUD,
+    RADIO_INICIO_METROS:point.RADIO_INICIO_METROS, RADIO_FIN_METROS:point.RADIO_FIN_METROS,
+    PRECISION_GPS_MAXIMA_METROS:point.PRECISION_GPS_MAXIMA_METROS
+  };
+  if (!company) {
+    data.NOMBRE_FANTASIA = point.NOMBRE || 'Empresa'; data.RAZON_SOCIAL = data.NOMBRE_FANTASIA;
+    data.DIRECCION = point.DIRECCION || ''; data.ESTADO = 'Activo';
+    company = insertarRegistro_('EMPRESAS', data, 'EMP');
+  } else {
+    company = actualizarRegistro_('EMPRESAS', company.ID, data);
+  }
+  SpreadsheetApp.flush(); reiniciarCachesEjecucion_();
+  const confirmed = obtenerRegistro_('EMPRESAS', company.ID);
+  const confirmedPoint = puntoOperacionDesdeEmpresa_(confirmed);
+  if (!confirmedPoint) throw new Error('PUNTO_OPERACION_NO_CONFIRMADO');
+  return { ok:true, configurado:true, restaurado:true, empresaId:company.ID, point:confirmedPoint };
+}
+
 /** Guarda la identidad y los datos institucionales de la empresa. */
 function guardarEmpresaServicio_(request, session) {
   exigirPermiso_(session.user, 'CONFIGURACION', 'ACTUALIZAR');
-  const current = listarRegistros_('EMPRESAS', {})[0] || null;
+  asegurarHoja_('EMPRESAS');
+  const current = obtenerEmpresaPrincipal_();
   const data = validarPuntoOperacionEmpresa_(validarTemaEmpresa_(normalizarEntradaRecurso_('EMPRESAS', request.datos || {}, session.user)), current);
 
   if (String(request.eliminarLogotipo || '') === 'SI') {
@@ -101,9 +204,47 @@ function guardarEmpresaServicio_(request, session) {
   const row = current
     ? actualizarRegistro_('EMPRESAS', current.ID, data)
     : insertarRegistro_('EMPRESAS', data, 'EMP');
+  SpreadsheetApp.flush();
+  invalidarCacheHoja_('EMPRESAS');
+  const confirmed = obtenerRegistro_('EMPRESAS', row.ID) || row;
+  if (puntoOperacionDesdeEmpresa_(confirmed)) guardarRespaldoPuntoOperacion_(confirmed);
 
   registrarBitacora_(session.user, 'ACTUALIZAR', 'CONFIGURACION', row.ID, 'Configuración de empresa guardada');
-  return ok_({ row: limpiarSalidaRecurso_('EMPRESAS', row) });
+  return ok_({ row: limpiarSalidaRecurso_('EMPRESAS', confirmed), confirmado:true });
+}
+
+/** Guarda y confirma exclusivamente el punto operacional. */
+function guardarPuntoOperacionServicio_(request, session) {
+  exigirPermiso_(session.user, 'CONFIGURACION', 'ACTUALIZAR');
+  asegurarHoja_('EMPRESAS');
+  const current = obtenerEmpresaPrincipal_();
+  const raw = Object.assign({}, request.datos || request || {});
+  raw.VALIDAR_UBICACION_OPERACION = 'SI';
+  raw.RETORNO_BASE_OBLIGATORIO = 'SI';
+  if (!String(raw.PUNTO_OPERACION_NOMBRE || '').trim()) raw.PUNTO_OPERACION_NOMBRE = 'Base operacional';
+  if (!String(raw.PUNTO_OPERACION_DIRECCION || '').trim()) raw.PUNTO_OPERACION_DIRECCION = String((current && current.DIRECCION) || raw.PUNTO_OPERACION_NOMBRE || 'Base operacional');
+  const clean = normalizarEntradaRecurso_('EMPRESAS', raw, session.user);
+  const data = validarPuntoOperacionEmpresa_(clean, current);
+  const fields = ['VALIDAR_UBICACION_OPERACION','PUNTO_OPERACION_NOMBRE','PUNTO_OPERACION_DIRECCION','PUNTO_OPERACION_LATITUD','PUNTO_OPERACION_LONGITUD','RADIO_INICIO_METROS','RADIO_FIN_METROS','PRECISION_GPS_MAXIMA_METROS','RETORNO_BASE_OBLIGATORIO'];
+  const pointData = {};
+  fields.forEach(function(field) { if (Object.prototype.hasOwnProperty.call(data, field)) pointData[field] = data[field]; });
+  if (!current) {
+    pointData.NOMBRE_FANTASIA = pointData.PUNTO_OPERACION_NOMBRE || 'Empresa';
+    pointData.RAZON_SOCIAL = pointData.NOMBRE_FANTASIA;
+    pointData.DIRECCION = pointData.PUNTO_OPERACION_DIRECCION || '';
+    pointData.ESTADO = 'Activo';
+  }
+  const row = current
+    ? actualizarRegistro_('EMPRESAS', current.ID, pointData)
+    : insertarRegistro_('EMPRESAS', pointData, 'EMP');
+  SpreadsheetApp.flush();
+  reiniciarCachesEjecucion_();
+  const confirmed = obtenerRegistro_('EMPRESAS', row.ID);
+  const point = puntoOperacionDesdeEmpresa_(confirmed);
+  if (!confirmed || !point) throw new Error('PUNTO_OPERACION_NO_CONFIRMADO');
+  guardarRespaldoPuntoOperacion_(confirmed);
+  registrarBitacora_(session.user, 'CONFIGURAR_PUNTO', 'CONFIGURACION', row.ID, 'Punto operacional guardado y confirmado');
+  return ok_({ row: limpiarSalidaRecurso_('EMPRESAS', confirmed), point:point, confirmado:true });
 }
 
 function guardarLogoEmpresaEnDrive_(dataUrl, nombre, tipo) {

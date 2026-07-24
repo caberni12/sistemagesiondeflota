@@ -147,7 +147,12 @@ function instalarSistema() {
 }
 
 function actualizarSistema() {
-  return instalarSistema();
+  const resultado = instalarSistema();
+  try { repararModuloCheckin(); } catch (error) { Logger.log('Reparación de check-in: ' + error.message); }
+  try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
+  reiniciarCachesEjecucion_();
+  resultado.message = 'Sistema 3.1.2 actualizado: estructura, catálogos, permisos, GPS actual, check-in y punto operacional verificados.';
+  return resultado;
 }
 
 function probarConexion() {

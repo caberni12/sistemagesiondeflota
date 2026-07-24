@@ -3,10 +3,10 @@
  * Pegue en DIRECCION_APLICACION la dirección terminada en /exec del despliegue de Google Apps Script.
  */
 window.CONFIGURACION_FLOTAS = Object.freeze({
-  VERSION: '3.0.0',
+  VERSION: '3.1.2',
   MODO: 'automatico',
   MODO_MODULAR: true,
-  DIRECCION_APLICACION: 'https://script.google.com/macros/s/AKfycbyjU0Ew0qFaFtOXE5qXZcTPX2rmM-BEA30Y46qFadPITj-pekq83e4PQGPjQgz7Tp4V/exec',
+  DIRECCION_APLICACION: 'https://script.google.com/macros/s/AKfycbz3bmZimRvYvf3k39qKtnhaO3hufSFUJbWMpV7g7YD-bmAGrf8MRmsYwOQHOyw5lqSl/exec',
   CLAVE_ALMACENAMIENTO_LOCAL: 'sistema_gestion_flotas_base_local_v3',
   CLAVE_SESION_LOCAL: 'sistema_gestion_flotas_sesion_v3',
   TIEMPO_ESPERA_MILISEGUNDOS: 25000,

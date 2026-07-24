@@ -45,7 +45,7 @@ function instalarSistemaInicial_(request) {
 
     const nombreEmpresa = String(request.nombreEmpresa || request.empresa || '').trim();
     if (nombreEmpresa) {
-      const actual = listarRegistros_('EMPRESAS', {})[0] || null;
+      const actual = obtenerEmpresaPrincipal_();
       const empresa = {
         RUT: String(request.rutEmpresa || '').trim(),
         RAZON_SOCIAL: String(request.razonSocial || nombreEmpresa).trim(),

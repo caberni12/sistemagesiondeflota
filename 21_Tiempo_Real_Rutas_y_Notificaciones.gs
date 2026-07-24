@@ -6,24 +6,32 @@
 function asignarRuta_(request, session) {
   exigirPermiso_(session.user, 'RUTAS', 'CREAR');
   const data = request.datos || request;
-  validarRequeridos_(data, ['CONDUCTOR_ID','DESTINO']);
+  validarRequeridos_(data, ['CONDUCTOR_ID','ORIGEN','DESTINO']);
   const driver = obtenerRegistro_('CONDUCTORES', data.CONDUCTOR_ID);
   if (!driver || driver.ESTADO === 'Inactivo') throw new Error('CONDUCTOR_NO_DISPONIBLE');
   const vehicle = data.VEHICULO_ID ? obtenerRegistro_('VEHICULOS', data.VEHICULO_ID) : null;
   if (data.VEHICULO_ID && !vehicle) throw new Error('VEHICULO_NO_ENCONTRADO');
   const provider = ['Google Maps','Waze'].indexOf(data.PROVEEDOR_NAVEGACION) >= 0
     ? data.PROVEEDOR_NAVEGACION : 'Google Maps';
-  let base = null;
-  try { base = obtenerPuntoOperacionConfigurado_(); } catch (error) { base = null; }
+  const company = obtenerEmpresaPrincipal_() || {};
+  const baseLatitudeText = String(company.PUNTO_OPERACION_LATITUD == null ? '' : company.PUNTO_OPERACION_LATITUD).trim();
+  const baseLongitudeText = String(company.PUNTO_OPERACION_LONGITUD == null ? '' : company.PUNTO_OPERACION_LONGITUD).trim();
+  const baseLatitude = Number(baseLatitudeText);
+  const baseLongitude = Number(baseLongitudeText);
+  const hasOperationalBase = Boolean(baseLatitudeText && baseLongitudeText)
+    && isFinite(baseLatitude) && isFinite(baseLongitude)
+    && baseLatitude >= -90 && baseLatitude <= 90 && baseLongitude >= -180 && baseLongitude <= 180;
+  const plannedOrigin = String(data.ORIGEN || (hasOperationalBase ? (company.PUNTO_OPERACION_DIRECCION || company.DIRECCION || 'Base operacional') : '')).trim();
+  if (!plannedOrigin) throw new Error('CAMPO_REQUERIDO_ORIGEN');
 
   const route = insertarRegistro_('RUTAS', {
     NOMBRE: data.NOMBRE || ('Ruta a ' + data.DESTINO),
     CONDUCTOR_ID: driver.ID,
     VEHICULO_ID: vehicle ? vehicle.ID : '',
     OPERACION_ID: data.OPERACION_ID || '',
-    ORIGEN: data.ORIGEN || (base ? base.DIRECCION : 'Ubicación actual'),
-    ORIGEN_LATITUD: data.ORIGEN_LATITUD || (base ? base.LATITUD : ''),
-    ORIGEN_LONGITUD: data.ORIGEN_LONGITUD || (base ? base.LONGITUD : ''),
+    ORIGEN: plannedOrigin,
+    ORIGEN_LATITUD: data.ORIGEN_LATITUD || (hasOperationalBase ? baseLatitude : ''),
+    ORIGEN_LONGITUD: data.ORIGEN_LONGITUD || (hasOperationalBase ? baseLongitude : ''),
     DESTINO: data.DESTINO,
     DESTINO_LATITUD: data.DESTINO_LATITUD || '',
     DESTINO_LONGITUD: data.DESTINO_LONGITUD || '',

@@ -6,7 +6,7 @@ window.CONFIGURACION_FLOTAS = Object.freeze({
   VERSION: '3.11.0',
   MODO: 'automatico',
   MODO_MODULAR: true,
-  DIRECCION_APLICACION: 'https://script.google.com/macros/s/AKfycbyjsoAcYNFeHhrv50a3nAsiZDbLNsfxxUIPlNHk-7Z3j2ioZQFfDnTlofBKKEdQKKx3/exec',
+  DIRECCION_APLICACION: 'https://script.google.com/macros/s/AKfycbzbR86XqCB7oLe99R6TkHedq_wBBhi2Gs-R330j-CYJSLiHY_94Y4Piw0VF3aRBSumL/exec',
   CLAVE_ALMACENAMIENTO_LOCAL: 'sistema_gestion_flotas_base_local_v3',
   CLAVE_SESION_LOCAL: 'sistema_gestion_flotas_sesion_v3',
   TIEMPO_ESPERA_MILISEGUNDOS: 30000,

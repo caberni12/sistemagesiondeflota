@@ -29,3 +29,7 @@ body.oscuro{color-scheme:dark;--fondo:var(--tema-fondo-oscuro,#0f1918);--superfi
 @keyframes pulso{50%{transform:scale(.9);opacity:.62}}
 @media(max-width:720px){.barra-modular{height:66px;flex-basis:66px;padding:0 10px}.titulo-modular{gap:8px}.titulo-modular>div>span{display:none}.titulo-modular h1{max-width:55vw;font-size:17px}.estado-modular span{display:none}.acciones-modulares{gap:6px}.boton-icono{width:38px;height:38px}}
 @media(max-width:420px){.titulo-modular h1{max-width:48vw}.menu-lateral{width:92vw}}
+
+
+/* Navegación 3.5.0: el iframe se conserva en memoria al cambiar de módulo. */
+.estado-modular.listo::before{background:#16a074}.estado-modular.advertencia::before{background:#d89216}

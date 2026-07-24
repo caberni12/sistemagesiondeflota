@@ -29,6 +29,7 @@
       this.centro = Array.isArray(opciones.centro) ? opciones.centro.map(Number) : [-33.4489, -70.6693];
       this.nivel = limitar(Number(opciones.nivel || 12), 3, 19);
       this.marcadores = [];
+      this.circulos = [];
       this.arrastrando = false;
       this.movimientoInicial = null;
       this.centroInicial = null;
@@ -52,6 +53,8 @@
       this.contenedor.classList.add('mapa-flotas');
       this.capaBaldosas = document.createElement('div');
       this.capaBaldosas.className = 'mapa-baldosas';
+      this.capaCirculos = document.createElement('div');
+      this.capaCirculos.className = 'mapa-circulos';
       this.capaMarcadores = document.createElement('div');
       this.capaMarcadores.className = 'mapa-marcadores';
       this.aviso = document.createElement('div');
@@ -60,7 +63,7 @@
       this.controles = document.createElement('div');
       this.controles.className = 'mapa-controles';
       this.controles.innerHTML = '<button type="button" data-mapa-acercar aria-label="Acercar">＋</button><button type="button" data-mapa-alejar aria-label="Alejar">−</button><button type="button" data-mapa-centrar aria-label="Centrar ubicaciones">⌖</button>';
-      this.contenedor.append(this.capaBaldosas, this.capaMarcadores, this.aviso, this.controles);
+      this.contenedor.append(this.capaBaldosas, this.capaCirculos, this.capaMarcadores, this.aviso, this.controles);
     }
 
     vincularEventos() {
@@ -119,10 +122,33 @@
       }
     }
 
+    actualizarCirculos(circulos = []) {
+      this.circulos = (circulos || []).filter(item =>
+        Number.isFinite(Number(item.latitud)) &&
+        Number.isFinite(Number(item.longitud)) &&
+        Number.isFinite(Number(item.radio)) && Number(item.radio) > 0
+      );
+      if (this.vistaActual) this.dibujarCirculos(this.vistaActual.izquierda, this.vistaActual.arriba);
+      else this.dibujar();
+    }
+
     ajustarAMarcadores() {
-      if (!this.marcadores.length) return this.dibujar();
-      const latitudes = this.marcadores.map(item => Number(item.latitud));
-      const longitudes = this.marcadores.map(item => Number(item.longitud));
+      if (!this.marcadores.length && !this.circulos.length) return this.dibujar();
+      const puntos = this.marcadores.map(item => ({ latitud:Number(item.latitud), longitud:Number(item.longitud) }));
+      this.circulos.forEach(item => {
+        const latitud = Number(item.latitud), longitud = Number(item.longitud), radio = Number(item.radio);
+        const deltaLatitud = radio / 111320;
+        const coseno = Math.max(0.15, Math.cos(latitud * Math.PI / 180));
+        const deltaLongitud = radio / (111320 * coseno);
+        puntos.push(
+          { latitud:latitud - deltaLatitud, longitud },
+          { latitud:latitud + deltaLatitud, longitud },
+          { latitud, longitud:longitud - deltaLongitud },
+          { latitud, longitud:longitud + deltaLongitud }
+        );
+      });
+      const latitudes = puntos.map(item => Number(item.latitud));
+      const longitudes = puntos.map(item => Number(item.longitud));
       const minLat = Math.min(...latitudes), maxLat = Math.max(...latitudes);
       const minLng = Math.min(...longitudes), maxLng = Math.max(...longitudes);
       this.centro = [(minLat + maxLat) / 2, (minLng + maxLng) / 2];
@@ -146,6 +172,7 @@
       const arriba = centroMundo.y - alto / 2;
       this.vistaActual = { izquierda, arriba, ancho, alto, nivel:this.nivel };
       this.dibujarBaldosas(izquierda, arriba, ancho, alto);
+      this.dibujarCirculos(izquierda, arriba);
       this.dibujarMarcadores(izquierda, arriba);
     }
 
@@ -173,6 +200,32 @@
         }
       }
       this.capaBaldosas.appendChild(fragmento);
+    }
+
+    dibujarCirculos(izquierda, arriba) {
+      if (!this.capaCirculos) return;
+      this.capaCirculos.innerHTML = '';
+      const fragmento = document.createDocumentFragment();
+      this.circulos.forEach(item => {
+        const centro = latitudLongitudAMundo(item.latitud, item.longitud, this.nivel);
+        const deltaLatitud = Number(item.radio) / 111320;
+        const borde = latitudLongitudAMundo(Number(item.latitud) + deltaLatitud, item.longitud, this.nivel);
+        const radioPixeles = Math.max(5, Math.abs(borde.y - centro.y));
+        const circulo = document.createElement('div');
+        circulo.className = `mapa-radio ${item.clase || ''}`.trim();
+        circulo.style.left = `${centro.x - izquierda - radioPixeles}px`;
+        circulo.style.top = `${centro.y - arriba - radioPixeles}px`;
+        circulo.style.width = `${radioPixeles * 2}px`;
+        circulo.style.height = `${radioPixeles * 2}px`;
+        circulo.title = item.etiqueta || `Radio autorizado: ${Math.round(item.radio)} m`;
+        if (item.etiqueta) {
+          const etiqueta = document.createElement('span');
+          etiqueta.textContent = item.etiqueta;
+          circulo.appendChild(etiqueta);
+        }
+        fragmento.appendChild(circulo);
+      });
+      this.capaCirculos.appendChild(fragmento);
     }
 
     dibujarMarcadores(izquierda, arriba) {

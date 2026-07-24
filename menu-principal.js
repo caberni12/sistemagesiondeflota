@@ -2,7 +2,7 @@
   'use strict';
   const $=(selector,root=document)=>root.querySelector(selector);
   const api=window.ConexionFlotas;
-  const VERSION='3.2.0';
+  const VERSION='3.5.0';
   const grupos=[
     ['GENERAL',[
       ['dashboard','⌂','Panel principal','panel-principal.html','PANEL_PRINCIPAL'],
@@ -39,6 +39,9 @@
   let oscuro=window.TemaFlotas?.modoOscuroInicial?.()??localStorage.getItem('flotas_tema')==='dark';
   let cerrandoSesion=false;
   let redireccionando=false;
+  let marcoListo=false;
+  let moduloIframeActual='';
+  let secuenciaCambioModulo=0;
 
   function iniciales(nombre='Usuario'){
     return String(nombre).trim().split(/\s+/).slice(0,2).map(parte=>parte[0]||'').join('').toUpperCase()||'US';
@@ -85,17 +88,36 @@
   function abrirModulo(id,{forzar=false}={}){
     const modulo=modulos.get(id)||modulos.get('dashboard');
     if(!usuario||!permitido(modulo[4]))return;
-    if(modulo[0]===seccionActual&&!forzar&&marco.getAttribute('src')){cerrarMenu();return;}
+    if(modulo[0]===seccionActual&&!forzar&&marcoListo){cerrarMenu();return;}
     seccionActual=modulo[0];
     localStorage.setItem('flotas_modulo_actual_v1',seccionActual);
     $('#tituloModulo').textContent=modulo[2];
     construirMenu();
     cerrarMenu();
     $('#cargandoModulo').classList.remove('oculto');
-    cambiarEstado('Abriendo módulo');
+    cambiarEstado(marcoListo?'Cargando desde memoria local':'Abriendo módulo');
+    const cambio=++secuenciaCambioModulo;
+
+    if(marcoListo&&marco.contentWindow&&!forzar){
+      enviar({tipo:'flotas:navegar',seccion:modulo[0]});
+      setTimeout(()=>{
+        if(cambio!==secuenciaCambioModulo||marcoListo===false)return;
+        const titulo=$('#tituloModulo')?.textContent||'';
+        if(titulo===modulo[2]&&!$('#cargandoModulo').classList.contains('oculto')){
+          marcoListo=false;
+          moduloIframeActual=modulo[0];
+          marco.src=`${modulo[3]}?v=${VERSION}&recuperar=${Date.now()}`;
+        }
+      },7000);
+      return;
+    }
+
+    marcoListo=false;
+    moduloIframeActual=modulo[0];
     const recarga=forzar?`&actualizar=${Date.now()}`:'';
     marco.src=`${modulo[3]}?v=${VERSION}${recarga}`;
   }
+
   function aplicarUsuario(nuevoUsuario){
     usuario=nuevoUsuario||null;
     if(!usuario)return;
@@ -193,9 +215,11 @@
     if(event.origin!==location.origin&&event.origin!=='null')return;
     const data=event.data||{};
     if(data.tipo==='flotas:modulo-listo'){
+      marcoListo=true;
+      moduloIframeActual=data.seccion||seccionActual;
       if(data.usuario)aplicarUsuario(data.usuario);
       $('#cargandoModulo').classList.add('oculto');
-      cambiarEstado('Módulo activo','listo');
+      cambiarEstado(data.actualizadoEn?'Módulo activo · memoria local':'Módulo activo','listo');
       aplicarTema();
     }
     if(data.tipo==='flotas:navegar'&&modulos.has(data.seccion))abrirModulo(data.seccion);
@@ -213,7 +237,7 @@
     if(data.tipo==='flotas:tema-colores'&&data.tema)window.TemaFlotas?.aplicar?.(data.tema,{guardar:false});
   });
   window.addEventListener('flotas:sesion-invalida',()=>validarSesion({desdeModulo:true}));
-  marco.addEventListener('load',()=>setTimeout(()=>$('#cargandoModulo').classList.add('oculto'),160));
+  marco.addEventListener('load',()=>{marcoListo=false;setTimeout(()=>{if(!marcoListo)cambiarEstado('Preparando módulo…');},350);});
   marco.addEventListener('error',()=>cambiarEstado('No se pudo abrir el módulo','error'));
   $('#abrirMenu').addEventListener('click',abrirMenu);
   $('#cerrarMenu').addEventListener('click',cerrarMenu);

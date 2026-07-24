@@ -1,33 +1,23 @@
-# INSTALACIÓN — Sistema de Gestión de Flotas 3.2.0
+# Sistema de Gestión de Flotas 3.4.0
 
-## Estructura
-Todos los archivos están en la raíz. No hay subcarpetas. Es compatible con GitHub Pages.
+## Instalación
 
-## Google Apps Script
-Use solo una alternativa:
-1. Copiar todos los archivos `.gs` numerados; o
-2. Copiar únicamente `Codigo_Completo.gs`.
-
-No combine ambas alternativas porque duplicará funciones.
-
-## Actualización
-1. Respalde el Google Sheets actual.
-2. Reemplace los archivos web por esta versión.
-3. Actualice Google Apps Script.
+1. Haga una copia de seguridad de Google Sheets.
+2. Reemplace todos los archivos del frontend.
+3. En Google Apps Script use todos los archivos `.gs` numerados o solamente `Codigo_Completo.gs`. No combine ambas alternativas.
 4. Ejecute `actualizarSistema()`.
-5. Publique una nueva versión de la aplicación web.
-6. Copie la dirección terminada en `/exec` en `configuracion.js`.
-7. Recargue el navegador con `Ctrl + F5`.
+5. Publique una nueva versión del despliegue web.
+6. Revise la dirección terminada en `/exec` dentro de `configuracion.js`.
+7. Recargue con `Ctrl + F5`.
 
-## Punto operacional
-Solo Administrador o Supervisor pueden configurarlo. Un Conductor no puede modificarlo. Todo cambio se registra en auditoría.
+## Reglas operacionales
 
-## Cierre de operación
-- Conductor: solo dentro de la base asignada.
-- Administrador/Supervisor: cierre normal en base o cierre excepcional fuera de base con motivo obligatorio.
+- El Conductor finaliza únicamente dentro del punto base.
+- Administrador y Supervisor pueden hacer cierre excepcional fuera de base con motivo y auditoría.
+- Solo el Administrador puede editar o eliminar operaciones.
+- Los kilometrajes son opcionales y no bloquean el inicio ni el cierre.
+- Eliminar una operación es una eliminación lógica: la auditoría, historial y evidencias no se borran.
 
-## Importación masiva
-En Vehículos, Conductores y Documentos use `Plantilla` o `Importación masiva`. Las plantillas XLSX y CSV están incluidas en esta misma carpeta.
 
-## IP de conexión
-La IP pública se registra en segundo plano. Si el navegador o la red bloquea el servicio externo, el sistema continúa funcionando y el campo queda vacío.
+## Rendimiento 3.5.0
+El menú mantiene un solo iframe activo. Al cambiar de módulo, la vista se abre desde la memoria local y no se recargan todos los archivos comunes. Use el botón **Sincronizar** dentro de cada módulo para consultar nuevamente la base central. Para limpiar la memoria del navegador, cierre sesión o borre los datos del sitio.

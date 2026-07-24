@@ -25,6 +25,8 @@ function enrutarSolicitud_(request, event) {
     case 'eliminar': return servicioEliminar_(request, session);
     case 'iniciarOperacion': return iniciarOperacion_(request, session);
     case 'finalizarOperacion': return finalizarOperacion_(request, session);
+    case 'editarOperacionAdministrativa': return editarOperacionAdministrativa_(request, session);
+    case 'eliminarOperacionAdministrativa': return eliminarOperacionAdministrativa_(request, session);
     case 'crearCheckinVehicular': return crearCheckinVehicular_(request, session);
     case 'revisarCheckinVehicular': return revisarCheckinVehicular_(request, session);
     case 'checkinsDisponibles': return checkinsDisponibles_(request, session);
@@ -43,6 +45,7 @@ function enrutarSolicitud_(request, event) {
     case 'actualizarPermisosUsuario': return actualizarPermisosUsuario_(request, session);
     case 'guardarEmpresa': return guardarEmpresaServicio_(request, session);
     case 'guardarPuntoOperacion': return guardarPuntoOperacionServicio_(request, session);
+    case 'obtenerPuntoOperacion': return obtenerPuntoOperacionServicio_(request, session);
     case 'limpiarDatosOperativos': return limpiarDatosOperativosServicio_(request, session);
     case 'importarMasivo': return importarMasivoServicio_(request, session);
     case 'registrarIpConexion': return registrarIpConexion_(request, session);
@@ -68,6 +71,8 @@ function cargaRapida_(request, session) {
       respuesta = panelPrincipal_(session);
     } else if (accion === 'resumenTiempoReal') {
       respuesta = resumenTiempoReal_(consulta, session);
+    } else if (accion === 'obtenerPuntoOperacion') {
+      respuesta = obtenerPuntoOperacionServicio_(consulta, session);
     } else if (accion === 'listar') {
       respuesta = servicioListar_({
         recurso: consulta.recurso,

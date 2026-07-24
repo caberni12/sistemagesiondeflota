@@ -3,7 +3,7 @@
  * Si el proyecto Apps Script está vinculado a la hoja, instalarSistema() guardará
  * automáticamente el ID. Para un proyecto independiente, pegue el ID aquí.
  */
-const VERSION_APLICACION = '3.2.0';
+const VERSION_APLICACION = '3.5.0';
 
 const CONFIGURACION_APLICACION = Object.freeze({
   ID_HOJA_CALCULO: '1onJJEN1rgz0N9GXOiUqV7ong4-nlbdAjzMyW_rumXCM',
@@ -20,6 +20,7 @@ const CONFIGURACION_APLICACION = Object.freeze({
   SEGUNDOS_ACTUALIZAR_CONEXION_DESDE_GPS: 20,
   SEGUNDOS_CACHE_METADATOS_TIEMPO_REAL: 10,
   MAXIMO_FILAS_IMPORTACION: 1500,
+  TOLERANCIA_GPS_IMPRECISA_FIN_METROS: 500,
 });
 
 const ESQUEMAS_APLICACION = Object.freeze({

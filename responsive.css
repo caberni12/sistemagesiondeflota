@@ -289,3 +289,6 @@ body.modo-modulo-iframe .content{width:100%;max-width:100%;overflow-x:hidden}
 @media (max-width:420px){.bulk-import-summary{grid-template-columns:1fr}}
 
 @media (max-width:720px){.import-steps{grid-template-columns:1fr}.import-template-card{align-items:flex-start;flex-direction:column}.file-drop{padding:18px}}
+
+
+@media (max-width:640px){.module-cache-status{align-items:flex-start;flex-direction:column;padding:10px 12px}.module-cache-status span{white-space:normal}.module-cache-status .btn{width:100%}}

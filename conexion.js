@@ -7,8 +7,8 @@
     logout:'cerrarSesion', me:'miSesion', dashboard:'panelPrincipal', list:'listar', get:'obtener',
     quickLoad:'cargaRapida',
     create:'crear', update:'actualizar', delete:'eliminar', startOperation:'iniciarOperacion',
-    finishOperation:'finalizarOperacion', saveLocation:'guardarUbicacion', latestLocations:'ultimasUbicaciones',
-    changePassword:'cambiarContrasena', saveUserPermissions:'actualizarPermisosUsuario', saveCompany:'guardarEmpresa', saveOperationalPoint:'guardarPuntoOperacion', clearOperationalData:'limpiarDatosOperativos',
+    finishOperation:'finalizarOperacion', editOperationAdmin:'editarOperacionAdministrativa', deleteOperationAdmin:'eliminarOperacionAdministrativa', saveLocation:'guardarUbicacion', latestLocations:'ultimasUbicaciones',
+    changePassword:'cambiarContrasena', saveUserPermissions:'actualizarPermisosUsuario', saveCompany:'guardarEmpresa', saveOperationalPoint:'guardarPuntoOperacion', getOperationalPoint:'obtenerPuntoOperacion', clearOperationalData:'limpiarDatosOperativos',
     assignRoute:'asignarRuta', updateRouteStatus:'actualizarEstadoRuta', sendNotification:'enviarNotificacion',
     readNotification:'marcarNotificacionLeida', heartbeat:'actualizarConexion', realtimeSummary:'resumenTiempoReal',
     diagnoseSystem:'diagnosticoSistema', repairSystem:'repararSistema',
@@ -52,8 +52,61 @@
   const qrAuthorizations = new Map();
   const cacheRespuestas = new Map();
   const solicitudesPendientes = new Map();
-  const accionesLectura = new Set(['status','me','dashboard','list','realtimeSummary','diagnoseSystem']);
+  const accionesLectura = new Set(['status','me','dashboard','list','realtimeSummary','diagnoseSystem','getOperationalPoint']);
   const clientIpCacheKey = 'flotas_ip_publica_v1';
+  const claveCachePersistente = config.CLAVE_CACHE_MODULOS_LOCAL || 'sistema_gestion_flotas_cache_modulos_v1';
+  const accionesCachePersistente = new Set(['dashboard','list','diagnoseSystem','getOperationalPoint']);
+  let temporizadorPersistenciaCache = null;
+
+  function entradaCachePersistible(entry) {
+    return Boolean(entry && accionesCachePersistente.has(entry.action));
+  }
+
+  function cargarCachePersistente() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(claveCachePersistente) || '{}');
+      const maxAge = Number(config.CACHE_MAXIMA_ANTIGUEDAD_MILISEGUNDOS || 86400000);
+      const now = Date.now();
+      const entries = Array.isArray(saved.entries) ? saved.entries : [];
+      entries.forEach(item => {
+        if (!Array.isArray(item) || item.length !== 2) return;
+        const [key, entry] = item;
+        if (!entradaCachePersistible(entry)) return;
+        if (!entry.time || now - Number(entry.time) > maxAge) return;
+        cacheRespuestas.set(String(key), { ...entry, origin:'DISPOSITIVO' });
+      });
+    } catch (_) {
+      try { localStorage.removeItem(claveCachePersistente); } catch (_) {}
+    }
+  }
+
+  function persistirCacheAhora() {
+    temporizadorPersistenciaCache = null;
+    try {
+      const maxEntries = Math.max(8, Number(config.CACHE_LOCAL_MAXIMO_ENTRADAS || 42));
+      const maxBytes = Math.max(250000, Number(config.CACHE_LOCAL_MAXIMO_BYTES || 3500000));
+      const candidates = [...cacheRespuestas.entries()]
+        .filter(([, entry]) => entradaCachePersistible(entry))
+        .sort((a,b) => Number(b[1].time || 0) - Number(a[1].time || 0))
+        .slice(0, maxEntries);
+      const selected = [];
+      for (const candidate of candidates) {
+        const attempt = { version:1, savedAt:Date.now(), entries:[...selected, candidate] };
+        if (JSON.stringify(attempt).length > maxBytes) break;
+        selected.push(candidate);
+      }
+      localStorage.setItem(claveCachePersistente, JSON.stringify({ version:1, savedAt:Date.now(), entries:selected }));
+    } catch (_) {
+      try { localStorage.removeItem(claveCachePersistente); } catch (_) {}
+    }
+  }
+
+  function programarPersistenciaCache() {
+    if (temporizadorPersistenciaCache) clearTimeout(temporizadorPersistenciaCache);
+    temporizadorPersistenciaCache = setTimeout(persistirCacheAhora, 120);
+  }
+
+  cargarCachePersistente();
 
   function loadAuth() {
     try { return JSON.parse(localStorage.getItem(config.CLAVE_SESION_LOCAL)) || {}; }
@@ -134,6 +187,9 @@
   function limpiarCache() {
     cacheRespuestas.clear();
     solicitudesPendientes.clear();
+    if (temporizadorPersistenciaCache) clearTimeout(temporizadorPersistenciaCache);
+    temporizadorPersistenciaCache = null;
+    try { localStorage.removeItem(claveCachePersistente); } catch (_) {}
   }
 
   function normalizarParaClave(value) {
@@ -167,14 +223,18 @@
 
   function guardarEnCache(action, payload, data) {
     const key = claveCache(action, payload);
-    cacheRespuestas.set(key, {
+    const entry = {
       action,
       resource: payload.resource || '',
       payload: normalizarParaClave(payload),
       data,
       time: Date.now(),
-    });
+      origin:'SERVIDOR',
+    };
+    cacheRespuestas.set(key, entry);
     if (cacheRespuestas.size > 80) cacheRespuestas.delete(cacheRespuestas.keys().next().value);
+    if (entradaCachePersistible(entry)) programarPersistenciaCache();
+    window.dispatchEvent(new CustomEvent('flotas:cache-actualizada', { detail:{ action, resource:entry.resource, time:entry.time } }));
     return data;
   }
 
@@ -185,9 +245,14 @@
       limpiarCache();
       return;
     }
+    let changed = false;
     cacheRespuestas.forEach((entry, key) => {
-      if (actions.has(entry.action) || (entry.resource && resources.has(entry.resource))) cacheRespuestas.delete(key);
+      if (actions.has(entry.action) || (entry.resource && resources.has(entry.resource))) {
+        cacheRespuestas.delete(key);
+        changed = true;
+      }
     });
+    if (changed) programarPersistenciaCache();
   }
 
   function invalidarDespuesDeEscritura(action, payload = {}) {
@@ -206,17 +271,19 @@
       delete: { actions:['dashboard'], resources:[payload.resource,'audit'] },
       startOperation: { actions:['dashboard','realtimeSummary'], resources:['operations','vehicles','drivers','history','audit'] },
       finishOperation: { actions:['dashboard','realtimeSummary'], resources:['operations','vehicles','drivers','history','audit'] },
+      editOperationAdmin: { actions:['dashboard','realtimeSummary'], resources:['operations','vehicles','drivers','routes','history','audit'] },
+      deleteOperationAdmin: { actions:['dashboard','realtimeSummary'], resources:['operations','vehicles','drivers','routes','history','audit'] },
       createVehicleCheckin: { actions:['dashboard'], resources:['checkins','alerts','audit'] },
       reviewVehicleCheckin: { actions:['dashboard'], resources:['checkins','notifications','audit'] },
       assignRoute: { actions:['dashboard','realtimeSummary'], resources:['routes','notifications','audit'] },
       updateRouteStatus: { actions:['dashboard','realtimeSummary'], resources:['routes','notifications','audit'] },
       sendNotification: { actions:['dashboard','realtimeSummary'], resources:['notifications','audit'] },
       readNotification: { actions:['dashboard','realtimeSummary'], resources:['notifications'] },
-      saveCompany: { actions:['status'], resources:['companies','audit'] },
-      saveOperationalPoint: { actions:['status','dashboard','diagnoseSystem'], resources:['companies','operations','routes','audit'] },
+      saveCompany: { actions:['status','getOperationalPoint'], resources:['companies','audit'] },
+      saveOperationalPoint: { actions:['status','dashboard','diagnoseSystem','getOperationalPoint'], resources:['companies','operations','routes','audit'] },
       changePassword: { actions:['me'], resources:['users','audit'] },
       saveUserPermissions: { actions:['me','dashboard'], resources:['users','audit'] },
-      repairSystem: { actions:['status','dashboard','realtimeSummary','diagnoseSystem'], resources:['companies','users','vehicles','drivers','routes','operations','gps','notifications','alerts','history','checkins','audit'] },
+      repairSystem: { actions:['status','dashboard','realtimeSummary','diagnoseSystem','getOperationalPoint'], resources:['companies','users','vehicles','drivers','routes','operations','gps','notifications','alerts','history','checkins','audit'] },
       bulkImport: { actions:['dashboard'], resources:[payload.resource,'audit'] },
       registerConnectionIp: { actions:['realtimeSummary'], resources:['connections','audit'] },
     };
@@ -249,7 +316,27 @@
       iniciarActualizacionLectura(action, payload, key).catch(() => {});
       return cached.data;
     }
-    return iniciarActualizacionLectura(action, payload, key);
+    try {
+      return await iniciarActualizacionLectura(action, payload, key);
+    } catch (error) {
+      if (cached) return cached.data;
+      throw error;
+    }
+  }
+
+  function informacionCache(action, payload = {}) {
+    const entry = cacheRespuestas.get(claveCache(action, payload));
+    if (!entry) return null;
+    return { action:entry.action, resource:entry.resource, time:Number(entry.time || 0), age:Date.now()-Number(entry.time || 0), origin:entry.origin || 'MEMORIA' };
+  }
+
+  function ultimaActualizacionCache(resource = '') {
+    let latest = null;
+    cacheRespuestas.forEach(entry => {
+      if (resource && entry.resource !== resource) return;
+      if (!latest || Number(entry.time || 0) > Number(latest.time || 0)) latest = entry;
+    });
+    return latest ? { time:Number(latest.time || 0), origin:latest.origin || 'MEMORIA', resource:latest.resource || '', action:latest.action } : null;
   }
 
   function descriptorConsulta(query, index) {
@@ -445,7 +532,7 @@
   async function localRequest(action, payload) {
     await Promise.resolve();
     switch (action) {
-      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.2.0', now:iso() };
+      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.5.0', now:iso() };
       case 'status': return {
         connected:true, needsSetup:activeRows(localDb.users).length === 0, spreadsheetName:'Base local del navegador',
         rows:{ users:activeRows(localDb.users).length, vehicles:activeRows(localDb.vehicles).length,
@@ -497,6 +584,8 @@
       case 'delete': return localDelete(payload);
       case 'startOperation': return localStartOperation(payload);
       case 'finishOperation': return localFinishOperation(payload);
+      case 'editOperationAdmin': return localEditOperationAdmin(payload);
+      case 'deleteOperationAdmin': return localDeleteOperationAdmin(payload);
       case 'createVehicleCheckin': return localCreateVehicleCheckin(payload);
       case 'reviewVehicleCheckin': return localReviewVehicleCheckin(payload);
       case 'availableCheckins': return localAvailableCheckins(payload);
@@ -515,6 +604,7 @@
       case 'saveUserPermissions': return localSaveUserPermissions(payload);
       case 'saveCompany': return localSaveCompany(payload);
       case 'saveOperationalPoint': return localSaveOperationalPoint(payload);
+      case 'getOperationalPoint': return localGetOperationalPoint();
       case 'bulkImport': return localBulkImport(payload);
       case 'registerConnectionIp': return localRegisterConnectionIp(payload);
       case 'clearOperationalData': return localClear(payload);
@@ -729,20 +819,24 @@
     return{NOMBRE:company.PUNTO_OPERACION_NOMBRE||'Base operacional',DIRECCION:company.PUNTO_OPERACION_DIRECCION||company.DIRECCION||'Base operacional',LATITUD:latitude,LONGITUD:longitude,RADIO_INICIO_METROS:Math.max(10,Number(company.RADIO_INICIO_METROS||150)),RADIO_FIN_METROS:Math.max(10,Number(company.RADIO_FIN_METROS||150)),PRECISION_GPS_MAXIMA_METROS:Math.max(10,Number(company.PRECISION_GPS_MAXIMA_METROS||120))};
   }
   function localDistanceMeters(lat1,lng1,lat2,lng2){const r=6371000,toRad=value=>Number(value)*Math.PI/180,dLat=toRad(lat2-lat1),dLng=toRad(lng2-lng1),a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;return 2*r*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));}
-  function localEvaluateOperationLocation(data,base,phase){const prefix=phase==='FIN'?'FIN_':'INICIO_',lat=Number(data[prefix+'LATITUD']??data.LATITUD),lng=Number(data[prefix+'LONGITUD']??data.LONGITUD),accuracy=Number(data[prefix+'PRECISION']??data.PRECISION);if(!Number.isFinite(lat)||!Number.isFinite(lng))throw new Error('UBICACION_OPERACION_REQUERIDA');if(!Number.isFinite(accuracy)||accuracy<=0)throw new Error('PRECISION_GPS_REQUERIDA');if(accuracy>base.PRECISION_GPS_MAXIMA_METROS)throw new Error('UBICACION_GPS_IMPRECISA');const distance=localDistanceMeters(lat,lng,base.LATITUD,base.LONGITUD),radius=phase==='FIN'?base.RADIO_FIN_METROS:base.RADIO_INICIO_METROS;return{LATITUD:lat,LONGITUD:lng,PRECISION:Math.round(accuracy*10)/10,DISTANCIA_METROS:Math.round(distance*10)/10,RADIO_PERMITIDO:radius,DENTRO_PERIMETRO:distance<=radius,ESTADO:distance<=radius?'VALIDADA':'FUERA_PERIMETRO'};}
+  function localEvaluateOperationLocation(data,base,phase){const prefix=phase==='FIN'?'FIN_':'INICIO_',lat=Number(data[prefix+'LATITUD']??data.LATITUD),lng=Number(data[prefix+'LONGITUD']??data.LONGITUD),accuracy=Number(data[prefix+'PRECISION']??data.PRECISION);if(!Number.isFinite(lat)||!Number.isFinite(lng))throw new Error('UBICACION_OPERACION_REQUERIDA');if(!Number.isFinite(accuracy)||accuracy<=0)throw new Error('PRECISION_GPS_REQUERIDA');const precisionValid=accuracy<=base.PRECISION_GPS_MAXIMA_METROS;if(phase!=='FIN'&&!precisionValid)throw new Error('UBICACION_GPS_IMPRECISA');const distance=localDistanceMeters(lat,lng,base.LATITUD,base.LONGITUD),radius=phase==='FIN'?base.RADIO_FIN_METROS:base.RADIO_INICIO_METROS,tolerance=phase==='FIN'&&!precisionValid?Math.min(accuracy,Number(config.TOLERANCIA_GPS_IMPRECISA_FIN_METROS||500)):0,inside=distance<=radius+tolerance;return{LATITUD:lat,LONGITUD:lng,PRECISION:Math.round(accuracy*10)/10,PRECISION_VALIDA:precisionValid,PRECISION_BAJA:inside&&!precisionValid,TOLERANCIA_PRECISION_METROS:Math.round(tolerance*10)/10,DISTANCIA_METROS:Math.round(distance*10)/10,RADIO_PERMITIDO:radius,DENTRO_PERIMETRO:inside,ESTADO:inside?(precisionValid?'VALIDADA':'VALIDADA_PRECISION_BAJA'):'FUERA_PERIMETRO'};}
   function localValidateOperationLocation(data,base,phase){const result=localEvaluateOperationLocation(data,base,phase);if(!result.DENTRO_PERIMETRO)throw new Error(phase==='FIN'?'FUERA_DEL_PUNTO_DE_FINALIZACION':'FUERA_DEL_PUNTO_DE_INICIO');return result;}
   function localRouteForOperation(data,vehicle,driver,user){if(!data.RUTA_ID)return null;const route=find('routes',data.RUTA_ID);if(!route)throw new Error('RUTA_NO_ENCONTRADA');if(!localFilterRows('routes',[route],user).length)throw new Error('PERMISO_DENEGADO');if(!['Asignada','En curso'].includes(route.ESTADO))throw new Error('RUTA_NO_DISPONIBLE');if(route.CONDUCTOR_ID!==driver.ID)throw new Error('RUTA_NO_COINCIDE_CONDUCTOR');if(route.VEHICULO_ID&&route.VEHICULO_ID!==vehicle.ID)throw new Error('RUTA_NO_COINCIDE_VEHICULO');if(route.OPERACION_ID){const linked=find('operations',route.OPERACION_ID);if(linked?.ESTADO==='Activa')throw new Error('RUTA_YA_VINCULADA');}return route;}
+  function localOptionalKm(value){const text=String(value??'').trim().replace(',','.');if(!text)return'';const number=Number(text);return Number.isFinite(number)&&number>=0?Math.round(number*10)/10:'';}
+  function localOperationSnapshot(row){return Object.fromEntries(['ID','VEHICULO_ID','CONDUCTOR_ID','RUTA_ID','ORIGEN','DESTINO','FECHA_INICIO','FECHA_FIN','ESTADO','KM_INICIO','KM_FIN','DISTANCIA_KM','OBSERVACIONES'].map(field=>[field,row?.[field]??'']));}
+  function localRequireOperationAdmin(user){if(user?.ROL_ID!=='ROL-ADMIN')throw new Error('SOLO_ADMINISTRADOR');}
+
   function localStartOperation(payload) {
     const user=requireLocalUser(), data={...(payload.data||payload)};requireLocalPermission(user,'OPERACIONES','CREAR');
     if(user.ROL_ID==='ROL-CONDUCTOR'){const own=localDriver(user);if(!own)throw new Error('CONDUCTOR_NO_ASOCIADO');data.CONDUCTOR_ID=own.ID;const authorization=qrAuthorizations.get(data.AUTORIZACION_QR);if(!authorization||authorization.USUARIO_ID!==user.ID||authorization.VEHICULO_ID!==data.VEHICULO_ID||authorization.EXPIRA<Date.now())throw new Error('AUTORIZACION_QR_INVALIDA');qrAuthorizations.delete(data.AUTORIZACION_QR);}
     const vehicle=find('vehicles',data.VEHICULO_ID), driver=find('drivers',data.CONDUCTOR_ID);
     if(!vehicle||vehicle.ESTADO!=='Disponible')throw new Error('VEHICULO_NO_DISPONIBLE');if(!driver||driver.ESTADO!=='Disponible')throw new Error('CONDUCTOR_NO_DISPONIBLE');
     const checkin=localValidateCheckinForOperation(data.CHECKIN_ID,vehicle.ID,driver.ID),base=localOperationalBase(),start=localValidateOperationLocation(data,base,'INICIO'),route=localRouteForOperation(data,vehicle,driver,user),now=iso();
-    const row={ID:id('OPE'),VEHICULO_ID:vehicle.ID,CONDUCTOR_ID:driver.ID,ORIGEN:base.DIRECCION,DESTINO:route?.DESTINO||base.DIRECCION,FECHA_INICIO:now,FECHA_FIN:'',ESTADO:'Activa',KM_INICIO:Number(data.KM_INICIO||vehicle.KILOMETRAJE||0),KM_FIN:'',DISTANCIA_KM:0,OBSERVACIONES:data.OBSERVACIONES||'',CREADO_POR:user.ID,CHECKIN_ID:checkin.ID,RUTA_ID:route?.ID||'',TIPO_OPERACION:route?'Ruta asignada con retorno a base':'Salida y regreso a base',PUNTO_RETORNO:base.DIRECCION,BASE_NOMBRE:base.NOMBRE,BASE_DIRECCION:base.DIRECCION,BASE_LATITUD:base.LATITUD,BASE_LONGITUD:base.LONGITUD,RADIO_INICIO_METROS:base.RADIO_INICIO_METROS,RADIO_FIN_METROS:base.RADIO_FIN_METROS,PRECISION_GPS_MAXIMA_METROS:base.PRECISION_GPS_MAXIMA_METROS,INICIO_LATITUD:start.LATITUD,INICIO_LONGITUD:start.LONGITUD,INICIO_PRECISION:start.PRECISION,DISTANCIA_INICIO_BASE_METROS:start.DISTANCIA_METROS,VALIDACION_INICIO:'VALIDADA',CREADO_EN:now,ACTUALIZADO_EN:now,ELIMINADO:'NO'};
+    const row={ID:id('OPE'),VEHICULO_ID:vehicle.ID,CONDUCTOR_ID:driver.ID,ORIGEN:base.DIRECCION,DESTINO:route?.DESTINO||base.DIRECCION,FECHA_INICIO:now,FECHA_FIN:'',ESTADO:'Activa',KM_INICIO:localOptionalKm(data.KM_INICIO)===''?localOptionalKm(vehicle.KILOMETRAJE):localOptionalKm(data.KM_INICIO),KM_FIN:'',DISTANCIA_KM:0,OBSERVACIONES:data.OBSERVACIONES||'',CREADO_POR:user.ID,CHECKIN_ID:checkin.ID,RUTA_ID:route?.ID||'',TIPO_OPERACION:route?'Ruta asignada con retorno a base':'Salida y regreso a base',PUNTO_RETORNO:base.DIRECCION,BASE_NOMBRE:base.NOMBRE,BASE_DIRECCION:base.DIRECCION,BASE_LATITUD:base.LATITUD,BASE_LONGITUD:base.LONGITUD,RADIO_INICIO_METROS:base.RADIO_INICIO_METROS,RADIO_FIN_METROS:base.RADIO_FIN_METROS,PRECISION_GPS_MAXIMA_METROS:base.PRECISION_GPS_MAXIMA_METROS,INICIO_LATITUD:start.LATITUD,INICIO_LONGITUD:start.LONGITUD,INICIO_PRECISION:start.PRECISION,DISTANCIA_INICIO_BASE_METROS:start.DISTANCIA_METROS,VALIDACION_INICIO:'VALIDADA',CREADO_EN:now,ACTUALIZADO_EN:now,ELIMINADO:'NO'};
     localDb.operations.push(row);checkin.OPERACION_ID=row.ID;checkin.UTILIZADO='SI';checkin.ACTUALIZADO_EN=now;vehicle.ESTADO='En ruta';driver.ESTADO='En viaje';if(route)Object.assign(route,{OPERACION_ID:row.ID,VEHICULO_ID:vehicle.ID,ORIGEN:base.DIRECCION,ORIGEN_LATITUD:base.LATITUD,ORIGEN_LONGITUD:base.LONGITUD,ESTADO:'En curso',FECHA_INICIO:route.FECHA_INICIO||now,ACTUALIZADO_EN:now});localDb.history.push({ID:id('HIS'),OPERACION_ID:row.ID,EVENTO:'INICIO',DETALLE:`Operación iniciada en punto autorizado a ${start.DISTANCIA_METROS} m de la base`,FECHA_HORA:now,USUARIO_ID:user.ID,CREADO_EN:now,ELIMINADO:'NO'});audit(user,'INICIAR','OPERACIONES','Operación iniciada con ubicación validada',row.ID);saveLocal();return{row,locationValidation:start,base};
   }
   function localFinishOperation(payload) {
-    const user=requireLocalUser(),data=payload.data||payload,row=find('operations',payload.id||payload.OPERACION_ID||data.OPERACION_ID);requireLocalPermission(user,'OPERACIONES','ACTUALIZAR');
+    const user=requireLocalUser(),data=payload.data||payload,row=find('operations',payload.id||payload.OPERACION_ID||data.OPERACION_ID);
     if(!row||row.ESTADO!=='Activa')throw new Error('OPERACION_NO_ACTIVA');if(!localFilterRows('operations',[row],user).length)throw new Error('PERMISO_DENEGADO');
     if(!['ROL-ADMIN','ROL-SUPERVISOR','ROL-CONDUCTOR'].includes(user.ROL_ID))throw new Error('PERMISO_DENEGADO');
     if(user.ROL_ID==='ROL-CONDUCTOR'&&localDriver(user)?.ID!==row.CONDUCTOR_ID)throw new Error('PERMISO_DENEGADO');
@@ -750,11 +844,23 @@
     let finish,exceptional=false;const reason=String(data.CIERRE_MOTIVO||data.MOTIVO_CIERRE_EXCEPCIONAL||'').trim();
     try{finish=localValidateOperationLocation(data,base,'FIN');}
     catch(error){if(String(error.message)!=='FUERA_DEL_PUNTO_DE_FINALIZACION')throw error;if(user.ROL_ID==='ROL-CONDUCTOR')throw error;if(!['ROL-ADMIN','ROL-SUPERVISOR'].includes(user.ROL_ID))throw new Error('CIERRE_EXCEPCIONAL_NO_AUTORIZADO');if(data.CIERRE_EXCEPCIONAL!=='SI')throw new Error('CIERRE_EXCEPCIONAL_CONFIRMACION_REQUERIDA');if(reason.length<10)throw new Error('CIERRE_EXCEPCIONAL_MOTIVO_REQUERIDO');finish=localEvaluateOperationLocation(data,base,'FIN');exceptional=true;}
-    const kmEnd=Number(data.KM_FIN||row.KM_INICIO||0),kmStart=Number(row.KM_INICIO||0);if(!Number.isFinite(kmEnd)||kmEnd<kmStart)throw new Error('KILOMETRAJE_FINAL_INVALIDO');const now=iso(),ip=String(data.IP_PUBLICA||find('sessions',auth.sessionId)?.IP_PUBLICA||'');
-    Object.assign(row,{FECHA_FIN:now,ESTADO:'Finalizada',KM_FIN:kmEnd,DISTANCIA_KM:Math.max(0,kmEnd-kmStart),FIN_LATITUD:finish.LATITUD,FIN_LONGITUD:finish.LONGITUD,FIN_PRECISION:finish.PRECISION,DISTANCIA_FIN_BASE_METROS:finish.DISTANCIA_METROS,VALIDACION_FIN:exceptional?'EXCEPCIONAL_AUTORIZADA':'VALIDADA',OBSERVACIONES:data.OBSERVACIONES||row.OBSERVACIONES||'',CIERRE_TIPO:exceptional?'Excepcional fuera de base':'Normal en base',CIERRE_FUERA_BASE:exceptional?'SI':'NO',CIERRE_MOTIVO:exceptional?reason:'',CIERRE_AUTORIZADO_POR:user.ID,CIERRE_AUTORIZADO_ROL:user.ROL_ID,CIERRE_IP_PUBLICA:ip,CIERRE_FECHA_AUTORIZACION:now,ACTUALIZADO_EN:now});
-    const vehicle=find('vehicles',row.VEHICULO_ID),driver=find('drivers',row.CONDUCTOR_ID);if(vehicle){vehicle.ESTADO='Disponible';vehicle.KILOMETRAJE=kmEnd;}if(driver)driver.ESTADO='Disponible';if(row.RUTA_ID){const route=find('routes',row.RUTA_ID);if(route&&['Asignada','En curso'].includes(route.ESTADO))Object.assign(route,{ESTADO:'Completada',FECHA_FIN:now,OPERACION_ID:row.ID,ACTUALIZADO_EN:now});}
-    const detail=exceptional?`Cierre excepcional autorizado fuera de base a ${finish.DISTANCIA_METROS} m. Motivo: ${reason}`:`Operación finalizada en punto autorizado a ${finish.DISTANCIA_METROS} m de la base`;
-    localDb.history.push({ID:id('HIS'),OPERACION_ID:row.ID,EVENTO:exceptional?'FIN_EXCEPCIONAL':'FIN',DETALLE:detail,FECHA_HORA:now,USUARIO_ID:user.ID,CREADO_EN:now,ELIMINADO:'NO'});if(exceptional)localDb.alerts.push({ID:id('ALT'),TIPO:'Cierre excepcional',NIVEL:'Advertencia',TITULO:'Operación finalizada fuera de la base',MENSAJE:`${row.ID} fue cerrada por ${user.NOMBRE} a ${finish.DISTANCIA_METROS} m de la base. Motivo: ${reason}`,MODULO:'OPERACIONES',REGISTRO_ID:row.ID,LEIDA:'NO',USUARIO_ID:'',FECHA_HORA:now,CREADO_EN:now,ACTUALIZADO_EN:now,ELIMINADO:'NO'});audit(user,exceptional?'FINALIZAR_EXCEPCIONAL':'FINALIZAR','OPERACIONES',detail,row.ID);saveLocal();return{row,locationValidation:finish,base,cierreExcepcional:exceptional,autorizadoPor:{ID:user.ID,NOMBRE:user.NOMBRE,ROL_ID:user.ROL_ID}};
+    const kmEnd=localOptionalKm(data.KM_FIN),kmStart=localOptionalKm(row.KM_INICIO),kmConsistente=kmStart!==''&&kmEnd!==''&&kmEnd>=kmStart,kilometrajeAdvertencia=kmEnd===''?'Kilometraje final no informado.':(kmStart!==''&&kmEnd<kmStart?'Kilometraje final menor que el inicial; cierre permitido y dato marcado para revisión.':'');const now=iso(),ip=String(data.IP_PUBLICA||find('sessions',auth.sessionId)?.IP_PUBLICA||'');
+    Object.assign(row,{FECHA_FIN:now,ESTADO:'Finalizada',KM_FIN:kmEnd,DISTANCIA_KM:kmConsistente?Math.round((kmEnd-kmStart)*10)/10:'',FIN_LATITUD:finish.LATITUD,FIN_LONGITUD:finish.LONGITUD,FIN_PRECISION:finish.PRECISION,DISTANCIA_FIN_BASE_METROS:finish.DISTANCIA_METROS,VALIDACION_FIN:exceptional?'EXCEPCIONAL_AUTORIZADA':(finish.PRECISION_BAJA?'VALIDADA_PRECISION_BAJA':'VALIDADA'),OBSERVACIONES:data.OBSERVACIONES||row.OBSERVACIONES||'',CIERRE_TIPO:exceptional?'Excepcional fuera de base':(finish.PRECISION_BAJA?'Normal en base con GPS impreciso':'Normal en base'),CIERRE_FUERA_BASE:exceptional?'SI':'NO',CIERRE_MOTIVO:exceptional?reason:'',CIERRE_AUTORIZADO_POR:user.ID,CIERRE_AUTORIZADO_ROL:user.ROL_ID,CIERRE_IP_PUBLICA:ip,CIERRE_FECHA_AUTORIZACION:now,ACTUALIZADO_EN:now});
+    const vehicle=find('vehicles',row.VEHICULO_ID),driver=find('drivers',row.CONDUCTOR_ID);if(vehicle){vehicle.ESTADO='Disponible';if(kmEnd!==''&&(localOptionalKm(vehicle.KILOMETRAJE)===''||kmEnd>=Number(vehicle.KILOMETRAJE||0)))vehicle.KILOMETRAJE=kmEnd;}if(driver)driver.ESTADO='Disponible';if(row.RUTA_ID){const route=find('routes',row.RUTA_ID);if(route&&['Asignada','En curso'].includes(route.ESTADO))Object.assign(route,{ESTADO:'Completada',FECHA_FIN:now,OPERACION_ID:row.ID,ACTUALIZADO_EN:now});}
+    const detail=exceptional?`Cierre excepcional autorizado fuera de base a ${finish.DISTANCIA_METROS} m. Motivo: ${reason}`:(finish.PRECISION_BAJA?`Operación finalizada en base con señal GPS imprecisa. Distancia ${finish.DISTANCIA_METROS} m · precisión ±${finish.PRECISION} m · tolerancia ${finish.TOLERANCIA_PRECISION_METROS} m.`:`Operación finalizada en punto autorizado a ${finish.DISTANCIA_METROS} m de la base`)+(kilometrajeAdvertencia?` ${kilometrajeAdvertencia}`:'');
+    localDb.history.push({ID:id('HIS'),OPERACION_ID:row.ID,EVENTO:exceptional?'FIN_EXCEPCIONAL':(finish.PRECISION_BAJA?'FIN_GPS_IMPRECISO':'FIN'),DETALLE:detail,FECHA_HORA:now,USUARIO_ID:user.ID,CREADO_EN:now,ELIMINADO:'NO'});if(exceptional)localDb.alerts.push({ID:id('ALT'),TIPO:'Cierre excepcional',NIVEL:'Advertencia',TITULO:'Operación finalizada fuera de la base',MENSAJE:`${row.ID} fue cerrada por ${user.NOMBRE} a ${finish.DISTANCIA_METROS} m de la base. Motivo: ${reason}`,MODULO:'OPERACIONES',REGISTRO_ID:row.ID,LEIDA:'NO',USUARIO_ID:'',FECHA_HORA:now,CREADO_EN:now,ACTUALIZADO_EN:now,ELIMINADO:'NO'});else if(finish.PRECISION_BAJA)localDb.alerts.push({ID:id('ALT'),TIPO:'GPS impreciso',NIVEL:'Advertencia',TITULO:'Cierre aceptado con baja precisión GPS',MENSAJE:`${row.ID} finalizó con precisión ±${finish.PRECISION} m y distancia calculada ${finish.DISTANCIA_METROS} m.`,MODULO:'OPERACIONES',REGISTRO_ID:row.ID,LEIDA:'NO',USUARIO_ID:'',FECHA_HORA:now,CREADO_EN:now,ACTUALIZADO_EN:now,ELIMINADO:'NO'});audit(user,exceptional?'FINALIZAR_EXCEPCIONAL':(finish.PRECISION_BAJA?'FINALIZAR_GPS_IMPRECISO':'FINALIZAR'),'OPERACIONES',detail,row.ID);saveLocal();return{row,locationValidation:finish,base,cierreExcepcional:exceptional,autorizadoPor:{ID:user.ID,NOMBRE:user.NOMBRE,ROL_ID:user.ROL_ID}};
+  }
+  function localEditOperationAdmin(payload){
+    const user=requireLocalUser();localRequireOperationAdmin(user);const data=payload.data||payload,row=find('operations',payload.id||payload.OPERACION_ID||data.OPERACION_ID);if(!row)throw new Error('REGISTRO_NO_ENCONTRADO');const reason=String(data.MOTIVO_EDICION||'').trim();if(reason.length<5)throw new Error('MOTIVO_EDICION_REQUERIDO');
+    const before=localOperationSnapshot(row),vehicleId=String(data.VEHICULO_ID||row.VEHICULO_ID||''),driverId=String(data.CONDUCTOR_ID||row.CONDUCTOR_ID||''),routeId=String(data.RUTA_ID??row.RUTA_ID??''),vehicle=find('vehicles',vehicleId),driver=find('drivers',driverId),active=row.ESTADO==='Activa';if(!vehicle)throw new Error('VEHICULO_NO_ENCONTRADO');if(!driver)throw new Error('CONDUCTOR_NO_ENCONTRADO');
+    if(active&&vehicleId!==row.VEHICULO_ID&&vehicle.ESTADO!=='Disponible')throw new Error('VEHICULO_NO_DISPONIBLE');if(active&&driverId!==row.CONDUCTOR_ID&&driver.ESTADO!=='Disponible')throw new Error('CONDUCTOR_NO_DISPONIBLE');let route=null;if(routeId){route=find('routes',routeId);if(!route)throw new Error('RUTA_NO_ENCONTRADA');if(route.OPERACION_ID&&route.OPERACION_ID!==row.ID&&find('operations',route.OPERACION_ID)?.ESTADO==='Activa')throw new Error('RUTA_YA_VINCULADA');if(route.VEHICULO_ID&&route.VEHICULO_ID!==vehicleId)throw new Error('RUTA_NO_COINCIDE_VEHICULO');if(route.CONDUCTOR_ID&&route.CONDUCTOR_ID!==driverId)throw new Error('RUTA_NO_COINCIDE_CONDUCTOR');}
+    if(active&&vehicleId!==row.VEHICULO_ID){const old=find('vehicles',row.VEHICULO_ID);if(old)old.ESTADO='Disponible';vehicle.ESTADO='En ruta';}if(active&&driverId!==row.CONDUCTOR_ID){const old=find('drivers',row.CONDUCTOR_ID);if(old)old.ESTADO='Disponible';driver.ESTADO='En viaje';}
+    if(routeId!==String(row.RUTA_ID||'')&&row.RUTA_ID){const old=find('routes',row.RUTA_ID);if(old&&old.OPERACION_ID===row.ID)Object.assign(old,active?{OPERACION_ID:'',ESTADO:'Asignada',FECHA_INICIO:'',ACTUALIZADO_EN:iso()}:{OPERACION_ID:'',ACTUALIZADO_EN:iso()});}if(route)Object.assign(route,{OPERACION_ID:row.ID,VEHICULO_ID:vehicleId,CONDUCTOR_ID:driverId,ESTADO:active?'En curso':route.ESTADO,ACTUALIZADO_EN:iso()});
+    const kmStart=localOptionalKm(data.KM_INICIO),kmEnd=localOptionalKm(data.KM_FIN);Object.assign(row,{VEHICULO_ID:vehicleId,CONDUCTOR_ID:driverId,RUTA_ID:routeId,ORIGEN:String(data.ORIGEN??row.ORIGEN??'').trim(),DESTINO:String(data.DESTINO??row.DESTINO??'').trim(),FECHA_INICIO:data.FECHA_INICIO?new Date(data.FECHA_INICIO).toISOString():row.FECHA_INICIO,FECHA_FIN:data.FECHA_FIN?new Date(data.FECHA_FIN).toISOString():row.FECHA_FIN,KM_INICIO:kmStart,KM_FIN:kmEnd,DISTANCIA_KM:kmStart!==''&&kmEnd!==''&&kmEnd>=kmStart?Math.round((kmEnd-kmStart)*10)/10:'',OBSERVACIONES:String(data.OBSERVACIONES??row.OBSERVACIONES??'').slice(0,3000),ACTUALIZADO_EN:iso()});
+    const detail=`Edición administrativa. Motivo: ${reason}. Antes: ${JSON.stringify(before)}. Después: ${JSON.stringify(localOperationSnapshot(row))}`;localDb.history.push({ID:id('HIS'),OPERACION_ID:row.ID,EVENTO:'EDICION_ADMIN',DETALLE:detail,FECHA_HORA:iso(),USUARIO_ID:user.ID,CREADO_EN:iso(),ELIMINADO:'NO'});audit(user,'EDITAR_ADMIN','OPERACIONES',detail,row.ID);saveLocal();return{row:cleanRow(row),auditoriaRegistrada:true};
+  }
+  function localDeleteOperationAdmin(payload){
+    const user=requireLocalUser();localRequireOperationAdmin(user);const data=payload.data||payload,row=find('operations',payload.id||payload.OPERACION_ID||data.OPERACION_ID);if(!row)throw new Error('REGISTRO_NO_ENCONTRADO');const reason=String(data.MOTIVO_ELIMINACION||'').trim()||'Eliminación administrativa solicitada por el Administrador.',snapshot=localOperationSnapshot(row),active=row.ESTADO==='Activa';if(active){const vehicle=find('vehicles',row.VEHICULO_ID),driver=find('drivers',row.CONDUCTOR_ID);if(vehicle)vehicle.ESTADO='Disponible';if(driver)driver.ESTADO='Disponible';}if(row.RUTA_ID){const route=find('routes',row.RUTA_ID);if(route&&route.OPERACION_ID===row.ID)Object.assign(route,active?{OPERACION_ID:'',ESTADO:'Asignada',FECHA_INICIO:'',ACTUALIZADO_EN:iso()}:{OPERACION_ID:'',ACTUALIZADO_EN:iso()});}const detail=`Operación eliminada lógicamente por Administrador. Motivo: ${reason}. Datos: ${JSON.stringify(snapshot)}`;localDb.history.push({ID:id('HIS'),OPERACION_ID:row.ID,EVENTO:'ELIMINACION_ADMIN',DETALLE:detail,FECHA_HORA:iso(),USUARIO_ID:user.ID,CREADO_EN:iso(),ELIMINADO:'NO'});row.ELIMINADO='SI';row.ACTUALIZADO_EN=iso();audit(user,'ELIMINAR_ADMIN','OPERACIONES',detail,row.ID);saveLocal();return{id:row.ID,eliminacionLogica:true,auditoriaRegistrada:true};
   }
   function localValidateVehicleQr(payload){
     const user=requireLocalUser();requireLocalPermission(user,'QR','LEER');const normalized=String(payload.codigo||payload.CODIGO||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
@@ -874,6 +980,19 @@
     return {row:cleanRow(row),confirmado:true};
   }
 
+  function localGetOperationalPoint(){
+    const user=requireLocalUser();
+    if(!user)throw new Error('AUTENTICACION_REQUERIDA');
+    const row=localPrimaryCompany();
+    try{
+      const point=localOperationalBase();
+      return{configurado:true,confirmado:true,row:cleanRow(row||{}),point};
+    }catch(error){
+      if(String(error?.message||error)==='PUNTO_OPERACION_NO_CONFIGURADO')return{configurado:false,confirmado:false,row:cleanRow(row||{}),point:null};
+      throw error;
+    }
+  }
+
   function localSaveOperationalPoint(payload){
     const user=requireLocalUser();if(!['ROL-ADMIN','ROL-SUPERVISOR'].includes(user.ROL_ID))throw new Error('PUNTO_OPERACION_ROL_NO_AUTORIZADO');
     const data={...(payload.data||payload)};data.VALIDAR_UBICACION_OPERACION='SI';data.RETORNO_BASE_OBLIGATORIO='SI';
@@ -905,7 +1024,7 @@
       alerts:{nombre:'Alertas',estado:'OK',detalle:`${activeRows(localDb.alerts).length} registros`},
       history:{nombre:'Historiales',estado:'OK',detalle:`${activeRows(localDb.history).length} eventos operativos · ${activeRows(localDb.checkins).length} check-ins`}
     };
-    return{version:'3.2.0',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
+    return{version:'3.5.0',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
   }
   function localRepairSystem(){
     const user=requireLocalUser();requireLocalPermission(user,'CONFIGURACION','ACTUALIZAR');
@@ -930,6 +1049,9 @@
     setAuth,
     getClientIp,
     registerConnectionIp,
+    cacheInfo: informacionCache,
+    latestCacheUpdate: ultimaActualizacionCache,
+    persistCache: persistirCacheAhora,
     reloadLocal: () => { localDb = loadLocal(); },
   };
   })();

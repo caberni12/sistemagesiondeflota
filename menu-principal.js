@@ -2,11 +2,12 @@
   'use strict';
   const $=(selector,root=document)=>root.querySelector(selector);
   const api=window.ConexionFlotas;
-  const VERSION='2.6.2';
+  const VERSION='3.0.0';
   const grupos=[
     ['GENERAL',[
       ['dashboard','⌂','Panel principal','panel-principal.html','PANEL_PRINCIPAL'],
       ['routes','➜','Rutas asignadas','rutas.html','RUTAS'],
+      ['checkin','✓','Check-in vehicular','checkin-vehicular.html','CHECKIN'],
       ['operations','⇄','Operaciones','operaciones.html','OPERACIONES'],
       ['gps','⌖','Ubicación en tiempo real','ubicacion-tiempo-real.html','GPS'],
       ['notifications','🔔','Notificaciones','notificaciones.html','NOTIFICACIONES']
@@ -14,6 +15,8 @@
     ['GESTIÓN',[
       ['vehicles','▣','Vehículos','vehiculos.html','VEHICULOS'],
       ['drivers','♙','Conductores','conductores.html','CONDUCTORES'],
+      ['checkinApprovals','☑','Aprobar check-ins','checkin-aprobaciones.html','CHECKIN_APROBACIONES'],
+      ['checkinHistory','▤','Historial de check-in','checkin-historial.html','CHECKIN'],
       ['maintenance','⚙','Mantenciones','mantenciones.html','MANTENCIONES'],
       ['documents','▤','Documentos','documentos.html','DOCUMENTOS'],
       ['history','↻','Historial','historial.html','HISTORIAL'],
@@ -33,7 +36,7 @@
   let panelInicializado=false;
   let validacionPendiente=null;
   let seccionActual=localStorage.getItem('flotas_modulo_actual_v1')||'dashboard';
-  let oscuro=localStorage.getItem('flotas_tema')==='dark';
+  let oscuro=window.TemaFlotas?.modoOscuroInicial?.()??localStorage.getItem('flotas_tema')==='dark';
   let cerrandoSesion=false;
   let redireccionando=false;
 
@@ -116,6 +119,7 @@
     try{marco.contentWindow?.postMessage(mensaje,'*');}catch(_){ }
   }
   function aplicarTema(){
+    window.TemaFlotas?.aplicarGuardado?.();
     document.body.classList.toggle('oscuro',oscuro);
     $('#cambiarTemaMenu').textContent=oscuro?'☀':'☾';
     enviar({tipo:'flotas:tema',oscuro});
@@ -204,7 +208,9 @@
         const logo=String(data.logo).startsWith('../')?String(data.logo).slice(3):data.logo;
         $('#logoEmpresaMenu').src=logo;
       }
+      if(data.tema)window.TemaFlotas?.aplicar?.(data.tema,{guardar:true});
     }
+    if(data.tipo==='flotas:tema-colores'&&data.tema)window.TemaFlotas?.aplicar?.(data.tema,{guardar:false});
   });
   window.addEventListener('flotas:sesion-invalida',()=>validarSesion({desdeModulo:true}));
   marco.addEventListener('load',()=>setTimeout(()=>$('#cargandoModulo').classList.add('oculto'),160));

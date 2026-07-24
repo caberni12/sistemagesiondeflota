@@ -15,6 +15,7 @@ function panelPrincipal_(session) {
   const routes = visibleRows('RUTAS', 'RUTAS');
   const notifications = visibleRows('NOTIFICACIONES', 'NOTIFICACIONES')
     .filter(function(row) { return row.LEIDA !== 'SI'; });
+  const checkins = visibleRows('CHECKINS', 'CHECKIN');
   const activeLimit = Date.now() - CONFIGURACION_APLICACION.SEGUNDOS_CONEXION_ACTIVA * 1000;
   const connections = visibleRows('CONEXIONES', 'CONEXIONES')
     .filter(function(row) {
@@ -33,6 +34,9 @@ function panelPrincipal_(session) {
       assignedRoutes: routes.filter(function(row) { return row.ESTADO === 'Asignada' || row.ESTADO === 'En curso'; }).length,
       unreadNotifications: notifications.length,
       onlineDevices: connections.length,
+      pendingCheckins: checkins.filter(function(row) { return row.ESTADO_REVISION === 'Pendiente' && row.UTILIZADO !== 'SI'; }).length,
+      blockedCheckins: checkins.filter(function(row) { return row.ESTADO_REVISION === 'Bloqueado' && row.UTILIZADO !== 'SI'; }).length,
+      approvedCheckins: checkins.filter(function(row) { return row.ESTADO_REVISION === 'Aprobado' && row.UTILIZADO !== 'SI' && new Date(row.VIGENTE_HASTA || 0).getTime() > Date.now(); }).length,
     },
     recentOperations: operations.slice(-10).reverse(),
     alerts: alerts.slice(-10).reverse(),

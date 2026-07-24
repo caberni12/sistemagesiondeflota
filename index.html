@@ -10,8 +10,9 @@
   <meta name="description" content="Acceso al Sistema de Gestión de Flotas">
   <title>Iniciar sesión · Sistema de Gestión de Flotas</title>
   <link rel="icon" href="logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="acceso.css?v=2.6.2">
-  <link rel="stylesheet" href="responsive.css?v=2.6.2">
+  <link rel="stylesheet" href="acceso.css?v=3.0.0">
+  <link rel="stylesheet" href="responsive.css?v=3.0.0">
+  <script src="tema.js?v=3.0.0"></script>
 </head>
 <body>
   <noscript><div class="aviso-sin-js">Debe habilitar JavaScript para iniciar sesión.</div></noscript>
@@ -38,6 +39,28 @@
     </section>
 
     <section class="panel-acceso">
+      <form class="tarjeta-acceso preconfiguracion oculto" id="formularioPreconfiguracion" novalidate>
+        <div class="encabezado-formulario">
+          <span class="etiqueta">PRECONFIGURACIÓN AUTOMÁTICA</span>
+          <h2>Configurar el sistema</h2>
+          <p>No existen usuarios registrados. Cree la empresa y el primer administrador para comenzar.</p>
+        </div>
+        <div class="mensaje-formulario oculto" id="mensajePreconfiguracion" role="alert"></div>
+        <div class="preconfig-grid">
+          <label class="campo campo-completo"><span>Nombre de la empresa</span><input name="nombreEmpresa" required placeholder="Ej. Transportes del Sur"></label>
+          <label class="campo"><span>RUT de la empresa</span><input name="rutEmpresa" placeholder="76.000.000-0"></label>
+          <label class="campo"><span>Teléfono de la empresa</span><input name="telefonoEmpresa" autocomplete="tel" placeholder="+56 9 0000 0000"></label>
+          <label class="campo campo-completo"><span>Nombre del administrador</span><input name="nombre" autocomplete="name" required placeholder="Nombre completo"></label>
+          <label class="campo"><span>Correo del administrador</span><input name="correo" type="email" autocomplete="username" required placeholder="administrador@empresa.cl"></label>
+          <label class="campo"><span>Teléfono del administrador</span><input name="telefono" autocomplete="tel" placeholder="+56 9 0000 0000"></label>
+          <label class="campo"><span>Contraseña</span><input name="contrasena" type="password" autocomplete="new-password" minlength="8" required placeholder="Mínimo 8 caracteres"></label>
+          <label class="campo"><span>Confirmar contraseña</span><input name="contrasenaConfirmacion" type="password" autocomplete="new-password" minlength="8" required placeholder="Repita la contraseña"></label>
+        </div>
+        <label class="aceptacion-preconfig"><input name="confirmacion" type="checkbox" value="SI" required><span>Confirmo que estos datos crearán la cuenta administradora principal.</span></label>
+        <button class="boton-principal" id="botonPreconfiguracion" type="submit">Configurar y entrar</button>
+        <small class="detalle-servicio">La configuración solo aparece mientras no exista ningún usuario con acceso.</small>
+      </form>
+
       <form class="tarjeta-acceso" id="formularioAcceso" novalidate>
         <div class="encabezado-formulario">
           <span class="etiqueta">ACCESO SEGURO</span>
@@ -71,8 +94,8 @@
     </section>
   </main>
 
-  <script src="configuracion.js?v=2.6.2"></script>
-  <script src="conexion.js?v=2.6.2"></script>
-  <script src="acceso.js?v=2.6.2"></script>
+  <script src="configuracion.js?v=3.0.0"></script>
+  <script src="conexion.js?v=3.0.0"></script>
+  <script src="acceso.js?v=3.0.0"></script>
 </body>
 </html>

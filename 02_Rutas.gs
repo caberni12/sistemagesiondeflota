@@ -25,6 +25,9 @@ function enrutarSolicitud_(request, event) {
     case 'eliminar': return servicioEliminar_(request, session);
     case 'iniciarOperacion': return iniciarOperacion_(request, session);
     case 'finalizarOperacion': return finalizarOperacion_(request, session);
+    case 'crearCheckinVehicular': return crearCheckinVehicular_(request, session);
+    case 'revisarCheckinVehicular': return revisarCheckinVehicular_(request, session);
+    case 'checkinsDisponibles': return checkinsDisponibles_(request, session);
     case 'validarQrVehiculo': return validarQrVehiculo_(request, session);
     case 'guardarUbicacion': return guardarUbicacion_(request, session);
     case 'ultimasUbicaciones': return ultimasUbicaciones_(request, session);
@@ -35,6 +38,7 @@ function enrutarSolicitud_(request, event) {
     case 'actualizarConexion': return actualizarConexion_(request, session);
     case 'resumenTiempoReal': return resumenTiempoReal_(request, session);
     case 'cambiarContrasena': return cambiarPassword_(request, session);
+    case 'actualizarPermisosUsuario': return actualizarPermisosUsuario_(request, session);
     case 'guardarEmpresa': return guardarEmpresaServicio_(request, session);
     case 'limpiarDatosOperativos': return limpiarDatosOperativosServicio_(request, session);
     default: throw new Error('ACCION_NO_ENCONTRADA');
@@ -96,6 +100,7 @@ function servicioCrear_(request, session) {
   const resource = obtenerRecurso_(request.recurso);
   exigirPermiso_(session.user, resource.module, 'CREAR');
   if (resource.sheet === 'USUARIOS') return crearUsuarioServicio_(request.datos || {}, session);
+  if (resource.sheet === 'CHECKINS') return crearCheckinVehicular_({ datos:request.datos || {} }, session);
   if (session.user.ROL_ID === 'ROL-CONDUCTOR') {
     if (resource.sheet === 'OPERACIONES') return iniciarOperacion_({ datos:request.datos || {} }, session);
     if (resource.sheet === 'GPS') return guardarUbicacion_({ datos:request.datos || {} }, session);
@@ -113,6 +118,7 @@ function servicioActualizar_(request, session) {
   const existing = obtenerRegistro_(resource.sheet, request.identificador);
   if (!existing) throw new Error('REGISTRO_NO_ENCONTRADO');
   if (!filtrarPorUsuario_(resource.sheet, [existing], session.user).length) throw new Error('PERMISO_DENEGADO');
+  if (resource.sheet === 'CHECKINS') throw new Error('ACCION_ESPECIAL_REQUERIDA');
   if (session.user.ROL_ID === 'ROL-CONDUCTOR') {
     const driverData = request.datos || {};
     if (resource.sheet === 'RUTAS') {

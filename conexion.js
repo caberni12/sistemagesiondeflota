@@ -8,16 +8,17 @@
     quickLoad:'cargaRapida',
     create:'crear', update:'actualizar', delete:'eliminar', startOperation:'iniciarOperacion',
     finishOperation:'finalizarOperacion', saveLocation:'guardarUbicacion', latestLocations:'ultimasUbicaciones',
-    changePassword:'cambiarContrasena', saveCompany:'guardarEmpresa', clearOperationalData:'limpiarDatosOperativos',
+    changePassword:'cambiarContrasena', saveUserPermissions:'actualizarPermisosUsuario', saveCompany:'guardarEmpresa', clearOperationalData:'limpiarDatosOperativos',
     assignRoute:'asignarRuta', updateRouteStatus:'actualizarEstadoRuta', sendNotification:'enviarNotificacion',
     readNotification:'marcarNotificacionLeida', heartbeat:'actualizarConexion', realtimeSummary:'resumenTiempoReal',
-    validateVehicleQr:'validarQrVehiculo'
+    validateVehicleQr:'validarQrVehiculo', createVehicleCheckin:'crearCheckinVehicular',
+    reviewVehicleCheckin:'revisarCheckinVehicular', availableCheckins:'checkinsDisponibles'
   });
   const recursosAplicacion = Object.freeze({
     users:'usuarios', roles:'roles', permissions:'permisos', vehicles:'vehiculos', drivers:'conductores',
     operations:'operaciones', gps:'gps', history:'historial', maintenance:'mantenciones', documents:'documentos',
     alerts:'alertas', reports:'reportes', audit:'bitacora', parameters:'parametros', companies:'empresas', qr:'qr',
-    routes:'rutas', notifications:'notificaciones', connections:'conexiones'
+    routes:'rutas', notifications:'notificaciones', connections:'conexiones', checkins:'checkins'
   });
 
   const resourceMap = {
@@ -25,14 +26,14 @@
     drivers: 'drivers', operations: 'operations', gps: 'gps', history: 'history',
     maintenance: 'maintenance', documents: 'documents', alerts: 'alerts', reports: 'reports',
     audit: 'audit', parameters: 'parameters', companies: 'companies', qr: 'qr',
-    routes: 'routes', notifications: 'notifications', connections: 'connections'
+    routes: 'routes', notifications: 'notifications', connections: 'connections', checkins:'checkins'
   };
 
   const emptyState = () => ({
     version: 2,
     users: [], roles: [], permissions: [], vehicles: [], drivers: [], operations: [], gps: [], gpsCurrent: [],
     history: [], maintenance: [], documents: [], alerts: [], reports: [], audit: [], parameters: [],
-    companies: [], qr: [], routes: [], notifications: [], connections: [], sessions: []
+    companies: [], qr: [], routes: [], notifications: [], connections: [], checkins: [], sessions: []
   });
 
   function loadLocal() {
@@ -177,12 +178,15 @@
       delete: { actions:['dashboard'], resources:[payload.resource,'audit'] },
       startOperation: { actions:['dashboard','realtimeSummary'], resources:['operations','vehicles','drivers','history','audit'] },
       finishOperation: { actions:['dashboard','realtimeSummary'], resources:['operations','vehicles','drivers','history','audit'] },
+      createVehicleCheckin: { actions:['dashboard'], resources:['checkins','alerts','audit'] },
+      reviewVehicleCheckin: { actions:['dashboard'], resources:['checkins','notifications','audit'] },
       assignRoute: { actions:['dashboard','realtimeSummary'], resources:['routes','notifications','audit'] },
       updateRouteStatus: { actions:['dashboard','realtimeSummary'], resources:['routes','notifications','audit'] },
       sendNotification: { actions:['dashboard','realtimeSummary'], resources:['notifications','audit'] },
       readNotification: { actions:['dashboard','realtimeSummary'], resources:['notifications'] },
       saveCompany: { actions:['status'], resources:['companies','audit'] },
       changePassword: { actions:['me'], resources:['users','audit'] },
+      saveUserPermissions: { actions:['me','dashboard'], resources:['users','audit'] },
     };
     if (action === 'logout' || action === 'clearOperationalData') return limpiarCache();
     const impact = impacts[action];
@@ -381,11 +385,11 @@
       { ID:'ROL-CONDUCTOR', NOMBRE:'Conductor', DESCRIPCION:'Operaciones, rutas, GPS y notificaciones propias', ESTADO:'Activo', CREADO_EN:now, ACTUALIZADO_EN:now, ELIMINADO:'NO' }
     ];
     roles.forEach(role => { if (!activeRows(localDb.roles).some(row => row.ID === role.ID)) localDb.roles.push(role); });
-    const allModules=['PANEL_PRINCIPAL','USUARIOS','VEHICULOS','CONDUCTORES','OPERACIONES','GPS','HISTORIAL','MANTENCIONES','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','CONFIGURACION','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
+    const allModules=['PANEL_PRINCIPAL','USUARIOS','VEHICULOS','CONDUCTORES','OPERACIONES','CHECKIN','CHECKIN_APROBACIONES','GPS','HISTORIAL','MANTENCIONES','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','CONFIGURACION','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
     const actions=['LEER','CREAR','ACTUALIZAR','ELIMINAR'];
-    const supervisorModules=new Set(['PANEL_PRINCIPAL','VEHICULOS','CONDUCTORES','OPERACIONES','GPS','HISTORIAL','MANTENCIONES','DOCUMENTOS','ALERTAS','REPORTES','QR','RUTAS','NOTIFICACIONES','CONEXIONES']);
+    const supervisorModules=new Set(['PANEL_PRINCIPAL','VEHICULOS','CONDUCTORES','OPERACIONES','CHECKIN','CHECKIN_APROBACIONES','GPS','HISTORIAL','MANTENCIONES','DOCUMENTOS','ALERTAS','REPORTES','QR','RUTAS','NOTIFICACIONES','CONEXIONES']);
     const driverRules={
-      PANEL_PRINCIPAL:['LEER'],VEHICULOS:['LEER'],CONDUCTORES:['LEER'],OPERACIONES:['LEER','CREAR','ACTUALIZAR'],
+      PANEL_PRINCIPAL:['LEER'],VEHICULOS:['LEER'],CONDUCTORES:['LEER'],OPERACIONES:['LEER','CREAR','ACTUALIZAR'],CHECKIN:['LEER','CREAR'],
       GPS:['LEER','CREAR'],HISTORIAL:['LEER'],DOCUMENTOS:['LEER'],ALERTAS:['LEER','ACTUALIZAR'],QR:['LEER','ACTUALIZAR'],
       RUTAS:['LEER','ACTUALIZAR'],NOTIFICACIONES:['LEER','ACTUALIZAR'],CONEXIONES:['LEER','CREAR','ACTUALIZAR']
     };
@@ -409,7 +413,7 @@
   async function localRequest(action, payload) {
     await Promise.resolve();
     switch (action) {
-      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'2.6.2', now:iso() };
+      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.0.0', now:iso() };
       case 'status': return {
         connected:true, needsSetup:activeRows(localDb.users).length === 0, spreadsheetName:'Base local del navegador',
         rows:{ users:activeRows(localDb.users).length, vehicles:activeRows(localDb.vehicles).length,
@@ -418,8 +422,8 @@
       };
       case 'bootstrap': {
         if (activeRows(localDb.users).length) throw new Error('SISTEMA_YA_INICIALIZADO');
-        if (!payload.claveInstalacion) throw new Error('CLAVE_INSTALACION_REQUERIDA');
         if (!payload.nombre || !payload.correo || String(payload.contrasena ?? '').length === 0) throw new Error('DATOS_DE_ADMINISTRADOR_INVALIDOS');
+        if (String(payload.contrasenaConfirmacion || payload.contrasena) !== String(payload.contrasena)) throw new Error('CONTRASENAS_NO_COINCIDEN');
         seedCatalogs();
         const salt = id('SALT');
         const user = {
@@ -427,8 +431,10 @@
           SAL_CONTRASENA:salt, CONTRASENA_CIFRADA:await digest(payload.contrasena + ':' + salt), ROL_ID:'ROL-ADMIN',
           ESTADO:'Activo', TELEFONO:payload.telefono || '', ULTIMO_ACCESO:'', CREADO_EN:iso(), ACTUALIZADO_EN:iso(), ELIMINADO:'NO'
         };
-        localDb.users.push(user); audit(user,'INSTALACION_INICIAL','SEGURIDAD','Administrador inicial creado',user.ID); saveLocal();
-        return { initialized:true, user:publicUser(user) };
+        localDb.users.push(user);
+        if(payload.nombreEmpresa){localDb.companies.push({ID:id('EMP'),RUT:payload.rutEmpresa||'',RAZON_SOCIAL:payload.nombreEmpresa,NOMBRE_FANTASIA:payload.nombreEmpresa,TELEFONO_PRINCIPAL:payload.telefonoEmpresa||payload.telefono||'',CORREO:payload.correo,PAIS:'Chile',ZONA_HORARIA:'America/Santiago',MONEDA:'CLP',UNIDAD_DISTANCIA:'km',COLOR_PRINCIPAL:'#0E9F91',COLOR_SECUNDARIO:'#08746B',COLOR_ACENTO:'#3578E5',COLOR_FONDO:'#F3F7FA',COLOR_SUPERFICIE:'#FFFFFF',COLOR_TEXTO:'#173047',COLOR_TEXTO_SECUNDARIO:'#65798B',COLOR_BORDE:'#DCE6EC',COLOR_MENU:'#071725',COLOR_MENU_SECUNDARIO:'#0D2638',COLOR_EXITO:'#0E9F91',COLOR_ADVERTENCIA:'#D89216',COLOR_PELIGRO:'#DC4D60',COLOR_FONDO_OSCURO:'#071725',COLOR_SUPERFICIE_OSCURO:'#0D2638',COLOR_TEXTO_OSCURO:'#E9F1F7',COLOR_TEXTO_SECUNDARIO_OSCURO:'#9EB0BF',COLOR_BORDE_OSCURO:'#214359',TEMA_PREDETERMINADO:'Sistema',ESTADO:'Activo',CREADO_EN:iso(),ACTUALIZADO_EN:iso(),ELIMINADO:'NO'});}
+        audit(user,'INSTALACION_INICIAL','SEGURIDAD','Preconfiguración automática y administrador inicial creados',user.ID); saveLocal();
+        return { initialized:true, user:publicUser(user), companyConfigured:Boolean(payload.nombreEmpresa) };
       }
       case 'login': {
         seedCatalogs();
@@ -459,6 +465,9 @@
       case 'delete': return localDelete(payload);
       case 'startOperation': return localStartOperation(payload);
       case 'finishOperation': return localFinishOperation(payload);
+      case 'createVehicleCheckin': return localCreateVehicleCheckin(payload);
+      case 'reviewVehicleCheckin': return localReviewVehicleCheckin(payload);
+      case 'availableCheckins': return localAvailableCheckins(payload);
       case 'validateVehicleQr': return localValidateVehicleQr(payload);
       case 'saveLocation': return localSaveLocation(payload);
       case 'latestLocations': return localLatestLocations(payload);
@@ -469,6 +478,7 @@
       case 'heartbeat': return localHeartbeat(payload);
       case 'realtimeSummary': return localRealtimeSummary(payload);
       case 'changePassword': return localChangePassword(payload);
+      case 'saveUserPermissions': return localSaveUserPermissions(payload);
       case 'saveCompany': return localSaveCompany(payload);
       case 'clearOperationalData': return localClear(payload);
       default: throw new Error('ACCION_NO_ENCONTRADA');
@@ -485,20 +495,24 @@
     users:'USUARIOS',roles:'USUARIOS',permissions:'USUARIOS',vehicles:'VEHICULOS',drivers:'CONDUCTORES',
     operations:'OPERACIONES',gps:'GPS',history:'HISTORIAL',maintenance:'MANTENCIONES',documents:'DOCUMENTOS',
     alerts:'ALERTAS',reports:'REPORTES',audit:'BITACORA',parameters:'CONFIGURACION',companies:'CONFIGURACION',
-    qr:'QR',routes:'RUTAS',notifications:'NOTIFICACIONES',connections:'CONEXIONES'
+    qr:'QR',routes:'RUTAS',notifications:'NOTIFICACIONES',connections:'CONEXIONES',checkins:'CHECKIN'
   };
+  const mandatoryLocalPermissions=['PANEL_PRINCIPAL:LEER','CONEXIONES:CREAR','CONEXIONES:ACTUALIZAR'];
+  function normalizeLocalPermissions(value){let list=value;if(typeof list==='string'){try{list=JSON.parse(list||'[]');}catch(_){list=[];}}if(!Array.isArray(list))list=[];return [...new Set(list.map(item=>String(item||'').trim().toUpperCase()).filter(item=>/^[A-Z_]+:(LEER|CREAR|ACTUALIZAR|ELIMINAR)$/.test(item)))].sort();}
+  function effectiveLocalPermissions(user){if(!user)return[];if(user.ROL_ID==='ROL-ADMIN')return['*:*'];const base=String(user.MODO_PERMISOS||'ROL').toUpperCase()==='PERSONALIZADO'?normalizeLocalPermissions(user.PERMISOS_PERSONALIZADOS):activeRows(localDb.permissions).filter(row=>row.ROL_ID===user.ROL_ID&&row.PERMITIDO==='SI').map(row=>`${row.MODULO}:${row.ACCION}`);return[...new Set([...base,...mandatoryLocalPermissions])].sort();}
   function hasLocalPermission(user,module,action) {
     if(user?.ROL_ID==='ROL-ADMIN')return true;
-    return activeRows(localDb.permissions).some(row=>row.ROL_ID===user?.ROL_ID&&row.MODULO===module&&row.ACCION===action&&row.PERMITIDO==='SI');
+    return effectiveLocalPermissions(user).includes(`${module}:${action}`);
   }
   function requireLocalPermission(user,module,action){if(!hasLocalPermission(user,module,action))throw new Error('PERMISO_DENEGADO');}
   function localDriver(user){return activeRows(localDb.drivers).find(row=>row.USUARIO_ID===user?.ID)||null;}
   function localFilterRows(key,rows,user) {
     if(user.ROL_ID!=='ROL-CONDUCTOR')return rows;
     const driver=localDriver(user);
+    if(key==='checkins')return rows.filter(row=>driver&&row.CONDUCTOR_ID===driver.ID);
     if(key==='notifications')return rows.filter(row=>row.DESTINATARIO_USUARIO_ID===user.ID||(driver&&row.DESTINATARIO_CONDUCTOR_ID===driver.ID));
     if(key==='connections')return rows.filter(row=>row.USUARIO_ID===user.ID);
-    if(!driver&&['drivers','vehicles','operations','gps','routes','history','documents','maintenance'].includes(key))return[];
+    if(!driver&&['drivers','vehicles','operations','gps','routes','history','documents','maintenance','checkins'].includes(key))return[];
     if(key==='drivers')return rows.filter(row=>row.ID===driver.ID);
     if(['operations','gps','routes'].includes(key))return rows.filter(row=>row.CONDUCTOR_ID===driver.ID);
     const ownOperations=activeRows(localDb.operations).filter(row=>row.CONDUCTOR_ID===driver.ID);
@@ -513,9 +527,9 @@
   }
   function publicUser(user) {
     const role = localDb.roles.find(row => row.ID === user.ROL_ID);
-    const permissions=user.ROL_ID==='ROL-ADMIN'?['*:*']:activeRows(localDb.permissions).filter(row=>row.ROL_ID===user.ROL_ID&&row.PERMITIDO==='SI').map(row=>`${row.MODULO}:${row.ACCION}`);
+    const permissions=effectiveLocalPermissions(user);
     return { ID:user.ID,NOMBRE:user.NOMBRE,CORREO:user.CORREO,ROL_ID:user.ROL_ID,ROL_NOMBRE:role?.NOMBRE || user.ROL_ID,ESTADO:user.ESTADO,
-      TELEFONO:user.TELEFONO || '',ULTIMO_ACCESO:user.ULTIMO_ACCESO || '',CONDUCTOR_ID:localDriver(user)?.ID||'',PERMISOS:permissions };
+      TELEFONO:user.TELEFONO || '',ULTIMO_ACCESO:user.ULTIMO_ACCESO || '',CONDUCTOR_ID:localDriver(user)?.ID||'',MODO_PERMISOS:String(user.MODO_PERMISOS||'ROL').toUpperCase(),PERMISOS_PERSONALIZADOS:normalizeLocalPermissions(user.PERMISOS_PERSONALIZADOS),VERSION_PERMISOS:Number(user.VERSION_PERMISOS||0),PERMISOS:permissions };
   }
   function cleanRow(row) {
     const out = { ...row }; delete out.CONTRASENA_CIFRADA; delete out.SAL_CONTRASENA; delete out.FICHA_SESION_CIFRADA; return out;
@@ -531,14 +545,15 @@
   async function localCreate(payload) {
     const user = requireLocalUser(); const key = resourceMap[payload.resource]; if (!key) throw new Error('RECURSO_NO_ENCONTRADO');
     requireLocalPermission(user,moduleByResource[key],'CREAR');
+    if(key==='checkins')return localCreateVehicleCheckin(payload);
     if(user.ROL_ID==='ROL-CONDUCTOR'){if(key==='operations')return localStartOperation(payload);if(key==='gps')return localSaveLocation(payload);if(key==='connections')throw new Error('ACCION_ESPECIAL_REQUERIDA');}
     const data = { ...(payload.data || {}) }, now = iso();
-    const prefixes = {users:'USR',vehicles:'VEH',drivers:'CON',operations:'OPE',gps:'GPS',history:'HIS',maintenance:'MAN',documents:'DOC',alerts:'ALT',reports:'REP',audit:'BIT',parameters:'PAR',companies:'EMP',qr:'QR',roles:'ROL',permissions:'PER',routes:'RUT',notifications:'NOT',connections:'CNX'};
+    const prefixes = {users:'USR',vehicles:'VEH',drivers:'CON',operations:'OPE',checkins:'CHK',gps:'GPS',history:'HIS',maintenance:'MAN',documents:'DOC',alerts:'ALT',reports:'REP',audit:'BIT',parameters:'PAR',companies:'EMP',qr:'QR',roles:'ROL',permissions:'PER',routes:'RUT',notifications:'NOT',connections:'CNX'};
     if (key === 'users') {
       if (String(data.CONTRASENA ?? '').length === 0) throw new Error('CONTRASENA_REQUERIDA');
       if (activeRows(localDb.users).some(row => row.CORREO === String(data.CORREO || '').toLowerCase())) throw new Error('CORREO_YA_EXISTE');
       const salt=id('SALT'); data.SAL_CONTRASENA=salt; data.CONTRASENA_CIFRADA=await digest(data.CONTRASENA+':'+salt); delete data.CONTRASENA;
-      data.CORREO=String(data.CORREO || '').toLowerCase(); data.ESTADO=data.ESTADO || 'Activo'; data.ROL_ID=data.ROL_ID || 'ROL-CONDUCTOR';
+      data.CORREO=String(data.CORREO || '').toLowerCase(); data.ESTADO=data.ESTADO || 'Activo'; data.ROL_ID=data.ROL_ID || 'ROL-CONDUCTOR'; data.MODO_PERMISOS=data.MODO_PERMISOS||'ROL';data.PERMISOS_PERSONALIZADOS=JSON.stringify(normalizeLocalPermissions(data.PERMISOS_PERSONALIZADOS));data.VERSION_PERMISOS=1;
     }
     if (key === 'vehicles') {
       data.PATENTE=String(data.PATENTE || '').toUpperCase(); data.ESTADO=data.ESTADO || 'Disponible';
@@ -553,14 +568,25 @@
     const user=requireLocalUser(), key=resourceMap[payload.resource]; const row=find(key,payload.id); if(!row) throw new Error('REGISTRO_NO_ENCONTRADO');
     requireLocalPermission(user,moduleByResource[key],'ACTUALIZAR');if(!localFilterRows(key,[row],user).length)throw new Error('PERMISO_DENEGADO');
     const data={...(payload.data||{})};
+    if(key==='checkins')throw new Error('ACCION_ESPECIAL_REQUERIDA');
     if(user.ROL_ID==='ROL-CONDUCTOR'){if(key==='routes')return localUpdateRouteStatus({id:payload.id,ESTADO:data.ESTADO});if(key==='notifications'){if(data.LEIDA!=='SI')throw new Error('PERMISO_DENEGADO');return localReadNotification({id:payload.id});}if(key==='alerts'&&Object.keys(data).some(field=>field!=='LEIDA'))throw new Error('PERMISO_DENEGADO');if(['operations','connections'].includes(key))throw new Error('ACCION_ESPECIAL_REQUERIDA');}
-    if(key==='users' && data.CONTRASENA){const salt=id('SALT');row.SAL_CONTRASENA=salt;row.CONTRASENA_CIFRADA=await digest(data.CONTRASENA+':'+salt);delete data.CONTRASENA;}
-    Object.assign(row,data,{ACTUALIZADO_EN:iso()}); audit(user,'ACTUALIZAR',key.toUpperCase(),'Registro actualizado',row.ID);saveLocal();return{row:cleanRow(row)};
+    if(key==='users'){
+      const newRole=Object.prototype.hasOwnProperty.call(data,'ROL_ID')?data.ROL_ID:row.ROL_ID,newState=Object.prototype.hasOwnProperty.call(data,'ESTADO')?data.ESTADO:row.ESTADO;
+      if(row.ROL_ID==='ROL-ADMIN'&&row.ESTADO==='Activo'&&(newRole!=='ROL-ADMIN'||newState!=='Activo')){const other=activeRows(localDb.users).some(item=>item.ID!==row.ID&&item.ROL_ID==='ROL-ADMIN'&&item.ESTADO==='Activo');if(!other)throw new Error('ULTIMO_ADMINISTRADOR_PROTEGIDO');}
+      if(data.CONTRASENA){const salt=id('SALT');row.SAL_CONTRASENA=salt;row.CONTRASENA_CIFRADA=await digest(data.CONTRASENA+':'+salt);delete data.CONTRASENA;}
+    }
+    Object.assign(row,data,{ACTUALIZADO_EN:iso()}); audit(user,'ACTUALIZAR',key.toUpperCase(),'Registro actualizado sin cerrar sesiones',row.ID);saveLocal();return{row:cleanRow(row)};
   }
   function localDelete(payload) {
     const user=requireLocalUser(), key=resourceMap[payload.resource], row=find(key,payload.id); if(!row) throw new Error('REGISTRO_NO_ENCONTRADO');
     requireLocalPermission(user,moduleByResource[key],'ELIMINAR');if(!localFilterRows(key,[row],user).length)throw new Error('PERMISO_DENEGADO');
     row.ELIMINADO='SI';row.ACTUALIZADO_EN=iso();audit(user,'ELIMINAR',key.toUpperCase(),'Registro eliminado',row.ID);saveLocal();return{id:row.ID};
+  }
+  function localSaveUserPermissions(payload){
+    const actor=requireLocalUser();requireLocalPermission(actor,'USUARIOS','ACTUALIZAR');const data=payload.data||payload,row=find('users',data.USUARIO_ID||payload.id);if(!row)throw new Error('REGISTRO_NO_ENCONTRADO');
+    if(row.ROL_ID==='ROL-ADMIN'){row.MODO_PERMISOS='ROL';row.PERMISOS_PERSONALIZADOS='[]';}
+    else{row.MODO_PERMISOS=String(data.MODO_PERMISOS||'ROL').toUpperCase()==='PERSONALIZADO'?'PERSONALIZADO':'ROL';row.PERMISOS_PERSONALIZADOS=JSON.stringify(row.MODO_PERMISOS==='PERSONALIZADO'?normalizeLocalPermissions(data.PERMISOS||data.PERMISOS_PERSONALIZADOS):[]);}
+    row.VERSION_PERMISOS=Number(row.VERSION_PERMISOS||0)+1;row.ACTUALIZADO_EN=iso();audit(actor,'ACTUALIZAR_PERMISOS','USUARIOS','Permisos actualizados sin cerrar sesiones',row.ID);saveLocal();return{row:publicUser(row),sessionPreserved:true};
   }
   function panelPrincipalLocal() {
     const user=requireLocalUser();requireLocalPermission(user,'PANEL_PRINCIPAL','LEER');const rows = key => hasLocalPermission(user,moduleByResource[key],'LEER')?localFilterRows(key,activeRows(localDb[key]),user):[];
@@ -575,24 +601,105 @@
       expiredDocuments:rows('documents').filter(x=>x.ESTADO==='Vencido').length,unreadAlerts:rows('alerts').filter(x=>x.LEIDA!=='SI').length,
       assignedRoutes:rows('routes').filter(x=>['Asignada','En curso'].includes(x.ESTADO)).length,
       unreadNotifications:rows('notifications').filter(x=>x.LEIDA!=='SI').length,
-      onlineDevices:rows('connections').filter(x=>x.ESTADO!=='Desconectado'&&new Date(x.ULTIMA_CONEXION).getTime()>=onlineLimit).length },
+      onlineDevices:rows('connections').filter(x=>x.ESTADO!=='Desconectado'&&new Date(x.ULTIMA_CONEXION).getTime()>=onlineLimit).length,
+      pendingCheckins:rows('checkins').filter(x=>x.ESTADO_REVISION==='Pendiente'&&x.UTILIZADO!=='SI').length,
+      blockedCheckins:rows('checkins').filter(x=>x.ESTADO_REVISION==='Bloqueado'&&x.UTILIZADO!=='SI').length,
+      approvedCheckins:rows('checkins').filter(x=>x.ESTADO_REVISION==='Aprobado'&&x.UTILIZADO!=='SI'&&new Date(x.VIGENTE_HASTA||0).getTime()>Date.now()).length },
       recentOperations:rows('operations').slice(-10).reverse(), alerts:rows('alerts').filter(x=>x.LEIDA!=='SI').slice(-10).reverse(),
       notifications:rows('notifications').filter(x=>x.LEIDA!=='SI').slice(-10).reverse(),routes:rows('routes').slice(-10).reverse(),
       charts:{operationsByDay,vehicleStates:countStates(vehicles),routeStates:countStates(rows('routes'))} };
   }
+  function localCheckinCatalog() {
+    return [
+      {id:'documentacion',categoria:'Documentación',item:'Documentos obligatorios vigentes y disponibles',critico:true},
+      {id:'luces',categoria:'Exterior',item:'Luces, intermitentes y señalización',critico:true},
+      {id:'frenos',categoria:'Seguridad',item:'Frenos de servicio y estacionamiento',critico:true},
+      {id:'direccion',categoria:'Seguridad',item:'Dirección sin juego, trabas ni ruidos anormales',critico:true},
+      {id:'neumaticos',categoria:'Exterior',item:'Neumáticos, presión, desgaste y rueda de repuesto',critico:true},
+      {id:'espejos_vidrios',categoria:'Exterior',item:'Espejos, parabrisas y vidrios con visibilidad segura',critico:true},
+      {id:'cinturones',categoria:'Cabina',item:'Cinturones de seguridad y asientos',critico:true},
+      {id:'bocina',categoria:'Cabina',item:'Bocina operativa',critico:false},
+      {id:'limpiaparabrisas',categoria:'Cabina',item:'Limpiaparabrisas y líquido lavador',critico:false},
+      {id:'aceite',categoria:'Motor y fluidos',item:'Nivel de aceite de motor',critico:true},
+      {id:'refrigerante',categoria:'Motor y fluidos',item:'Nivel de refrigerante y temperatura normal',critico:true},
+      {id:'fugas',categoria:'Motor y fluidos',item:'Ausencia de fugas de combustible, aceite o refrigerante',critico:true},
+      {id:'extintor',categoria:'Emergencia',item:'Extintor vigente y accesible',critico:true},
+      {id:'botiquin',categoria:'Emergencia',item:'Botiquín disponible',critico:false},
+      {id:'herramientas',categoria:'Emergencia',item:'Gata, triángulos y herramientas básicas',critico:false},
+      {id:'combustible',categoria:'Operación',item:'Combustible o carga suficiente para la ruta',critico:false},
+    ];
+  }
+  function localNormalizeCheckinList(value){
+    let received=value;
+    if(typeof received==='string'){try{received=JSON.parse(received);}catch(_){throw new Error('CHECKIN_LISTA_INVALIDA');}}
+    if(!Array.isArray(received))throw new Error('CHECKIN_LISTA_INVALIDA');
+    const byId=Object.fromEntries(received.filter(Boolean).map(item=>[String(item.id||''),item]));
+    return localCheckinCatalog().map(def=>{
+      const input=byId[def.id]||{},answer=String(input.respuesta||'').toUpperCase();
+      if(!['OK','FALLA','NA'].includes(answer))throw new Error(`CHECKIN_ITEM_INCOMPLETO_${def.id.toUpperCase()}`);
+      return {...def,respuesta:def.critico&&answer==='NA'?'FALLA':answer,observacion:String(input.observacion||'').slice(0,500)};
+    });
+  }
+  function localCreateVehicleCheckin(payload){
+    const user=requireLocalUser(),data={...(payload.data||payload)};requireLocalPermission(user,'CHECKIN','CREAR');
+    if(user.ROL_ID==='ROL-CONDUCTOR'){const own=localDriver(user);if(!own)throw new Error('CONDUCTOR_NO_ASOCIADO');data.CONDUCTOR_ID=own.ID;}
+    if(!data.VEHICULO_ID||!data.CONDUCTOR_ID||data.KILOMETRAJE===''||!data.LISTA_CODIFICADA)throw new Error('CHECKIN_DATOS_REQUERIDOS');
+    if(String(data.CONFIRMACION_CONDUCTOR||'')!=='SI')throw new Error('CHECKIN_CONFIRMACION_REQUERIDA');
+    const vehicle=find('vehicles',data.VEHICULO_ID),driver=find('drivers',data.CONDUCTOR_ID);
+    if(!vehicle)throw new Error('VEHICULO_NO_ENCONTRADO');if(!driver)throw new Error('CONDUCTOR_NO_ENCONTRADO');
+    if(vehicle.ESTADO!=='Disponible')throw new Error('VEHICULO_NO_DISPONIBLE');if(driver.ESTADO!=='Disponible')throw new Error('CONDUCTOR_NO_DISPONIBLE');
+    const list=localNormalizeCheckinList(data.LISTA_CODIFICADA),critical=list.filter(i=>i.respuesta==='FALLA'&&i.critico).length,minor=list.filter(i=>i.respuesta==='FALLA'&&!i.critico).length,now=iso();
+    const state=critical?'Bloqueado':minor?'Pendiente':'Aprobado',result=critical?'Falla crítica':minor?'Con observaciones':'Conforme';
+    const requestId=String(data.SOLICITUD_CLIENTE_ID||'').slice(0,120);const duplicate=requestId&&activeRows(localDb.checkins).find(item=>item.SOLICITUD_CLIENTE_ID===requestId&&item.CREADO_POR===user.ID);if(duplicate)return{row:cleanRow(duplicate),persistenciaConfirmada:true,persistencia:'LOCAL',duplicadoEvitado:true,advertencias:[]};
+    const row={ID:id('CHK'),VEHICULO_ID:vehicle.ID,CONDUCTOR_ID:driver.ID,OPERACION_ID:'',FECHA_HORA:now,KILOMETRAJE:Number(data.KILOMETRAJE||vehicle.KILOMETRAJE||0),NIVEL_COMBUSTIBLE:data.NIVEL_COMBUSTIBLE||'No informado',LISTA_CODIFICADA:JSON.stringify(list),TOTAL_ITEMS:list.length,ITEMS_OK:list.filter(i=>i.respuesta==='OK').length,FALLAS_LEVES:minor,FALLAS_CRITICAS:critical,RESULTADO:result,ESTADO_REVISION:state,OBSERVACIONES:String(data.OBSERVACIONES||'').slice(0,1500),FIRMA_CONDUCTOR:String(data.FIRMA_CONDUCTOR||user.NOMBRE||driver.NOMBRE).slice(0,180),REVISADO_POR:state==='Aprobado'?user.ID:'',FECHA_REVISION:state==='Aprobado'?now:'',COMENTARIO_REVISION:state==='Aprobado'?'Aprobación automática sin fallas detectadas.':'',VIGENTE_HASTA:new Date(Date.now()+12*3600000).toISOString(),UTILIZADO:'NO',CREADO_POR:user.ID,CREADO_EN:now,ACTUALIZADO_EN:now,ELIMINADO:'NO',SOLICITUD_CLIENTE_ID:requestId};
+    localDb.checkins.push(row);
+    if(critical||minor)localDb.alerts.push({ID:id('ALT'),TIPO:'Check-in vehicular',NIVEL:critical?'Crítica':'Advertencia',TITULO:critical?'Vehículo bloqueado por inspección':'Check-in pendiente de revisión',MENSAJE:`${vehicle.PATENTE}: ${critical} falla(s) crítica(s) y ${minor} observación(es) leve(s).`,MODULO:'CHECKIN',REGISTRO_ID:row.ID,LEIDA:'NO',USUARIO_ID:'',FECHA_HORA:now,CREADO_EN:now,ACTUALIZADO_EN:now,ELIMINADO:'NO'});
+    audit(user,'CREAR','CHECKIN',`${vehicle.PATENTE} · ${result}`,row.ID);saveLocal();return{row:cleanRow(row),catalogo:localCheckinCatalog()};
+  }
+  function localReviewVehicleCheckin(payload){
+    const user=requireLocalUser(),data=payload.data||payload,idValue=payload.id||data.CHECKIN_ID,row=find('checkins',idValue);requireLocalPermission(user,'CHECKIN_APROBACIONES','ACTUALIZAR');
+    if(!row)throw new Error('CHECKIN_NO_ENCONTRADO');if(row.UTILIZADO==='SI')throw new Error('CHECKIN_YA_UTILIZADO');
+    const decision=String(data.DECISION||'').toUpperCase();if(!['APROBAR','RECHAZAR'].includes(decision))throw new Error('CHECKIN_DECISION_INVALIDA');
+    if(decision==='APROBAR'&&Number(row.FALLAS_CRITICAS||0)>0)throw new Error('CHECKIN_CRITICO_NO_APROBABLE');
+    const state=decision==='APROBAR'?'Aprobado':'Rechazado',now=iso();Object.assign(row,{ESTADO_REVISION:state,REVISADO_POR:user.ID,FECHA_REVISION:now,COMENTARIO_REVISION:String(data.COMENTARIO_REVISION||'').slice(0,1000),ACTUALIZADO_EN:now});
+    if(decision==='APROBAR')row.VIGENTE_HASTA=new Date(Date.now()+12*3600000).toISOString();
+    const driver=find('drivers',row.CONDUCTOR_ID);if(driver?.USUARIO_ID)localCreateNotification({DESTINATARIO_USUARIO_ID:driver.USUARIO_ID,DESTINATARIO_CONDUCTOR_ID:driver.ID,TITULO:`Check-in ${state.toLowerCase()}`,MENSAJE:`La inspección ${row.ID} fue ${state.toLowerCase()}. ${data.COMENTARIO_REVISION||''}`,TIPO:'Seguridad',PRIORIDAD:decision==='APROBAR'?'Normal':'Alta',CREADO_POR:user.ID});
+    audit(user,decision,'CHECKIN_APROBACIONES',data.COMENTARIO_REVISION||state,row.ID);saveLocal();return{row:cleanRow(row)};
+  }
+  function localAvailableCheckins(payload){
+    const user=requireLocalUser(),data=payload.data||payload;requireLocalPermission(user,'OPERACIONES','CREAR');let driverId=String(data.CONDUCTOR_ID||'');
+    if(user.ROL_ID==='ROL-CONDUCTOR'){const own=localDriver(user);if(!own)throw new Error('CONDUCTOR_NO_ASOCIADO');driverId=own.ID;}
+    const vehicleId=String(data.VEHICULO_ID||''),now=Date.now();let rows=activeRows(localDb.checkins).filter(row=>row.ESTADO_REVISION==='Aprobado'&&row.UTILIZADO!=='SI'&&new Date(row.VIGENTE_HASTA||0).getTime()>now&&(!vehicleId||row.VEHICULO_ID===vehicleId)&&(!driverId||row.CONDUCTOR_ID===driverId));
+    rows=localFilterRows('checkins',rows,user).sort((a,b)=>new Date(b.FECHA_HORA)-new Date(a.FECHA_HORA));return{rows:rows.slice(0,50).map(cleanRow),total:rows.length};
+  }
+  function localValidateCheckinForOperation(checkinId,vehicleId,driverId){
+    if(!checkinId)throw new Error('CHECKIN_REQUERIDO');const row=find('checkins',checkinId);if(!row)throw new Error('CHECKIN_NO_ENCONTRADO');
+    if(row.VEHICULO_ID!==vehicleId||row.CONDUCTOR_ID!==driverId)throw new Error('CHECKIN_NO_COINCIDE');if(row.ESTADO_REVISION!=='Aprobado')throw new Error('CHECKIN_NO_APROBADO');if(row.UTILIZADO==='SI')throw new Error('CHECKIN_YA_UTILIZADO');if(new Date(row.VIGENTE_HASTA||0).getTime()<=Date.now())throw new Error('CHECKIN_EXPIRADO');return row;
+  }
+  function localOperationalBase(){
+    const company=activeRows(localDb.companies)[0]||{};
+    if(String(company.VALIDAR_UBICACION_OPERACION||'SI')==='NO')throw new Error('VALIDACION_UBICACION_DESACTIVADA');
+    const latitudeText=String(company.PUNTO_OPERACION_LATITUD??'').trim(),longitudeText=String(company.PUNTO_OPERACION_LONGITUD??'').trim(),latitude=Number(latitudeText),longitude=Number(longitudeText);
+    if(!latitudeText||!longitudeText||!Number.isFinite(latitude)||!Number.isFinite(longitude))throw new Error('PUNTO_OPERACION_NO_CONFIGURADO');
+    return{NOMBRE:company.PUNTO_OPERACION_NOMBRE||'Base operacional',DIRECCION:company.PUNTO_OPERACION_DIRECCION||company.DIRECCION||'Base operacional',LATITUD:latitude,LONGITUD:longitude,RADIO_INICIO_METROS:Math.max(10,Number(company.RADIO_INICIO_METROS||150)),RADIO_FIN_METROS:Math.max(10,Number(company.RADIO_FIN_METROS||150)),PRECISION_GPS_MAXIMA_METROS:Math.max(10,Number(company.PRECISION_GPS_MAXIMA_METROS||120))};
+  }
+  function localDistanceMeters(lat1,lng1,lat2,lng2){const r=6371000,toRad=value=>Number(value)*Math.PI/180,dLat=toRad(lat2-lat1),dLng=toRad(lng2-lng1),a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;return 2*r*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));}
+  function localValidateOperationLocation(data,base,phase){const prefix=phase==='FIN'?'FIN_':'INICIO_',lat=Number(data[prefix+'LATITUD']??data.LATITUD),lng=Number(data[prefix+'LONGITUD']??data.LONGITUD),accuracy=Number(data[prefix+'PRECISION']??data.PRECISION);if(!Number.isFinite(lat)||!Number.isFinite(lng))throw new Error('UBICACION_OPERACION_REQUERIDA');if(!Number.isFinite(accuracy)||accuracy<=0)throw new Error('PRECISION_GPS_REQUERIDA');if(accuracy>base.PRECISION_GPS_MAXIMA_METROS)throw new Error('UBICACION_GPS_IMPRECISA');const distance=localDistanceMeters(lat,lng,base.LATITUD,base.LONGITUD),radius=phase==='FIN'?base.RADIO_FIN_METROS:base.RADIO_INICIO_METROS;if(distance>radius)throw new Error(phase==='FIN'?'FUERA_DEL_PUNTO_DE_FINALIZACION':'FUERA_DEL_PUNTO_DE_INICIO');return{LATITUD:lat,LONGITUD:lng,PRECISION:Math.round(accuracy*10)/10,DISTANCIA_METROS:Math.round(distance*10)/10,ESTADO:'VALIDADA'};}
+  function localRouteForOperation(data,vehicle,driver,user){if(!data.RUTA_ID)return null;const route=find('routes',data.RUTA_ID);if(!route)throw new Error('RUTA_NO_ENCONTRADA');if(!localFilterRows('routes',[route],user).length)throw new Error('PERMISO_DENEGADO');if(!['Asignada','En curso'].includes(route.ESTADO))throw new Error('RUTA_NO_DISPONIBLE');if(route.CONDUCTOR_ID!==driver.ID)throw new Error('RUTA_NO_COINCIDE_CONDUCTOR');if(route.VEHICULO_ID&&route.VEHICULO_ID!==vehicle.ID)throw new Error('RUTA_NO_COINCIDE_VEHICULO');if(route.OPERACION_ID){const linked=find('operations',route.OPERACION_ID);if(linked?.ESTADO==='Activa')throw new Error('RUTA_YA_VINCULADA');}return route;}
   function localStartOperation(payload) {
     const user=requireLocalUser(), data={...(payload.data||payload)};requireLocalPermission(user,'OPERACIONES','CREAR');
     if(user.ROL_ID==='ROL-CONDUCTOR'){const own=localDriver(user);if(!own)throw new Error('CONDUCTOR_NO_ASOCIADO');data.CONDUCTOR_ID=own.ID;const authorization=qrAuthorizations.get(data.AUTORIZACION_QR);if(!authorization||authorization.USUARIO_ID!==user.ID||authorization.VEHICULO_ID!==data.VEHICULO_ID||authorization.EXPIRA<Date.now())throw new Error('AUTORIZACION_QR_INVALIDA');qrAuthorizations.delete(data.AUTORIZACION_QR);}
     const vehicle=find('vehicles',data.VEHICULO_ID), driver=find('drivers',data.CONDUCTOR_ID);
     if(!vehicle||vehicle.ESTADO!=='Disponible')throw new Error('VEHICULO_NO_DISPONIBLE');if(!driver||driver.ESTADO!=='Disponible')throw new Error('CONDUCTOR_NO_DISPONIBLE');
-    const row={ID:id('OPE'),VEHICULO_ID:vehicle.ID,CONDUCTOR_ID:driver.ID,ORIGEN:data.ORIGEN||'Ubicación actual',DESTINO:data.DESTINO||'',FECHA_INICIO:iso(),FECHA_FIN:'',ESTADO:'Activa',KM_INICIO:Number(data.KM_INICIO||vehicle.KILOMETRAJE||0),KM_FIN:'',DISTANCIA_KM:0,OBSERVACIONES:data.OBSERVACIONES||'',CREADO_POR:user.ID,CREADO_EN:iso(),ACTUALIZADO_EN:iso(),ELIMINADO:'NO'};
-    localDb.operations.push(row);vehicle.ESTADO='En ruta';driver.ESTADO='En viaje';localDb.history.push({ID:id('HIS'),OPERACION_ID:row.ID,EVENTO:'INICIO',DETALLE:'Operación iniciada',FECHA_HORA:iso(),USUARIO_ID:user.ID,CREADO_EN:iso(),ELIMINADO:'NO'});audit(user,'INICIAR','OPERACIONES','Operación iniciada',row.ID);saveLocal();return{row};
+    const checkin=localValidateCheckinForOperation(data.CHECKIN_ID,vehicle.ID,driver.ID),base=localOperationalBase(),start=localValidateOperationLocation(data,base,'INICIO'),route=localRouteForOperation(data,vehicle,driver,user),now=iso();
+    const row={ID:id('OPE'),VEHICULO_ID:vehicle.ID,CONDUCTOR_ID:driver.ID,ORIGEN:base.DIRECCION,DESTINO:route?.DESTINO||base.DIRECCION,FECHA_INICIO:now,FECHA_FIN:'',ESTADO:'Activa',KM_INICIO:Number(data.KM_INICIO||vehicle.KILOMETRAJE||0),KM_FIN:'',DISTANCIA_KM:0,OBSERVACIONES:data.OBSERVACIONES||'',CREADO_POR:user.ID,CHECKIN_ID:checkin.ID,RUTA_ID:route?.ID||'',TIPO_OPERACION:route?'Ruta asignada con retorno a base':'Salida y regreso a base',PUNTO_RETORNO:base.DIRECCION,BASE_NOMBRE:base.NOMBRE,BASE_DIRECCION:base.DIRECCION,BASE_LATITUD:base.LATITUD,BASE_LONGITUD:base.LONGITUD,RADIO_INICIO_METROS:base.RADIO_INICIO_METROS,RADIO_FIN_METROS:base.RADIO_FIN_METROS,PRECISION_GPS_MAXIMA_METROS:base.PRECISION_GPS_MAXIMA_METROS,INICIO_LATITUD:start.LATITUD,INICIO_LONGITUD:start.LONGITUD,INICIO_PRECISION:start.PRECISION,DISTANCIA_INICIO_BASE_METROS:start.DISTANCIA_METROS,VALIDACION_INICIO:'VALIDADA',CREADO_EN:now,ACTUALIZADO_EN:now,ELIMINADO:'NO'};
+    localDb.operations.push(row);checkin.OPERACION_ID=row.ID;checkin.UTILIZADO='SI';checkin.ACTUALIZADO_EN=now;vehicle.ESTADO='En ruta';driver.ESTADO='En viaje';if(route)Object.assign(route,{OPERACION_ID:row.ID,VEHICULO_ID:vehicle.ID,ORIGEN:base.DIRECCION,ORIGEN_LATITUD:base.LATITUD,ORIGEN_LONGITUD:base.LONGITUD,ESTADO:'En curso',FECHA_INICIO:route.FECHA_INICIO||now,ACTUALIZADO_EN:now});localDb.history.push({ID:id('HIS'),OPERACION_ID:row.ID,EVENTO:'INICIO',DETALLE:`Operación iniciada en punto autorizado a ${start.DISTANCIA_METROS} m de la base`,FECHA_HORA:now,USUARIO_ID:user.ID,CREADO_EN:now,ELIMINADO:'NO'});audit(user,'INICIAR','OPERACIONES','Operación iniciada con ubicación validada',row.ID);saveLocal();return{row,locationValidation:start,base};
   }
   function localFinishOperation(payload) {
-    const user=requireLocalUser(), row=find('operations',payload.id||payload.OPERACION_ID);requireLocalPermission(user,'OPERACIONES','ACTUALIZAR');if(!row||row.ESTADO!=='Activa')throw new Error('OPERACION_NO_ACTIVA');if(!localFilterRows('operations',[row],user).length)throw new Error('PERMISO_DENEGADO');
-    const kmEnd=Number(payload.KM_FIN||row.KM_INICIO||0);row.FECHA_FIN=iso();row.ESTADO='Finalizada';row.KM_FIN=kmEnd;row.DISTANCIA_KM=Math.max(0,kmEnd-Number(row.KM_INICIO||0));row.ACTUALIZADO_EN=iso();
-    const vehicle=find('vehicles',row.VEHICULO_ID),driver=find('drivers',row.CONDUCTOR_ID);if(vehicle){vehicle.ESTADO='Disponible';vehicle.KILOMETRAJE=kmEnd;}if(driver)driver.ESTADO='Disponible';
-    localDb.history.push({ID:id('HIS'),OPERACION_ID:row.ID,EVENTO:'FIN',DETALLE:'Operación finalizada',FECHA_HORA:iso(),USUARIO_ID:user.ID,CREADO_EN:iso(),ELIMINADO:'NO'});audit(user,'FINALIZAR','OPERACIONES','Operación finalizada',row.ID);saveLocal();return{row};
+    const user=requireLocalUser(), data=payload.data||payload,row=find('operations',payload.id||payload.OPERACION_ID||data.OPERACION_ID);requireLocalPermission(user,'OPERACIONES','ACTUALIZAR');if(!row||row.ESTADO!=='Activa')throw new Error('OPERACION_NO_ACTIVA');if(!localFilterRows('operations',[row],user).length)throw new Error('PERMISO_DENEGADO');
+    const currentBase=localOperationalBase(),hasSnapshot=String(row.BASE_LATITUD??'').trim()&&String(row.BASE_LONGITUD??'').trim(),base=hasSnapshot?{...currentBase,NOMBRE:row.BASE_NOMBRE||currentBase.NOMBRE,DIRECCION:row.BASE_DIRECCION||row.PUNTO_RETORNO||row.ORIGEN||currentBase.DIRECCION,LATITUD:Number(row.BASE_LATITUD),LONGITUD:Number(row.BASE_LONGITUD),RADIO_FIN_METROS:Number(row.RADIO_FIN_METROS||currentBase.RADIO_FIN_METROS),PRECISION_GPS_MAXIMA_METROS:Number(row.PRECISION_GPS_MAXIMA_METROS||currentBase.PRECISION_GPS_MAXIMA_METROS)}:currentBase,finish=localValidateOperationLocation(data,base,'FIN'),kmEnd=Number(data.KM_FIN||row.KM_INICIO||0),now=iso();row.FECHA_FIN=now;row.ESTADO='Finalizada';row.KM_FIN=kmEnd;row.DISTANCIA_KM=Math.max(0,kmEnd-Number(row.KM_INICIO||0));row.FIN_LATITUD=finish.LATITUD;row.FIN_LONGITUD=finish.LONGITUD;row.FIN_PRECISION=finish.PRECISION;row.DISTANCIA_FIN_BASE_METROS=finish.DISTANCIA_METROS;row.VALIDACION_FIN='VALIDADA';row.OBSERVACIONES=data.OBSERVACIONES||row.OBSERVACIONES||'';row.ACTUALIZADO_EN=now;
+    const vehicle=find('vehicles',row.VEHICULO_ID),driver=find('drivers',row.CONDUCTOR_ID);if(vehicle){vehicle.ESTADO='Disponible';vehicle.KILOMETRAJE=kmEnd;}if(driver)driver.ESTADO='Disponible';if(row.RUTA_ID){const route=find('routes',row.RUTA_ID);if(route&&['Asignada','En curso'].includes(route.ESTADO))Object.assign(route,{ESTADO:'Completada',FECHA_FIN:now,OPERACION_ID:row.ID,ACTUALIZADO_EN:now});}
+    localDb.history.push({ID:id('HIS'),OPERACION_ID:row.ID,EVENTO:'FIN',DETALLE:`Operación finalizada en punto autorizado a ${finish.DISTANCIA_METROS} m de la base`,FECHA_HORA:now,USUARIO_ID:user.ID,CREADO_EN:now,ELIMINADO:'NO'});audit(user,'FINALIZAR','OPERACIONES','Operación finalizada con ubicación validada',row.ID);saveLocal();return{row,locationValidation:finish,base};
   }
   function localValidateVehicleQr(payload){
     const user=requireLocalUser();requireLocalPermission(user,'QR','LEER');const normalized=String(payload.codigo||payload.CODIGO||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
@@ -686,6 +793,13 @@
     const user=requireLocalUser();
     if(user.ROL_ID!=='ROL-ADMIN')throw new Error('PERMISO_DENEGADO');
     const data={...(payload.data||{})};
+    ['PUNTO_OPERACION_LATITUD','PUNTO_OPERACION_LONGITUD'].forEach(field=>{if(field in data&&data[field]!==''&&!Number.isFinite(Number(data[field])))throw new Error('COORDENADAS_INVALIDAS');if(field in data&&data[field]!=='')data[field]=Number(data[field]);});
+    ['RADIO_INICIO_METROS','RADIO_FIN_METROS','PRECISION_GPS_MAXIMA_METROS'].forEach(field=>{if(!(field in data)||data[field]==='')return;const value=Math.round(Number(data[field]));if(!Number.isFinite(value)||value<10||value>5000)throw new Error('RADIO_OPERACION_INVALIDO');data[field]=value;});
+    if('VALIDAR_UBICACION_OPERACION' in data)data.VALIDAR_UBICACION_OPERACION=String(data.VALIDAR_UBICACION_OPERACION)==='NO'?'NO':'SI';
+    if('RETORNO_BASE_OBLIGATORIO' in data)data.RETORNO_BASE_OBLIGATORIO=String(data.RETORNO_BASE_OBLIGATORIO)==='NO'?'NO':'SI';
+    const colorFields=['COLOR_PRINCIPAL','COLOR_SECUNDARIO','COLOR_ACENTO','COLOR_FONDO','COLOR_SUPERFICIE','COLOR_TEXTO','COLOR_TEXTO_SECUNDARIO','COLOR_BORDE','COLOR_MENU','COLOR_MENU_SECUNDARIO','COLOR_EXITO','COLOR_ADVERTENCIA','COLOR_PELIGRO','COLOR_FONDO_OSCURO','COLOR_SUPERFICIE_OSCURO','COLOR_TEXTO_OSCURO','COLOR_TEXTO_SECUNDARIO_OSCURO','COLOR_BORDE_OSCURO'];
+    colorFields.forEach(field=>{if(field in data&&data[field]!==''&&!/^#[0-9A-F]{6}$/i.test(String(data[field])))throw new Error('COLOR_TEMA_INVALIDO');if(field in data)data[field]=String(data[field]).toUpperCase();});
+    if('TEMA_PREDETERMINADO' in data&&!['Claro','Oscuro','Sistema'].includes(String(data.TEMA_PREDETERMINADO)))throw new Error('TEMA_PREDETERMINADO_INVALIDO');
     let row=activeRows(localDb.companies)[0];
     if(!row){
       row={ID:id('EMP'),CREADO_EN:iso(),ELIMINADO:'NO'};
@@ -706,7 +820,7 @@
   }
 
   async function localChangePassword(payload){const user=requireLocalUser();if(user.CONTRASENA_CIFRADA!==await digest(payload.contrasenaActual+':'+user.SAL_CONTRASENA))throw new Error('CONTRASENA_ACTUAL_INVALIDA');if(String(payload.nuevaContrasena??'').length===0)throw new Error('CONTRASENA_REQUERIDA');const salt=id('SALT');user.SAL_CONTRASENA=salt;user.CONTRASENA_CIFRADA=await digest(String(payload.nuevaContrasena)+':'+salt);user.ACTUALIZADO_EN=iso();saveLocal();return{changed:true};}
-  function localClear(payload){const user=requireLocalUser();if(user.ROL_ID!=='ROL-ADMIN')throw new Error('PERMISO_DENEGADO');if(payload.confirmacion!=='LIMPIAR DATOS')throw new Error('CONFIRMACION_REQUERIDA');['vehicles','drivers','operations','gps','gpsCurrent','history','maintenance','documents','alerts','reports','audit','qr','routes','notifications','connections'].forEach(key=>localDb[key]=[]);audit(user,'LIMPIAR','CONFIGURACION','Datos operativos eliminados; empresa y usuarios conservados');saveLocal();return{cleared:true};}
+  function localClear(payload){const user=requireLocalUser();if(user.ROL_ID!=='ROL-ADMIN')throw new Error('PERMISO_DENEGADO');if(payload.confirmacion!=='LIMPIAR DATOS')throw new Error('CONFIRMACION_REQUERIDA');['vehicles','drivers','operations','gps','gpsCurrent','history','maintenance','documents','alerts','reports','audit','qr','routes','notifications','connections','checkins'].forEach(key=>localDb[key]=[]);audit(user,'LIMPIAR','CONFIGURACION','Datos operativos eliminados; empresa y usuarios conservados');saveLocal();return{cleared:true};}
 
   window.ConexionFlotas = {
     request,

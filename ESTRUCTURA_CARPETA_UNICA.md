@@ -1,14 +1,35 @@
-# Estructura de carpeta única
+# Sistema de Gestión de Flotas 3.0.0
 
-Esta versión no utiliza subcarpetas. Todos los archivos se encuentran en la raíz.
+# Estructura de carpeta única 2.8.0
 
-- `index.html`: acceso al sistema.
-- `main.html`: panel contenedor.
-- `panel-principal.html`, `rutas.html`, `ubicacion-tiempo-real.html` y las demás vistas: módulos independientes.
-- `menu-principal.js`: abre las vistas directamente por nombre, sin el prefijo `modulos/`.
-- `estilos.css`, `responsive.css`, `acceso.css` y `menu-principal.css`: estilos globales.
-- `configuracion.js`, `conexion.js`, `aplicacion.js`, `mapa.js`, `acceso.js` y `menu-principal.js`: lógica del cliente.
-- Archivos `.gs` numerados: backend recomendado para Google Apps Script.
-- `Codigo_Completo.gs`: alternativa opcional; no debe usarse junto con los `.gs` numerados.
+Todos los archivos deben subirse al mismo nivel en GitHub. No se utilizan subcarpetas.
 
-Todas las referencias relativas fueron adaptadas para funcionar desde la misma carpeta.
+## Archivos principales
+
+- `index.html`: preconfiguración automática cuando no hay usuarios e inicio de sesión cuando el sistema ya está configurado.
+- `main.html`: contenedor del menú y de las vistas.
+- `menu-principal.js`: navegación con un único iframe.
+- `configuracion.js`: dirección del servicio y parámetros.
+- `conexion.js`: comunicación con Google Apps Script y modo local.
+- `aplicacion.js`: lógica de las vistas.
+- `estilos.css` y `responsive.css`: diseño general y adaptable.
+
+## Vistas de check-in
+
+- `checkin-vehicular.html`
+- `checkin-aprobaciones.html`
+- `checkin-historial.html`
+
+## Backend de check-in
+
+- `22_Checkin_Vehicular.gs`
+
+Todos estos archivos permanecen en la raíz junto con el resto del proyecto.
+
+## Archivos de la versión 2.8.0
+
+- `23_Permisos_Usuario.gs`: permisos personalizados sin invalidar sesiones.
+- `MEJORAS_VERSION_2.8.0.md`: resumen de preconfiguración, permisos y voz.
+- `PRUEBAS_VERSION_2.8.0.md`: validaciones ejecutadas.
+
+La preconfiguración está integrada en `index.html`. Los comandos de voz pertenecen a `notificaciones.html` y se implementan desde `aplicacion.js`.

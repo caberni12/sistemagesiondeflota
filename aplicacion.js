@@ -12,6 +12,8 @@
 
   let currentUser = null;
   let currentCompany = null;
+  let reconocimientoVoz = null;
+  let vozEscuchando = false;
   let currentSection = initialSection;
   let mapaFlota = null;
   let ultimaUbicacionEnviada = null;
@@ -53,6 +55,7 @@
   const trackingPreferenceKey = 'flotas_ubicacion_continua_v1';
   const gpsTrackingModeKey = 'flotas_seguimiento_modo_v1';
   const gpsSelectedVehiclesKey = 'flotas_seguimiento_vehiculos_v1';
+  const checkinReceiptKey = 'flotas_ultimo_checkin_confirmado_v1';
   let gpsTrackingMode = localStorage.getItem(gpsTrackingModeKey) === 'specific' ? 'specific' : 'all';
   let gpsSelectedVehicles = (() => {
     try { return new Set(JSON.parse(localStorage.getItem(gpsSelectedVehiclesKey) || '[]').map(String)); }
@@ -73,11 +76,11 @@
 
   const navGroups = [
     ['GENERAL', [
-      ['dashboard','⌂','Panel principal'], ['routes','➜','Rutas asignadas'], ['operations','⇄','Operaciones'], ['gps','⌖','GPS en tiempo real'],
+      ['dashboard','⌂','Panel principal'], ['routes','➜','Rutas asignadas'], ['checkin','✓','Check-in vehicular'], ['operations','⇄','Operaciones'], ['gps','⌖','GPS en tiempo real'],
       ['notifications','🔔','Notificaciones']
     ]],
     ['GESTIÓN', [
-      ['vehicles','▣','Vehículos'], ['drivers','♙','Conductores'], ['maintenance','⚙','Mantenciones'],
+      ['vehicles','▣','Vehículos'], ['drivers','♙','Conductores'], ['checkinApprovals','☑','Aprobar check-ins'], ['checkinHistory','▤','Historial de check-in'], ['maintenance','⚙','Mantenciones'],
       ['documents','▤','Documentos'], ['history','↻','Historial'], ['alerts','!','Alertas']
     ]],
     ['ADMINISTRACIÓN', [
@@ -134,16 +137,43 @@
   };
 
   const labels = {
-    dashboard:'Panel principal',routes:'Rutas asignadas',vehicles:'Vehículos',drivers:'Conductores',operations:'Operaciones',gps:'GPS en tiempo real',maintenance:'Mantenciones',
+    dashboard:'Panel principal',routes:'Rutas asignadas',vehicles:'Vehículos',drivers:'Conductores',checkin:'Check-in vehicular',checkinApprovals:'Aprobación de check-ins',checkinHistory:'Historial de check-in',operations:'Operaciones',gps:'GPS en tiempo real',maintenance:'Mantenciones',
     notifications:'Notificaciones',documents:'Documentos',history:'Historial',alerts:'Alertas',users:'Usuarios',reports:'Reportes',audit:'Auditoría',company:'Empresa',settings:'Configuración'
   };
 
   const navPermission = {
-    dashboard:'PANEL_PRINCIPAL',routes:'RUTAS',operations:'OPERACIONES',gps:'GPS',notifications:'NOTIFICACIONES',
+    dashboard:'PANEL_PRINCIPAL',routes:'RUTAS',checkin:'CHECKIN',checkinApprovals:'CHECKIN_APROBACIONES',checkinHistory:'CHECKIN',operations:'OPERACIONES',gps:'GPS',notifications:'NOTIFICACIONES',
     vehicles:'VEHICULOS',drivers:'CONDUCTORES',maintenance:'MANTENCIONES',documents:'DOCUMENTOS',history:'HISTORIAL',
     alerts:'ALERTAS',users:'USUARIOS',company:'CONFIGURACION',reports:'REPORTES',audit:'BITACORA',settings:'CONFIGURACION'
   };
   const resourcePermission={vehicles:'VEHICULOS',drivers:'CONDUCTORES',maintenance:'MANTENCIONES',documents:'DOCUMENTOS',alerts:'ALERTAS',users:'USUARIOS'};
+  const permissionCatalog = Object.freeze([
+    ['PANEL_PRINCIPAL','Panel principal'],['USUARIOS','Usuarios'],['VEHICULOS','Vehículos'],['CONDUCTORES','Conductores'],
+    ['OPERACIONES','Operaciones'],['CHECKIN','Check-in'],['CHECKIN_APROBACIONES','Aprobar check-ins'],['GPS','Ubicación en tiempo real'],
+    ['HISTORIAL','Historial'],['MANTENCIONES','Mantenciones'],['DOCUMENTOS','Documentos'],['ALERTAS','Alertas'],
+    ['REPORTES','Reportes'],['BITACORA','Auditoría'],['CONFIGURACION','Configuración'],['QR','QR'],['RUTAS','Rutas'],
+    ['NOTIFICACIONES','Notificaciones'],['CONEXIONES','Conexiones']
+  ]);
+  const permissionActions = Object.freeze([['LEER','Ver'],['CREAR','Crear'],['ACTUALIZAR','Editar'],['ELIMINAR','Eliminar']]);
+
+  const checkinCatalog = Object.freeze([
+    {id:'documentacion',categoria:'Documentación',item:'Documentos obligatorios vigentes y disponibles',critico:true},
+    {id:'luces',categoria:'Exterior',item:'Luces, intermitentes y señalización',critico:true},
+    {id:'frenos',categoria:'Seguridad',item:'Frenos de servicio y estacionamiento',critico:true},
+    {id:'direccion',categoria:'Seguridad',item:'Dirección sin juego, trabas ni ruidos anormales',critico:true},
+    {id:'neumaticos',categoria:'Exterior',item:'Neumáticos, presión, desgaste y rueda de repuesto',critico:true},
+    {id:'espejos_vidrios',categoria:'Exterior',item:'Espejos, parabrisas y vidrios con visibilidad segura',critico:true},
+    {id:'cinturones',categoria:'Cabina',item:'Cinturones de seguridad y asientos',critico:true},
+    {id:'bocina',categoria:'Cabina',item:'Bocina operativa',critico:false},
+    {id:'limpiaparabrisas',categoria:'Cabina',item:'Limpiaparabrisas y líquido lavador',critico:false},
+    {id:'aceite',categoria:'Motor y fluidos',item:'Nivel de aceite de motor',critico:true},
+    {id:'refrigerante',categoria:'Motor y fluidos',item:'Nivel de refrigerante y temperatura normal',critico:true},
+    {id:'fugas',categoria:'Motor y fluidos',item:'Ausencia de fugas de combustible, aceite o refrigerante',critico:true},
+    {id:'extintor',categoria:'Emergencia',item:'Extintor vigente y accesible',critico:true},
+    {id:'botiquin',categoria:'Emergencia',item:'Botiquín disponible',critico:false},
+    {id:'herramientas',categoria:'Emergencia',item:'Gata, triángulos y herramientas básicas',critico:false},
+    {id:'combustible',categoria:'Operación',item:'Combustible o carga suficiente para la ruta',critico:false},
+  ]);
   function hasPermission(module,action='LEER'){
     const permissions=currentUser?.PERMISOS||[];
     return currentUser?.ROL_ID==='ROL-ADMIN'||permissions.includes('*:*')||permissions.includes(`${module}:${action}`);
@@ -168,9 +198,9 @@
   const statusClass = value => {
     const text = String(value || '').toLowerCase();
     if (/\b(inactivo|inactiva|desconectado|desconectada|bloqueado|bloqueada)\b|sin gps/.test(text)) return 'bad';
-    if (/\b(disponible|activo|activa|vigente|finalizada|completada|conduciendo|conectado|conectada|sí|si)\b|en línea/.test(text)) return 'ok';
+    if (/\b(disponible|activo|activa|vigente|finalizada|completada|conduciendo|conectado|conectada|aprobado|aprobada|conforme|sí|si)\b|en línea/.test(text)) return 'ok';
     if (/ruta|viaje|info|sesión administrativa/.test(text)) return 'info';
-    if (/programada|proceso|por vencer|advertencia|mantención/.test(text)) return 'warn';
+    if (/programada|proceso|por vencer|advertencia|mantención|pendiente|observaciones/.test(text)) return 'warn';
     return 'bad';
   };
   const status = value => `<span class="status ${statusClass(value)}">${esc(value || 'Sin estado')}</span>`;
@@ -201,7 +231,7 @@
       CLAVE_INSTALACION_REQUERIDA:'Ingrese una clave de instalación.', CONTRASENA_REQUERIDA:'Ingrese la contraseña elegida.',
       DATOS_DE_ADMINISTRADOR_INVALIDOS:'Complete los datos del administrador e ingrese una contraseña.',
       SISTEMA_YA_INICIALIZADO:'El sistema ya tiene usuarios registrados.', AUTENTICACION_REQUERIDA:'La sesión no está disponible.', SESION_INVALIDA:'La sesión dejó de ser válida.',
-      SESION_EXPIRADA:'La sesión expiró.', PERMISO_DENEGADO:'Su rol no tiene permiso para realizar esta acción.', RECURSO_NO_ENCONTRADO:'El recurso solicitado no existe.',
+      SESION_EXPIRADA:'La sesión expiró.', PERMISO_DENEGADO:'Su rol no tiene permiso para realizar esta acción.', ULTIMO_ADMINISTRADOR_PROTEGIDO:'No se puede quitar o desactivar al último administrador activo.', CONTRASENAS_NO_COINCIDEN:'Las contraseñas no coinciden.', RECURSO_NO_ENCONTRADO:'El recurso solicitado no existe.',
       REGISTRO_NO_ENCONTRADO:'El registro no existe.', VEHICULO_NO_DISPONIBLE:'El vehículo no está disponible.', CONDUCTOR_NO_DISPONIBLE:'El conductor no está disponible.',
       OPERACION_NO_ACTIVA:'La operación ya no está activa.', CORREO_YA_EXISTE:'El correo ya está registrado.', DIRECCION_APLICACION_NO_CONFIGURADA:'Falta configurar la dirección de la aplicación en configuracion.js.',
       ID_HOJA_NO_CONFIGURADO:'La base de datos central no está configurada correctamente.', TIEMPO_DE_ESPERA_AGOTADO:'La base de datos tardó demasiado en responder.',
@@ -212,7 +242,18 @@
       ESTADO_RUTA_INVALIDO:'El estado solicitado para la ruta no es válido.', DESTINATARIO_REQUERIDO:'Seleccione un conductor destinatario.', NOTIFICACION_NO_ENCONTRADA:'La notificación no existe.',
       COORDENADAS_INVALIDAS:'Las coordenadas recibidas no son válidas.', AUTORIZACION_QR_INVALIDA:'Valide nuevamente el QR del vehículo. La autorización dura cinco minutos.',
       ACCION_ESPECIAL_REQUERIDA:'Utilice el botón específico del módulo para realizar esta acción.',
-      SINCRONIZACION_NO_COMPLETADA:'La base de datos no respondió correctamente durante la sincronización.'
+      SINCRONIZACION_NO_COMPLETADA:'La base de datos no respondió correctamente durante la sincronización.',
+      CHECKIN_REQUERIDO:'Debe seleccionar un check-in aprobado antes de iniciar la operación.', CHECKIN_NO_ENCONTRADO:'El check-in seleccionado no existe.',
+      CHECKIN_NO_COINCIDE:'El check-in no corresponde al vehículo y conductor seleccionados.', CHECKIN_NO_APROBADO:'El check-in todavía no está aprobado.',
+      CHECKIN_YA_UTILIZADO:'Este check-in ya fue utilizado en otra operación.', CHECKIN_EXPIRADO:'El check-in expiró. Realice una inspección nueva.',
+      CHECKIN_CONFIRMACION_REQUERIDA:'Debe confirmar que realizó personalmente la inspección.', CHECKIN_LISTA_INVALIDA:'La lista de inspección no es válida.',
+      CHECKIN_DATOS_REQUERIDOS:'Complete el vehículo, conductor, kilometraje y todos los puntos de inspección.', CHECKIN_DECISION_INVALIDA:'Seleccione aprobar o rechazar.',
+      CHECKIN_CRITICO_NO_APROBABLE:'Un check-in con fallas críticas no puede aprobarse. Debe corregirse la falla y realizar una inspección nueva.',
+      PUNTO_OPERACION_NO_CONFIGURADO:'El Administrador debe configurar el punto base de inicio y finalización en Configuración.', VALIDACION_UBICACION_DESACTIVADA:'La validación geográfica de operaciones está desactivada. Debe activarse en Configuración.',
+      UBICACION_OPERACION_REQUERIDA:'Debe permitir el acceso al GPS y obtener la ubicación antes de continuar.', PRECISION_GPS_REQUERIDA:'El dispositivo no informó la precisión de la ubicación.',
+      UBICACION_GPS_IMPRECISA:'La señal GPS es demasiado imprecisa. Salga a un lugar abierto y vuelva a intentarlo.', FUERA_DEL_PUNTO_DE_INICIO:'No puede iniciar la operación fuera del punto autorizado por el Administrador.',
+      FUERA_DEL_PUNTO_DE_FINALIZACION:'No puede finalizar la operación hasta regresar al punto autorizado.', RADIO_OPERACION_INVALIDO:'Los radios y la precisión permitida deben estar entre 10 y 5.000 metros.',
+      RUTA_NO_DISPONIBLE:'La ruta seleccionada ya no está disponible.', RUTA_NO_COINCIDE_CONDUCTOR:'La ruta no corresponde al conductor seleccionado.', RUTA_NO_COINCIDE_VEHICULO:'La ruta no corresponde al vehículo seleccionado.', RUTA_YA_VINCULADA:'La ruta ya está vinculada a otra operación activa.'
     };
     if (messages[key]) return messages[key];
     if (key.startsWith('CAMPO_REQUERIDO_')) return `El campo ${key.replace('CAMPO_REQUERIDO_','')} es obligatorio.`;
@@ -527,7 +568,7 @@
       return heading('RESUMEN OPERACIONAL',`Hola, ${esc(currentUser.NOMBRE.split(' ')[0])}`,'Información actualizada de flota, rutas, dispositivos y avisos según sus permisos.',headingActions)+
         driverHero+
         `<div class="kpi-grid">${metric('▣','Vehículos',m.vehicles||0,`${m.availableVehicles||0} disponibles`)}${metric('♙','Conductores',m.drivers||0,`${m.availableDrivers||0} disponibles`)}${metric('⇄','Operaciones activas',m.activeOperations||0,'Seguimiento en curso')}${metric('!','Alertas',m.unreadAlerts||0,`${m.expiredDocuments||0} documentos vencidos`)}</div>`+
-        `<div class="live-strip">${liveStat('⌖','Sesiones abiertas',realtime.totals?.onlineDevices??m.onlineDevices??0,'online')}${liveStat('🚐','Conduciendo',realtime.totals?.drivingSessions||0,'online')}${liveStat('!','Operación sin GPS',realtime.totals?.sessionsWithoutGps||0,(realtime.totals?.sessionsWithoutGps||0)?'warning':'')}${liveStat('🔔','Mensajes sin leer',m.unreadNotifications||0,(m.unreadNotifications||0)?'warning':'')}</div>`+
+        `<div class="live-strip">${liveStat('⌖','Sesiones abiertas',realtime.totals?.onlineDevices??m.onlineDevices??0,'online')}${liveStat('🚐','Conduciendo',realtime.totals?.drivingSessions||0,'online')}${liveStat('✓','Check-ins aprobados',m.approvedCheckins||0,'online')}${liveStat('!','Check-ins por atender',(m.pendingCheckins||0)+(m.blockedCheckins||0),((m.pendingCheckins||0)+(m.blockedCheckins||0))?'warning':'')}</div>`+
         `<div class="dashboard-insights"><article class="card"><div class="card-header"><div><h3>Operaciones de los últimos 7 días</h3><p>Actividad diaria visible para su rol</p></div></div>${weeklyBars(data.charts?.operationsByDay||[])}</article><article class="card"><div class="card-header"><div><h3>Estado de la flota</h3><p>Distribución actual de vehículos</p></div></div>${stateDonut(data.charts?.vehicleStates||[])}</article><article class="card"><div class="card-header"><div><h3>Acciones rápidas</h3><p>Accesos según sus permisos</p></div></div>${quickActions()}</article></div>`+
         `${hasPermission('CONEXIONES','LEER')?`<article class="card session-control-card"><div class="card-header"><div><h3>Control de sesiones abiertas</h3><p>Usuario, conductor, módulo abierto, vehículo, operación, ruta y GPS por cada sesión.</p></div><button class="link-button" data-nav="gps">Abrir monitoreo</button></div><div class="device-list dashboard-session-list">${(realtime.devices||[]).slice(0,12).map(deviceCard).join('')||empty('○','Sin sesiones registradas','Las sesiones aparecerán cuando los usuarios ingresen al sistema.')}</div></article>`:''}`+
         `<div class="dashboard-grid"><article class="card"><div class="card-header"><div><h3>Operaciones recientes</h3><p>Movimientos creados en el sistema</p></div></div>${operations?table(['Operación','Vehículo','Conductor','Inicio','Estado','Ruta'],operations):empty('⇄','Aún no hay operaciones','No existen recorridos visibles para esta cuenta.',hasPermission('OPERACIONES','CREAR')?'<button class="btn primary" data-nav="operations">Crear operación</button>':'')}</article>`+
@@ -538,7 +579,10 @@
     async maintenance(){return renderResourcePage('maintenance','PREVENCIÓN','Mantenciones','Programe trabajos preventivos y correctivos.',maintenanceRows,['Trabajo','Vehículo','Tipo','Fecha','Costo','Estado','']);},
     async documents(){return renderResourcePage('documents','VENCIMIENTOS','Documentos','Controle permisos, seguros, revisiones y licencias.',documentRows,['Documento','Asociado','Identificación','Vencimiento','Estado','Archivo','']);},
     async alerts(){return renderResourcePage('alerts','NOTIFICACIONES','Alertas','Registre y gestione eventos que requieren atención.',alertRows,['Nivel','Título','Módulo','Fecha','Leída','']);},
-    async users(){return renderResourcePage('users','SEGURIDAD','Usuarios','Administre accesos, roles y estado de las cuentas.',userRows,['Usuario','Correo','Rol','Último acceso','Estado','']);},
+    async users(){return renderResourcePage('users','SEGURIDAD','Usuarios','Administre accesos, roles, permisos personalizados y estado de las cuentas sin cerrar sus sesiones.',userRows,['Usuario','Correo','Rol','Permisos','Último acceso','Estado','']);},
+    async checkin(){return renderCheckin();},
+    async checkinApprovals(){return renderCheckinApprovals();},
+    async checkinHistory(){return renderCheckinHistory();},
     async operations(){return renderOperations();},
     async routes(){return renderRoutes();},
     async gps(){return renderGps();},
@@ -590,6 +634,7 @@
   function quickActions(){
     const actions=[];
     if(hasPermission('RUTAS','CREAR'))actions.push(['routes','➜','Asignar ruta']);
+    if(hasPermission('CHECKIN','CREAR'))actions.push(['checkin','✓','Realizar check-in']);
     if(hasPermission('OPERACIONES','CREAR'))actions.push(['operations','⇄','Iniciar operación']);
     if(hasPermission('NOTIFICACIONES','CREAR'))actions.push(['notifications','🔔','Enviar aviso']);
     if(hasPermission('VEHICULOS','CREAR'))actions.push(['vehicles','▣','Registrar vehículo']);
@@ -640,102 +685,166 @@
   function maintenanceRows(m){return `<tr data-search-row="${esc(`${m.TITULO} ${m.VEHICULO_ID} ${m.ESTADO}`.toLowerCase())}"><td><strong>${esc(m.TITULO)}</strong><span class="muted">${esc(m.DESCRIPCION||'')}</span></td><td>${esc(m.VEHICULO_ID)}</td><td>${esc(m.TIPO)}</td><td>${fmtDate(m.FECHA_PROGRAMADA)}</td><td>$${number(m.COSTO)}</td><td>${status(m.ESTADO)}</td><td>${actions('maintenance',m.ID)}</td></tr>`;}
   function documentRows(d){return `<tr data-search-row="${esc(`${d.TIPO} ${d.IDENTIFICACION} ${d.ESTADO}`.toLowerCase())}"><td><strong>${esc(d.TIPO)}</strong><span class="muted">${esc(d.ID)}</span></td><td>${esc(d.ASOCIADO_TIPO)}</td><td>${esc(d.IDENTIFICACION)}</td><td>${fmtDate(d.FECHA_VENCIMIENTO)}</td><td>${status(d.ESTADO)}</td><td>${d.DIRECCION_ARCHIVO?`<a class="link-button" href="${esc(d.DIRECCION_ARCHIVO)}" target="_blank" rel="noopener">Abrir</a>`:'—'}</td><td>${actions('documents',d.ID)}</td></tr>`;}
   function alertRows(a){return `<tr data-search-row="${esc(`${a.NIVEL} ${a.TITULO} ${a.MODULO}`.toLowerCase())}"><td>${status(a.NIVEL)}</td><td><strong>${esc(a.TITULO)}</strong><span class="muted">${esc(a.MENSAJE)}</span></td><td>${esc(a.MODULO||'—')}</td><td>${fmtDate(a.FECHA_HORA||a.CREADO_EN,true)}</td><td>${status(a.LEIDA||'NO')}</td><td>${actions('alerts',a.ID)}</td></tr>`;}
-  function userRows(u){return `<tr data-search-row="${esc(`${u.NOMBRE} ${u.CORREO} ${u.ROL_ID}`.toLowerCase())}"><td><div class="entity"><span class="avatar">${initials(u.NOMBRE)}</span><strong>${esc(u.NOMBRE)}</strong></div></td><td>${esc(u.CORREO)}</td><td>${esc(u.ROL_ID)}</td><td>${fmtDate(u.ULTIMO_ACCESO,true)}</td><td>${status(u.ESTADO)}</td><td>${actions('users',u.ID)}</td></tr>`;}
+  function userRows(u){const mode=u.ROL_ID==='ROL-ADMIN'?'Completo':u.MODO_PERMISOS==='PERSONALIZADO'?'Personalizados':'Según rol';const permissionButton=hasPermission('USUARIOS','ACTUALIZAR')?`<button data-user-permissions="${esc(u.ID)}" title="Configurar permisos">⚿</button>`:'';const actionHtml=actions('users',u.ID),baseActions=actionHtml==='—'?(permissionButton?`<div class="row-actions">${permissionButton}</div>`:'—'):actionHtml.replace('</div>',permissionButton+'</div>');return `<tr data-search-row="${esc(`${u.NOMBRE} ${u.CORREO} ${u.ROL_ID} ${mode}`.toLowerCase())}"><td><div class="entity"><span class="avatar">${initials(u.NOMBRE)}</span><strong>${esc(u.NOMBRE)}</strong></div></td><td>${esc(u.CORREO)}</td><td>${esc(u.ROL_NOMBRE||u.ROL_ID)}</td><td>${status(mode)}</td><td>${fmtDate(u.ULTIMO_ACCESO,true)}</td><td>${status(u.ESTADO)}</td><td>${baseActions}</td></tr>`;}
   function actions(resource,id){const module=resourcePermission[resource];const buttons=[];if(hasPermission(module,'ACTUALIZAR'))buttons.push(`<button data-edit="${resource}:${id}" title="Editar">✎</button>`);if(hasPermission(module,'ELIMINAR'))buttons.push(`<button data-delete="${resource}:${id}" title="Eliminar">×</button>`);return buttons.length?`<div class="row-actions">${buttons.join('')}</div>`:'—';}
 
+  function parseCheckinItems(row) {
+    try {
+      const items=typeof row?.LISTA_CODIFICADA==='string'?JSON.parse(row.LISTA_CODIFICADA):row?.LISTA_CODIFICADA;
+      return Array.isArray(items)?items:[];
+    } catch (_) { return []; }
+  }
+  function crearSolicitudClienteCheckin() {
+    const value = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    return `CHK-CLIENTE-${value}`.slice(0, 120);
+  }
+  function guardarReciboCheckin(row, persistencia) {
+    if (!row?.ID) return;
+    const receipt = { id:row.ID, estado:row.ESTADO_REVISION || row.RESULTADO || 'Registrado', fecha:new Date().toISOString(), persistencia:persistencia || (api.isRemote() ? 'CENTRAL_CONFIRMADA' : 'LOCAL') };
+    sessionStorage.setItem(checkinReceiptKey, JSON.stringify(receipt));
+  }
+  function reciboCheckinMarkup() {
+    let receipt=null;
+    try { receipt=JSON.parse(sessionStorage.getItem(checkinReceiptKey) || 'null'); } catch (_) {}
+    if (!receipt?.id) return '';
+    const central=receipt.persistencia==='CENTRAL_CONFIRMADA';
+    return `<div class="tracking-notice ${central?'active':'warning'} checkin-save-receipt"><i>${central?'✓':'!'}</i><div><b>${central?'Check-in guardado en la base central':'Check-in guardado solo en este dispositivo'}</b><span>Comprobante ${esc(receipt.id)} · ${esc(receipt.estado)} · ${fmtDate(receipt.fecha,true)}</span></div><button class="btn soft small" type="button" data-checkin-detail="${esc(receipt.id)}">Ver registro</button></div>`;
+  }
+
+  function checkinVisualState(row) {
+    if(row.UTILIZADO==='SI')return 'Utilizado';
+    if(row.ESTADO_REVISION==='Aprobado'&&new Date(row.VIGENTE_HASTA||0).getTime()<=Date.now())return 'Expirado';
+    return row.ESTADO_REVISION||row.RESULTADO||'Sin estado';
+  }
+  function checkinDetailAction(row) {
+    return `<button class="btn soft small" data-checkin-detail="${esc(row.ID)}">Ver inspección</button>`;
+  }
+  async function checkinContext() {
+    const batch=await api.requestBatch([
+      {key:'checkins',action:'list',payload:{resource:'checkins'}},
+      {key:'vehicles',action:'list',payload:{resource:'vehicles'}},
+      {key:'drivers',action:'list',payload:{resource:'drivers'}},
+    ]),checkins=batch.checkins||{},vehicles=batch.vehicles||{},drivers=batch.drivers||{};
+    guardarListaFormulario('checkins',checkins.rows||[]);guardarListaFormulario('vehicles',vehicles.rows||[]);guardarListaFormulario('drivers',drivers.rows||[]);
+    return {rows:(checkins.rows||[]).sort((a,b)=>new Date(b.FECHA_HORA||0)-new Date(a.FECHA_HORA||0)),vehicles:vehicles.rows||[],drivers:drivers.rows||[]};
+  }
+  function checkinRow(row,vehicleMap,driverMap,withReview=false) {
+    const vehicle=vehicleMap[row.VEHICULO_ID]?.PATENTE||row.VEHICULO_ID,driver=driverMap[row.CONDUCTOR_ID]?.NOMBRE||row.CONDUCTOR_ID,state=checkinVisualState(row);
+    const review=withReview&&row.ESTADO_REVISION==='Pendiente'&&Number(row.FALLAS_CRITICAS||0)===0?`<button class="btn primary small" data-review-checkin="${esc(row.ID)}">Revisar</button>`:'';
+    return `<tr data-search-row="${esc(`${row.ID} ${vehicle} ${driver} ${row.RESULTADO} ${state}`.toLowerCase())}"><td><strong>${esc(row.ID)}</strong><span class="muted">${fmtDate(row.FECHA_HORA,true)}</span></td><td><strong>${esc(vehicle)}</strong></td><td>${esc(driver)}</td><td>${status(row.RESULTADO)}</td><td>${status(state)}</td><td><span class="checkin-count critical">${number(row.FALLAS_CRITICAS||0)} críticas</span><span class="checkin-count">${number(row.FALLAS_LEVES||0)} leves</span></td><td>${fmtDate(row.VIGENTE_HASTA,true)}</td><td><div class="row-button-stack">${review}${checkinDetailAction(row)}</div></td></tr>`;
+  }
+  function checkinInlineItemsMarkup() {
+    const groups={};
+    checkinCatalog.forEach(item=>(groups[item.categoria]||(groups[item.categoria]=[])).push(item));
+    let position=0;
+    return Object.entries(groups).map(([category,items])=>`<fieldset class="checkin-group checkin-group-visible full"><legend>${esc(category)}</legend>${items.map(item=>{
+      position+=1;
+      return `<article class="checkin-control-card" data-checkin-control="${esc(item.id)}">
+        <div class="checkin-control-head"><span class="checkin-control-number">${position}</span><div><b>${esc(item.item)}</b><small>${item.critico?'Control crítico: una falla bloquea la operación':'Control complementario'}</small></div><span class="checkin-control-state" data-checkin-state="${esc(item.id)}">Sin revisar</span></div>
+        <div class="checkin-answer-options" role="radiogroup" aria-label="Resultado de ${esc(item.item)}">
+          <label class="checkin-answer ok"><input type="radio" name="checkin_${esc(item.id)}" value="OK" required><span>✓ Conforme</span></label>
+          <label class="checkin-answer fail"><input type="radio" name="checkin_${esc(item.id)}" value="FALLA" required><span>! Presenta falla</span></label>
+          ${item.critico?'':`<label class="checkin-answer na"><input type="radio" name="checkin_${esc(item.id)}" value="NA" required><span>— No aplica</span></label>`}
+        </div>
+        <label class="field checkin-inline-note"><span>Observación ${item.critico?'del control':'opcional'}</span><input data-checkin-note="${esc(item.id)}" placeholder="Describa daños, ruidos o condiciones encontradas"></label>
+      </article>`;
+    }).join('')}</fieldset>`).join('');
+  }
+
+  function checkinInlineFormMarkup() {
+    if(!hasPermission('CHECKIN','CREAR')){
+      return `<article class="card checkin-visible-card"><div class="card-header"><div><h3>Lista de chequeo vehicular</h3><p>Los controles están disponibles, pero su usuario no tiene permiso para registrar inspecciones.</p></div>${status('Solo lectura')}</div><div class="tracking-notice warning full"><i>!</i><div><b>Permiso requerido: CHECKIN · CREAR</b><span>Solicite al administrador activar este permiso en Usuarios → Configurar permisos.</span></div></div><div class="checkin-readonly-list">${checkinCatalog.map((item,index)=>`<div><span>${index+1}</span><p><b>${esc(item.item)}</b><small>${esc(item.categoria)} · ${item.critico?'Crítico':'Complementario'}</small></p></div>`).join('')}</div></article>`;
+    }
+    return `<article class="card checkin-visible-card" id="checkinVisibleCard">
+      <div class="card-header checkin-visible-header"><div><span class="eyebrow">CHEQUEO ANTES DE SALIR</span><h3>Lista de chequeo vehicular</h3><p>Marque los 16 controles. El formulario permanece visible dentro del módulo.</p></div><div class="checkin-progress-summary"><b data-checkin-progress-count>0 / ${checkinCatalog.length}</b><span>controles revisados</span></div></div>
+      <div class="checkin-progress-track" aria-hidden="true"><i data-checkin-progress-bar></i></div>
+      <form class="form-grid checkin-form checkin-inline-form" id="checkinInlineForm">
+        <div class="checkin-basic-data full">
+          <label class="field"><span>Vehículo</span>${selectorDinamico('vehicles','checkinVehicles','VEHICULO_ID','',true)}</label>
+          <label class="field"><span>Conductor</span>${selectorDinamico('drivers','checkinDrivers','CONDUCTOR_ID',currentUser.CONDUCTOR_ID||'',true)}</label>
+          <label class="field"><span>Kilometraje actual</span><input name="KILOMETRAJE" type="number" min="0" required inputmode="numeric" placeholder="Ej. 125600"></label>
+          <label class="field"><span>Nivel de combustible/carga</span><select name="NIVEL_COMBUSTIBLE" required><option value="">Seleccione</option><option>Vacío / crítico</option><option>1/4</option><option>1/2</option><option>3/4</option><option>Lleno</option><option>No aplica</option></select></label>
+        </div>
+        <div class="checkin-bulk-actions full"><button class="btn soft" type="button" data-checkin-all-ok>✓ Marcar todos conforme</button><button class="btn soft" type="button" data-checkin-clear>Limpiar respuestas</button><span>Las fallas deben incluir una observación.</span></div>
+        ${checkinInlineItemsMarkup()}
+        <label class="field full"><span>Observaciones generales</span><textarea name="OBSERVACIONES" placeholder="Indique testigos del tablero, daños, ruidos o cualquier condición adicional"></textarea></label>
+        <label class="field full"><span>Nombre o firma del conductor</span><input name="FIRMA_CONDUCTOR" value="${esc(currentUser.NOMBRE||'')}" required></label>
+        <label class="checkin-confirm full"><input type="checkbox" name="CONFIRMACION_CONDUCTOR" value="SI" required><span>Confirmo que revisé personalmente cada punto y que la información registrada es correcta.</span></label>
+        <div class="form-actions checkin-submit-actions"><button class="btn primary" type="submit">Guardar y evaluar check-in</button></div>
+      </form>
+    </article>`;
+  }
+
+  async function renderCheckin() {
+    const data=await checkinContext(),vehicleMap=Object.fromEntries(data.vehicles.map(v=>[v.ID,v])),driverMap=Object.fromEntries(data.drivers.map(d=>[d.ID,d]));
+    const approved=data.rows.filter(row=>checkinVisualState(row)==='Aprobado').length,pending=data.rows.filter(row=>row.ESTADO_REVISION==='Pendiente').length,blocked=data.rows.filter(row=>row.ESTADO_REVISION==='Bloqueado').length;
+    const rows=data.rows.map(row=>checkinRow(row,vehicleMap,driverMap)).join('');
+    const create=hasPermission('CHECKIN','CREAR')?'<button class="btn primary" data-focus-checkin>↓ Ir a la lista de chequeo</button>':'';
+    return heading('INSPECCIÓN PREOPERACIONAL','Check-in vehicular','Revise el vehículo antes de iniciar cualquier operación. Los 16 controles aparecen directamente en esta pantalla.',`<button class="btn soft" data-sync>↻ Sincronizar</button>${create}`)+
+      reciboCheckinMarkup()+
+      `<div class="checkin-process"><article><i>1</i><div><b>Seleccionar vehículo</b><span>Confirme patente, conductor y kilometraje.</span></div></article><article><i>2</i><div><b>Completar 16 controles</b><span>Marque conforme, falla o no aplica cuando corresponda.</span></div></article><article><i>3</i><div><b>Guardar evaluación</b><span>La operación solo inicia con check-in aprobado y vigente.</span></div></article></div>`+
+      checkinInlineFormMarkup()+
+      `<div class="live-strip">${liveStat('✓','Aprobados vigentes',approved,'online')}${liveStat('⌛','Pendientes',pending,pending?'warning':'')}${liveStat('!','Bloqueados',blocked,blocked?'warning':'')}${liveStat('▤','Inspecciones',data.rows.length)}</div>`+
+      `<article class="card"><div class="card-header"><div><h3>Inspecciones registradas</h3><p>Historial visible según el perfil del usuario</p></div></div><div class="toolbar"><label class="search-box"><span>⌕</span><input data-table-search placeholder="Buscar por patente, conductor o estado"></label><button class="btn soft push" data-nav="checkinHistory">Historial completo</button></div><div data-filter-table>${table(['Check-in','Vehículo','Conductor','Resultado','Estado','Fallas','Vigente hasta','Acciones'],rows,'No existen check-ins registrados.')}</div></article>`;
+  }
+  async function renderCheckinApprovals() {
+    const data=await checkinContext(),vehicleMap=Object.fromEntries(data.vehicles.map(v=>[v.ID,v])),driverMap=Object.fromEntries(data.drivers.map(d=>[d.ID,d]));
+    const pending=data.rows.filter(row=>['Pendiente','Bloqueado'].includes(row.ESTADO_REVISION)&&row.UTILIZADO!=='SI');
+    const rows=pending.map(row=>checkinRow(row,vehicleMap,driverMap,true)).join('');
+    return heading('CONTROL DE SEGURIDAD','Aprobación de check-ins','Revise observaciones leves. Las fallas críticas exigen corrección y una nueva inspección.',`<button class="btn soft" data-sync>↻ Sincronizar</button>`)+
+      `<div class="operation-banner checkin-warning"><i>!</i><div><h3>Regla de bloqueo</h3><p>Un supervisor puede aprobar observaciones leves, pero nunca una inspección con fallas críticas.</p></div></div>`+
+      `<div class="live-strip">${liveStat('⌛','Pendientes de revisión',pending.filter(r=>r.ESTADO_REVISION==='Pendiente').length,'warning')}${liveStat('!','Bloqueados críticos',pending.filter(r=>r.ESTADO_REVISION==='Bloqueado').length,'warning')}${liveStat('✓','Aprobados hoy',data.rows.filter(r=>r.ESTADO_REVISION==='Aprobado'&&String(r.FECHA_REVISION||r.FECHA_HORA).slice(0,10)===new Date().toISOString().slice(0,10)).length,'online')}</div>`+
+      `<article class="card"><div class="toolbar"><label class="search-box"><span>⌕</span><input data-table-search placeholder="Buscar check-in pendiente"></label><button class="btn soft push" data-nav="checkinHistory">Abrir historial</button></div><div data-filter-table>${table(['Check-in','Vehículo','Conductor','Resultado','Estado','Fallas','Vigente hasta','Acciones'],rows,'No hay check-ins pendientes de revisión.')}</div></article>`;
+  }
+  async function renderCheckinHistory() {
+    const data=await checkinContext(),vehicleMap=Object.fromEntries(data.vehicles.map(v=>[v.ID,v])),driverMap=Object.fromEntries(data.drivers.map(d=>[d.ID,d]));
+    const rows=data.rows.map(row=>checkinRow(row,vehicleMap,driverMap)).join('');
+    return heading('TRAZABILIDAD','Historial de check-in','Consulte inspecciones, resultados, aprobaciones, bloqueos y operaciones relacionadas.',`<button class="btn soft" data-sync>↻ Sincronizar</button><button class="btn soft" data-export="checkins">Exportar CSV</button>`)+
+      `<article class="card"><div class="toolbar"><label class="search-box"><span>⌕</span><input data-table-search placeholder="Buscar en el historial"></label><button class="btn primary push" data-nav="checkin">Nuevo check-in</button></div><div data-filter-table>${table(['Check-in','Vehículo','Conductor','Resultado','Estado','Fallas','Vigente hasta','Acciones'],rows,'No existen inspecciones registradas.')}</div></article>`;
+  }
+
+  function configuracionPuntoOperacion(company=currentCompany||{}){
+    const latitudeText=String(company.PUNTO_OPERACION_LATITUD??'').trim(),longitudeText=String(company.PUNTO_OPERACION_LONGITUD??'').trim(),latitude=Number(latitudeText),longitude=Number(longitudeText);
+    return{configurada:Boolean(latitudeText&&longitudeText)&&Number.isFinite(latitude)&&Number.isFinite(longitude)&&String(company.VALIDAR_UBICACION_OPERACION||'SI')!=='NO',nombre:company.PUNTO_OPERACION_NOMBRE||'Base operacional',direccion:company.PUNTO_OPERACION_DIRECCION||company.DIRECCION||'Sin dirección',latitud:latitude,longitud:longitude,radioInicio:Math.max(10,Number(company.RADIO_INICIO_METROS||150)),radioFin:Math.max(10,Number(company.RADIO_FIN_METROS||150)),precisionMaxima:Math.max(10,Number(company.PRECISION_GPS_MAXIMA_METROS||120))};
+  }
+  function obtenerUbicacionNavegador({timeout=25000,maximumAge=0}={}){
+    if(!navigator.geolocation)return Promise.reject(new Error('UBICACION_OPERACION_REQUERIDA'));
+    return new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(position=>resolve({latitud:position.coords.latitude,longitud:position.coords.longitude,precision:position.coords.accuracy,fecha:position.timestamp}),error=>{if(error?.code===1)reject(new Error('UBICACION_OPERACION_REQUERIDA'));else if(error?.code===3)reject(new Error('TIEMPO_DE_ESPERA_AGOTADO'));else reject(new Error('UBICACION_GPS_IMPRECISA'));},{enableHighAccuracy:true,timeout,maximumAge}));
+  }
+  function resumenValidacionLocalUbicacion(location,base,phase='INICIO'){
+    const distance=distanciaMetros(location.latitud,location.longitud,base.latitud,base.longitud),radius=phase==='FIN'?base.radioFin:base.radioInicio,accuracy=Number(location.precision||0),valid=accuracy>0&&accuracy<=base.precisionMaxima&&distance<=radius;
+    return{...location,distancia:Math.round(distance),radio:radius,valida:valid,precisionValida:accuracy>0&&accuracy<=base.precisionMaxima};
+  }
+  function pintarEstadoUbicacionOperacion(container,result,phase='INICIO'){
+    if(!container)return;const label=phase==='FIN'?'finalización':'inicio';container.className=`operation-location-status ${result.valida?'valid':'invalid'}`;container.innerHTML=`<i>${result.valida?'✓':'!'}</i><div><b>${result.valida?'Ubicación autorizada':result.precisionValida?'Fuera del perímetro':'Señal GPS imprecisa'}</b><span>${result.distancia} m de la base · radio permitido ${result.radio} m · precisión ±${Math.round(result.precision)} m</span>${result.valida?'':`<small>No se permitirá la ${label} hasta cumplir ambas condiciones.</small>`}</div>`;
+  }
+  async function capturarUbicacionFormularioOperacion(form,phase='INICIO'){
+    const base=configuracionPuntoOperacion();if(!base.configurada)throw new Error('PUNTO_OPERACION_NO_CONFIGURADO');const statusNode=form.querySelector('[data-operation-location-status]');if(statusNode){statusNode.className='operation-location-status loading';statusNode.innerHTML='<i>⌖</i><div><b>Obteniendo ubicación precisa…</b><span>Mantenga el GPS activo y permanezca en el punto autorizado.</span></div>';}
+    const location=await obtenerUbicacionNavegador(),result=resumenValidacionLocalUbicacion(location,base,phase),prefix=phase==='FIN'?'FIN_':'INICIO_';form.elements[prefix+'LATITUD'].value=location.latitud;form.elements[prefix+'LONGITUD'].value=location.longitud;form.elements[prefix+'PRECISION'].value=location.precision;pintarEstadoUbicacionOperacion(statusNode,result,phase);return result;
+  }
+  function rutasDisponiblesOperacion(form){const vehicle=form.elements.VEHICULO_ID?.value||'',driver=form.elements.CONDUCTOR_ID?.value||'',select=form.elements.RUTA_ID;if(!select)return;const routes=(listasFormulario.get('routes')||[]).filter(route=>['Asignada','En curso'].includes(route.ESTADO)&&(!driver||route.CONDUCTOR_ID===driver)&&(!route.VEHICULO_ID||!vehicle||route.VEHICULO_ID===vehicle)&&!route.OPERACION_ID);const selected=select.value;select.innerHTML=`<option value="">Sin ruta asignada · salida y regreso a base</option>${routes.map(route=>`<option value="${esc(route.ID)}" ${route.ID===selected?'selected':''}>${esc(route.NOMBRE||route.ID)} · ${esc(route.DESTINO||'')}</option>`).join('')}`;actualizarDestinoOperacion(form);}
+  function actualizarDestinoOperacion(form){const routeId=form.elements.RUTA_ID?.value||'',route=(listasFormulario.get('routes')||[]).find(item=>item.ID===routeId),base=configuracionPuntoOperacion(),field=form.elements.DESTINO;if(field)field.value=route?.DESTINO||base.direccion;const type=form.querySelector('[data-operation-type]');if(type)type.textContent=route?'Ruta asignada con regreso obligatorio a la base':'Salida y regreso al mismo punto base';}
   async function renderOperations() {
     const batch=await api.requestBatch([
       {key:'ops',action:'list',payload:{resource:'operations'}},
       {key:'vehicles',action:'list',payload:{resource:'vehicles'}},
       {key:'drivers',action:'list',payload:{resource:'drivers'}},
-    ]),ops=batch.ops||{},vehicles=batch.vehicles||{},drivers=batch.drivers||{};
-    guardarListaFormulario('operations',ops.rows||[]);
-    guardarListaFormulario('vehicles',vehicles.rows||[]);
-    guardarListaFormulario('drivers',drivers.rows||[]);
-    const active=(ops.rows||[]).filter(o=>o.ESTADO==='Activa');
-    const vehicleMap=Object.fromEntries((vehicles.rows||[]).map(v=>[v.ID,v])); const driverMap=Object.fromEntries((drivers.rows||[]).map(d=>[d.ID,d]));
-    const activeHtml=active.map(op=>`<article class="operation-card"><header><div><h4>${esc(op.ID)} · ${esc(vehicleMap[op.VEHICULO_ID]?.PATENTE||op.VEHICULO_ID)}</h4><small>${esc(driverMap[op.CONDUCTOR_ID]?.NOMBRE||op.CONDUCTOR_ID)}</small></div>${status(op.ESTADO)}</header><div class="operation-route">${esc(op.ORIGEN||'Ubicación actual')} → ${esc(op.DESTINO)}</div><div class="operation-meta"><div><span>INICIO</span><b>${fmtDate(op.FECHA_INICIO,true)}</b></div><div><span>KM INICIAL</span><b>${number(op.KM_INICIO)}</b></div><div><span>GPS</span><b>Disponible</b></div></div>${hasPermission('OPERACIONES','ACTUALIZAR')?`<button class="btn danger small" data-finish-operation="${op.ID}" style="margin-top:12px">Finalizar operación</button>`:''}</article>`).join('');
-    const opRows=(ops.rows||[]).map(op=>`<tr><td><strong>${esc(op.ID)}</strong></td><td>${esc(vehicleMap[op.VEHICULO_ID]?.PATENTE||op.VEHICULO_ID)}</td><td>${esc(driverMap[op.CONDUCTOR_ID]?.NOMBRE||op.CONDUCTOR_ID)}</td><td>${esc(op.ORIGEN||'')} → ${esc(op.DESTINO||'')}</td><td>${fmtDate(op.FECHA_INICIO,true)}</td><td>${status(op.ESTADO)}</td></tr>`).join('');
-    const createActions=`<button class="btn soft" data-sync>↻ Sincronizar</button>`+(hasPermission('OPERACIONES','CREAR')?(currentUser.ROL_ID==='ROL-CONDUCTOR'
-      ? '<button class="btn primary" data-open-qr>▦ Validar QR e iniciar</button>'
-      : '<button class="btn soft" data-open-qr>▦ Escanear QR</button><button class="btn primary" data-new-operation>＋ Nueva operación</button>'):'');
-    return heading('CONTROL DE VIAJES','Operaciones','Inicie y finalice recorridos con selección manual o código QR.',createActions)+
-      `<div class="operation-banner"><i>▦</i><div><h3>Operación con seguimiento GPS</h3><p>Al iniciar una operación, el conductor puede autorizar el envío visible de su posición desde el módulo GPS.</p></div>${hasPermission('OPERACIONES','CREAR')?'<button class="btn soft" data-open-qr>Usar QR</button>':''}</div>`+
-      `<div class="operation-layout"><article class="card"><div class="card-header"><div><h3>Operaciones activas</h3><p>${active.length} recorridos en curso</p></div></div>${activeHtml||empty('⇄','No hay operaciones activas','Cree la primera operación cuando existan un vehículo y un conductor disponibles.')}</article><article class="card"><div class="card-header"><div><h3>Requisitos</h3><p>Datos necesarios para comenzar</p></div></div><div class="summary-list"><div class="summary-row"><i>▣</i><div><b>Vehículo disponible</b><span>${(vehicles.rows||[]).filter(v=>v.ESTADO==='Disponible').length} unidades</span></div></div><div class="summary-row"><i>♙</i><div><b>Conductor disponible</b><span>${(drivers.rows||[]).filter(d=>d.ESTADO==='Disponible').length} personas</span></div></div></div></article></div>`+
-      `<article class="card" style="margin-top:18px"><div class="card-header"><div><h3>Registro de operaciones</h3><p>Historial completo</p></div></div>${table(['Operación','Vehículo','Conductor','Ruta','Inicio','Estado'],opRows)}</article>`;
-  }
-
-  async function renderRoutes(){
-    const batch=await api.requestBatch([
+      {key:'checkins',action:'list',payload:{resource:'checkins'}},
       {key:'routes',action:'list',payload:{resource:'routes'}},
-      {key:'drivers',action:'list',payload:{resource:'drivers'}},
-      {key:'vehicles',action:'list',payload:{resource:'vehicles'}},
-      {key:'realtime',action:'realtimeSummary'},
-    ]),routesResult=batch.routes||{},driversResult=batch.drivers||{},vehiclesResult=batch.vehicles||{},realtime=batch.realtime||{};
-    guardarListaFormulario('routes',routesResult.rows||[]);
-    guardarListaFormulario('drivers',driversResult.rows||[]);
-    guardarListaFormulario('vehicles',vehiclesResult.rows||[]);
-    const drivers=Object.fromEntries((driversResult.rows||[]).map(row=>[row.ID,row]));
-    const vehicles=Object.fromEntries((vehiclesResult.rows||[]).map(row=>[row.ID,row]));
-    const routes=(routesResult.rows||[]).sort((a,b)=>new Date(b.FECHA_ASIGNACION||0)-new Date(a.FECHA_ASIGNACION||0)).map(route=>({...route,
-      CONDUCTOR_NOMBRE:drivers[route.CONDUCTOR_ID]?.NOMBRE||route.CONDUCTOR_ID,VEHICULO_PATENTE:vehicles[route.VEHICULO_ID]?.PATENTE||route.VEHICULO_ID
-    }));
-    const active=routes.filter(route=>['Asignada','En curso'].includes(route.ESTADO)),finished=routes.filter(route=>!['Asignada','En curso'].includes(route.ESTADO));
-    const create=hasPermission('RUTAS','CREAR')?'<button class="btn primary" data-new-route>＋ Asignar ruta</button>':'';
-    return heading('PLANIFICACIÓN','Rutas asignadas','Asigne recorridos y permita que cada conductor navegue con Google Maps o Waze.',`<button class="btn soft" data-sync>↻ Sincronizar</button>${create}`)+
-      `<div class="live-strip">${liveStat('➜','Rutas activas',active.length)}${liveStat('✓','Completadas',finished.filter(r=>r.ESTADO==='Completada').length,'online')}${liveStat('⌖','Sesiones abiertas',realtime.totals?.onlineDevices||0,'online')}${liveStat('🚐','Conduciendo',realtime.totals?.drivingSessions||0,'online')}</div>`+
-      `<div class="route-layout"><article class="card"><div class="card-header"><div><h3>Asignaciones vigentes</h3><p>${active.length} rutas pendientes o en curso</p></div></div><div class="route-list">${active.map(route=>routeCard(route)).join('')||empty('➜','Sin rutas activas','No existen recorridos pendientes para este usuario.')}</div></article>`+
-      `<article class="card"><div class="card-header"><div><h3>Sesiones y conductores</h3><p>Usuario y actividad de cada sesión abierta</p></div></div><div class="device-list">${(realtime.devices||[]).map(deviceCard).join('')||empty('○','Sin sesiones','Las conexiones aparecerán cuando los usuarios inicien sesión.')}</div></article></div>`+
-      `<article class="card" style="margin-top:18px"><div class="card-header"><div><h3>Historial de rutas</h3><p>Recorridos completados o cancelados</p></div></div><div class="route-list">${finished.slice(0,30).map(route=>routeCard(route)).join('')||empty('✓','Sin historial','Todavía no se han cerrado rutas.')}</div></article>`;
+    ]),ops=batch.ops||{},vehicles=batch.vehicles||{},drivers=batch.drivers||{},checkins=batch.checkins||{},routes=batch.routes||{};
+    guardarListaFormulario('operations',ops.rows||[]);guardarListaFormulario('vehicles',vehicles.rows||[]);guardarListaFormulario('drivers',drivers.rows||[]);guardarListaFormulario('checkins',checkins.rows||[]);guardarListaFormulario('routes',routes.rows||[]);
+    const base=configuracionPuntoOperacion();
+    const active=(ops.rows||[]).filter(o=>o.ESTADO==='Activa'),vehicleMap=Object.fromEntries((vehicles.rows||[]).map(v=>[v.ID,v])),driverMap=Object.fromEntries((drivers.rows||[]).map(d=>[d.ID,d])),routeMap=Object.fromEntries((routes.rows||[]).map(r=>[r.ID,r]));
+    const activeHtml=active.map(op=>`<article class="operation-card"><header><div><h4>${esc(op.ID)} · ${esc(vehicleMap[op.VEHICULO_ID]?.PATENTE||op.VEHICULO_ID)}</h4><small>${esc(driverMap[op.CONDUCTOR_ID]?.NOMBRE||op.CONDUCTOR_ID)}</small></div>${status(op.ESTADO)}</header><div class="operation-route">${esc(op.ORIGEN||op.BASE_DIRECCION||'Base')} → ${esc(op.DESTINO||op.PUNTO_RETORNO||'Base')}</div><div class="operation-meta"><div><span>INICIO</span><b>${fmtDate(op.FECHA_INICIO,true)}</b></div><div><span>TIPO</span><b>${esc(op.TIPO_OPERACION||'Regreso a base')}</b></div><div><span>RUTA</span><b>${esc(routeMap[op.RUTA_ID]?.NOMBRE||op.RUTA_ID||'Sin ruta')}</b></div><div><span>INICIO VALIDADO</span><b>${op.VALIDACION_INICIO==='VALIDADA'?`${number(op.DISTANCIA_INICIO_BASE_METROS)} m de base`:'Pendiente'}</b></div><div><span>CHECK-IN</span><b>${esc(op.CHECKIN_ID||'Sin registro')}</b></div><div><span>RETORNO</span><b>${esc(op.PUNTO_RETORNO||op.BASE_DIRECCION||'Base operacional')}</b></div></div>${hasPermission('OPERACIONES','ACTUALIZAR')?`<button class="btn danger small" data-finish-operation="${op.ID}" style="margin-top:12px">Finalizar en punto base</button>`:''}</article>`).join('');
+    const opRows=(ops.rows||[]).map(op=>`<tr><td><strong>${esc(op.ID)}</strong></td><td>${esc(vehicleMap[op.VEHICULO_ID]?.PATENTE||op.VEHICULO_ID)}</td><td>${esc(driverMap[op.CONDUCTOR_ID]?.NOMBRE||op.CONDUCTOR_ID)}</td><td>${esc(op.TIPO_OPERACION||'—')}</td><td>${esc(routeMap[op.RUTA_ID]?.NOMBRE||op.RUTA_ID||'Sin ruta')}</td><td>${fmtDate(op.FECHA_INICIO,true)}</td><td>${op.VALIDACION_INICIO==='VALIDADA'?'✓ Inicio':''}${op.VALIDACION_FIN==='VALIDADA'?' · ✓ Fin':''}</td><td>${status(op.ESTADO)}</td></tr>`).join('');
+    const enabled=base.configurada,createActions=`<button class="btn soft" data-sync>↻ Sincronizar</button>`+(hasPermission('OPERACIONES','CREAR')&&enabled?(currentUser.ROL_ID==='ROL-CONDUCTOR'?'<button class="btn primary" data-open-qr>▦ Validar QR e iniciar</button>':'<button class="btn soft" data-open-qr>▦ Escanear QR</button><button class="btn primary" data-new-operation>＋ Nueva operación</button>'):'');
+    const baseBanner=enabled?`<div class="operation-geofence-banner"><i>⌖</i><div><h3>${esc(base.nombre)}</h3><p>${esc(base.direccion)} · Inicio dentro de ${number(base.radioInicio)} m · Finalización dentro de ${number(base.radioFin)} m · Precisión máxima ±${number(base.precisionMaxima)} m.</p></div>${hasPermission('CONFIGURACION','ACTUALIZAR')?'<button class="btn soft" data-nav="settings">Configurar punto</button>':''}</div>`:`<div class="operation-geofence-banner blocked"><i>!</i><div><h3>Punto operacional no configurado</h3><p>Nadie podrá iniciar o finalizar operaciones hasta que el Administrador defina la ubicación base en Configuración.</p></div>${hasPermission('CONFIGURACION','ACTUALIZAR')?'<button class="btn primary" data-nav="settings">Configurar ahora</button>':''}</div>`;
+    return heading('CONTROL DE VIAJES','Operaciones','El inicio y la finalización se validan por GPS contra el punto parametrizado por el Administrador.',createActions)+baseBanner+
+      `<div class="operation-banner"><i>✓</i><div><h3>Check-in, ruta y ubicación trabajan juntos</h3><p>Sin ruta asignada, la salida y el destino son la misma base. Con ruta asignada, el recorrido usa ese destino, pero la finalización exige regresar al punto base.</p></div>${hasPermission('OPERACIONES','CREAR')&&enabled?'<button class="btn soft" data-open-qr>Usar QR</button>':''}</div>`+
+      `<div class="operation-layout"><article class="card"><div class="card-header"><div><h3>Operaciones activas</h3><p>${active.length} recorridos en curso</p></div></div>${activeHtml||empty('⇄','No hay operaciones activas',enabled?'Cree una operación desde el punto base autorizado.':'Configure primero el punto base operacional.')}</article><article class="card"><div class="card-header"><div><h3>Reglas obligatorias</h3><p>Aplicadas en el servidor</p></div></div><div class="requirement-list"><div><i>1</i><span><b>Check-in aprobado</b><small>Vigente, sin utilizar y correspondiente al vehículo y conductor.</small></span></div><div><i>2</i><span><b>Inicio dentro del perímetro</b><small>El GPS debe estar dentro de ${number(base.radioInicio)} m de la base.</small></span></div><div><i>3</i><span><b>Ruta opcional vinculada</b><small>La ruta define el destino, pero no elimina el regreso obligatorio.</small></span></div><div><i>4</i><span><b>Finalización en la base</b><small>El vehículo debe regresar dentro de ${number(base.radioFin)} m.</small></span></div></div></article></div>`+
+      `<article class="card"><div class="card-header"><div><h3>Historial de operaciones</h3><p>Inicio, retorno y ubicación validada</p></div></div>${table(['Operación','Vehículo','Conductor','Tipo','Ruta','Inicio','Ubicación','Estado'],opRows,'No existen operaciones registradas.')}</article>`;
   }
 
-  async function renderNotifications(){
-    const result=await api.request('list',{resource:'notifications'}),items=(result.rows||[]).sort((a,b)=>new Date(b.FECHA_ENVIO||0)-new Date(a.FECHA_ENVIO||0));
-    guardarListaFormulario('notifications',result.rows||[]);
-    const send=hasPermission('NOTIFICACIONES','CREAR')?'<button class="btn primary" data-new-notification>＋ Enviar notificación</button>':'';
-    return heading('COMUNICACIONES','Notificaciones','Mensajes dirigidos a cada conductor según su cuenta asociada.',`<button class="btn soft" data-sync>↻ Sincronizar</button>${send}`)+
-      `<div class="live-strip">${liveStat('🔔','Total',items.length)}${liveStat('!','Sin leer',items.filter(i=>i.LEIDA!=='SI').length,'warning')}${liveStat('✓','Leídas',items.filter(i=>i.LEIDA==='SI').length,'online')}${liveStat('➜','Relacionadas con rutas',items.filter(i=>i.RUTA_ID).length)}</div>`+
-      `<article class="card"><div class="notification-list">${items.map(notificationCard).join('')||empty('🔔','Sin notificaciones','No hay mensajes disponibles para esta cuenta.')}</div></article>`;
-  }
-
-  function canSelectGpsVehicles() {
-    return ['ROL-ADMIN','ROL-SUPERVISOR'].includes(currentUser?.ROL_ID);
-  }
-  function gpsFilterPayload() {
-    if (!canSelectGpsVehicles() || gpsTrackingMode !== 'specific') return { soloGps:'SI', vehiculos:'' };
-    return { soloGps:'SI', vehiculos:gpsSelectedVehicles.size ? [...gpsSelectedVehicles].join(',') : '__NINGUNO__' };
-  }
-  function saveGpsFilterPreference() {
-    localStorage.setItem(gpsTrackingModeKey,gpsTrackingMode);
-    localStorage.setItem(gpsSelectedVehiclesKey,JSON.stringify([...gpsSelectedVehicles]));
-  }
-  function sameVehicleSelection(first,second) {
-    if(first.size!==second.size)return false;
-    for(const value of first)if(!second.has(value))return false;
-    return true;
-  }
-  function gpsFilterHasChanges() {
-    return gpsDraftTrackingMode!==gpsTrackingMode||!sameVehicleSelection(gpsDraftSelectedVehicles,gpsSelectedVehicles);
-  }
-  function selectedVehiclesLabel(count=gpsDraftSelectedVehicles.size) { return `${count} ${count===1?'seleccionado':'seleccionados'}`; }
-  function appliedVehiclesLabel() {
-    return gpsTrackingMode==='all'?'Toda la flota':selectedVehiclesLabel(gpsSelectedVehicles.size);
-  }
-  function visibleVehiclesLabel(count) { return `${count} ${count===1?'vehículo visible':'vehículos visibles'}`; }
-  function gpsVehicleOptions(realtime=ultimoResumenGps) {
-    return (realtime.trackingVehicles||[]).map(vehicle=>{
-      const driver=vehicle.CONDUCTOR_NOMBRE||'Sin conductor informado';
-      const detail=[driver,vehicle.ESTADO||''].filter(Boolean).join(' · ');
-      const search=`${vehicle.PATENTE||''} ${vehicle.MARCA||''} ${vehicle.MODELO||''} ${driver}`.toLowerCase();
-      return `<label class="vehicle-tracking-option" data-vehicle-filter-text="${esc(search)}"><input type="checkbox" data-gps-vehicle="${esc(vehicle.ID)}" ${gpsDraftSelectedVehicles.has(String(vehicle.ID))?'checked':''}><span><b>${esc(vehicle.PATENTE||vehicle.ID)}</b><small>${esc(`${vehicle.MARCA||''} ${vehicle.MODELO||''}`.trim()||'Vehículo')}</small><em>${esc(detail)}</em></span></label>`;
-    }).join('')||'<p class="muted">No hay vehículos disponibles para seleccionar.</p>';
-  }
-  function gpsFilterControls(realtime) {
-    if(!canSelectGpsVehicles())return '';
-    const selected=gpsDraftSelectedVehicles.size;
-    const dirty=gpsFilterHasChanges();
-    return `<article class="card tracking-filter-card"><div class="tracking-filter-header"><div><p class="tag">CONTROL DE ADMINISTRADOR / SUPERVISOR</p><h3>Filtro de seguimiento en tiempo real</h3><p>Seleccione toda la flota o únicamente los vehículos que desea visualizar en el mapa, posiciones y sesiones.</p></div><span class="tracking-selection-summary" id="trackingSelectionSummary">${gpsDraftTrackingMode==='all'?'Toda la flota':selectedVehiclesLabel(selected)}</span></div><div class="tracking-scope-buttons"><button type="button" class="${gpsDraftTrackingMode==='all'?'active':''}" data-gps-scope="all">Todos los vehículos</button><button type="button" class="${gpsDraftTrackingMode==='specific'?'active':''}" data-gps-scope="specific">Solo vehículos seleccionados</button></div><div class="vehicle-tracking-panel ${gpsDraftTrackingMode==='specific'?'open':''}" id="vehicleTrackingPanel"><div class="vehicle-tracking-actions"><label><span>Buscar vehículo o conductor</span><input type="search" data-gps-vehicle-search placeholder="Patente, marca, modelo o conductor"></label><div><button type="button" class="btn soft small" data-gps-select-all>Seleccionar todos</button><button type="button" class="btn soft small" data-gps-clear>Limpiar</button></div></div><div class="vehicle-tracking-list" id="vehicleTrackingList">${gpsVehicleOptions(realtime)}</div></div><div class="tracking-filter-footer"><div><b id="trackingAppliedSummary">Filtro aplicado: ${appliedVehiclesLabel()}</b><span id="trackingPendingText">${dirty?'Hay cambios pendientes por aplicar.':'El mapa ya está usando este filtro.'}</span></div><div><button type="button" class="btn soft small" data-gps-reset ${dirty?'':'disabled'}>Deshacer cambios</button><button type="button" class="btn primary small" data-gps-apply ${dirty?'':'disabled'}>Aplicar seguimiento</button></div></div></article>`;
-  }
   async function renderGps() {
     const realtime=await api.request('realtimeSummary',{...gpsFilterPayload(),force:true});
     ultimoResumenGps=realtime;
@@ -765,9 +874,8 @@
     ['authCompanyName','loginCompanyName','sidebarCompanyName'].forEach(id=>{const node=$('#'+id);if(node)node.textContent=name;});
     const sub=$('#sidebarCompanySubtitle');if(sub)sub.textContent=subtitle;
     ['authCompanyLogo','loginCompanyLogo','sidebarCompanyLogo'].forEach(id=>{const image=$('#'+id);if(image){image.src=logo;image.onerror=()=>{image.onerror=null;image.src=defaultLogo;};}});
-    postParent({tipo:'flotas:empresa',nombre:name,logo:logo});
-    if(data.COLOR_PRINCIPAL&&/^#[0-9A-F]{6}$/i.test(data.COLOR_PRINCIPAL)){document.documentElement.style.setProperty('--primary',data.COLOR_PRINCIPAL);}
-    if(data.COLOR_SECUNDARIO&&/^#[0-9A-F]{6}$/i.test(data.COLOR_SECUNDARIO)){document.documentElement.style.setProperty('--primary-dark',data.COLOR_SECUNDARIO);}
+    const tema=window.TemaFlotas?.aplicarEmpresa?.(data,{guardar:true})||null;
+    postParent({tipo:'flotas:empresa',nombre:name,logo:logo,tema});
     document.title=`${name} | Sistema de Gestión de Flotas`;
   }
 
@@ -848,7 +956,51 @@
     });
   }
 
-  async function renderSettings(){const remote=api.isRemote();return heading('PARÁMETROS','Configuración','Conexión, apariencia y limpieza controlada de registros operativos.')+`<div class="settings-grid"><article class="card"><div class="card-header"><div><h3>Base de datos</h3><p>Estado de la información del sistema</p></div>${status(remote?'Central conectada':'Local activa')}</div><div class="info-grid"><div class="info-item"><span>Tipo</span><b>${remote?'Base de datos central':'Base de datos local'}</b></div><div class="info-item"><span>Sincronización</span><b>${remote?'Activa entre dispositivos':'Solo en este dispositivo'}</b></div></div></article><article class="card"><div class="card-header"><div><h3>Apariencia</h3><p>Preferencias visuales del usuario</p></div></div><div class="setting-row"><div><b>Modo oscuro</b><span>Cambiar colores de la interfaz</span></div><label class="switch"><input id="darkSwitch" type="checkbox" ${document.body.classList.contains('dark')?'checked':''}><i></i></label></div><button class="btn soft" data-nav="company">Abrir configuración de empresa</button></article></div><div class="danger-zone" style="margin-top:18px"><h3>Limpiar datos operativos</h3><p>Elimina vehículos, conductores, operaciones, GPS, rutas, conexiones, mantenciones, documentos, notificaciones, alertas, reportes y bitácora. Conserva usuarios, roles y configuración de empresa.</p><button class="btn danger" data-clear-data>Limpiar datos operativos</button></div>`;}
+  function campoColorTema(nombre,etiqueta,valor,detalle=''){
+    return `<label class="theme-color-control"><input type="color" name="${nombre}" value="${esc(valor)}" data-theme-color><span><b>${esc(etiqueta)}</b><small data-theme-code="${nombre}">${esc(valor)}</small>${detalle?`<em class="helper">${esc(detalle)}</em>`:''}</span></label>`;
+  }
+  function preajustesTemaMarkup(){
+    const presets=window.TemaFlotas?.PREAJUSTES||{};
+    return Object.entries(presets).map(([id,preset])=>{const v=preset.valores;return `<button class="theme-preset" type="button" data-theme-preset="${esc(id)}"><span class="theme-preset-swatches"><i style="background:${esc(v.COLOR_PRINCIPAL)}"></i><i style="background:${esc(v.COLOR_ACENTO)}"></i><i style="background:${esc(v.COLOR_MENU)}"></i></span><b>${esc(preset.nombre)}</b><small>Aplicar vista previa</small></button>`;}).join('');
+  }
+  function contrasteTemaMarkup(tema){
+    const checks=[['Texto sobre fondo',tema.COLOR_TEXTO,tema.COLOR_FONDO],['Texto sobre tarjetas',tema.COLOR_TEXTO,tema.COLOR_SUPERFICIE],['Blanco sobre principal','#FFFFFF',tema.COLOR_PRINCIPAL],['Blanco sobre menú','#FFFFFF',tema.COLOR_MENU]];
+    return checks.map(([label,a,b])=>{const ratio=window.TemaFlotas?.contraste?.(a,b)||0,ok=ratio>=4.5;return `<div class="theme-contrast-row"><span>${esc(label)}</span><b class="${ok?'ok':'warning'}">${ratio.toFixed(1)}:1 · ${ok?'Correcto':'Revisar'}</b></div>`;}).join('');
+  }
+  function datosTemaFormulario(form){return window.TemaFlotas?.normalizar?.(Object.fromEntries(new FormData(form).entries()))||Object.fromEntries(new FormData(form).entries());}
+  function actualizarVistaPreviaTema(form){
+    const tema=datosTemaFormulario(form);window.TemaFlotas?.aplicar?.(tema,{guardar:false});
+    $$('[data-theme-color]',form).forEach(input=>{const code=form.querySelector(`[data-theme-code="${input.name}"]`);if(code)code.textContent=input.value.toUpperCase();});
+    const contrasts=$('#themeContrastList');if(contrasts)contrasts.innerHTML=contrasteTemaMarkup(tema);
+    postParent({tipo:'flotas:tema-colores',tema});
+  }
+  function aplicarValoresTemaFormulario(form,valores){
+    const tema=window.TemaFlotas?.normalizar?.(valores)||valores;
+    Object.entries(tema).forEach(([key,value])=>{const field=form.elements[key];if(field)field.value=value;});
+    actualizarVistaPreviaTema(form);
+  }
+  async function saveTheme(event){
+    event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form),data=datosTemaFormulario(form);
+    await conCargaBoton(button,'Guardando tema…',async()=>{
+      setSave('Guardando apariencia…','saving');
+      try{
+        const result=await api.request('saveCompany',{data});currentCompany=result.row||{...(currentCompany||{}),...data};
+        invalidarListasFormulario('companies');cacheVistasModulo.delete('settings');cacheVistasModulo.delete('company');
+        applyBranding(currentCompany);window.TemaFlotas?.aplicarEmpresa?.(currentCompany,{guardar:true});
+        toast('Colores guardados','La nueva identidad visual se aplicó al acceso, menú principal y todos los módulos.');setSave('Apariencia guardada');
+      }catch(error){setSave('Error al guardar','error');toast('No se pudieron guardar los colores',translateError(error),'error');}
+    });
+  }
+  async function renderSettings(){
+    const remote=api.isRemote();let company=currentCompany||{};
+    try{const result=await api.request('list',{resource:'companies'});company=(result.rows||[])[0]||company;currentCompany=company;applyBranding(company);}catch(_){ }
+    const tema=window.TemaFlotas?.normalizar?.(company)||company;
+    return heading('PARÁMETROS','Configuración','Defina la conexión, el modo de visualización y la identidad cromática de todo el sistema.')+
+    `<div class="settings-grid"><article class="card"><div class="card-header"><div><h3>Base de datos</h3><p>Estado de la información del sistema</p></div>${status(remote?'Central conectada':'Local activa')}</div><div class="info-grid"><div class="info-item"><span>Tipo</span><b>${remote?'Base de datos central':'Base de datos local'}</b></div><div class="info-item"><span>Sincronización</span><b>${remote?'Activa entre dispositivos':'Solo en este dispositivo'}</b></div></div></article><article class="card"><div class="card-header"><div><h3>Modo de pantalla</h3><p>Preferencia individual de este dispositivo</p></div></div><div class="setting-row"><div><b>Modo oscuro</b><span>Puede cambiarlo sin modificar la paleta guardada</span></div><label class="switch"><input id="darkSwitch" type="checkbox" ${document.body.classList.contains('dark')?'checked':''}><i></i></label></div><button class="btn soft" data-nav="company">Abrir datos de empresa</button></article></div>`+
+    `<section class="theme-settings-shell"><article class="card theme-editor-card"><div class="theme-intro"><div><span class="eyebrow">IDENTIDAD VISUAL GLOBAL</span><h3>Colores del sistema</h3><p>Los colores se guardan en la base central y se aplican automáticamente al inicio de sesión, al menú principal y a cada módulo independiente.</p></div>${status('Vista previa automática')}</div><div class="theme-presets">${preajustesTemaMarkup()}</div><form id="themeForm"><div class="theme-mode-row"><label class="field"><span>Tema predeterminado para nuevos dispositivos</span><select name="TEMA_PREDETERMINADO"><option ${tema.TEMA_PREDETERMINADO==='Sistema'?'selected':''}>Sistema</option><option ${tema.TEMA_PREDETERMINADO==='Claro'?'selected':''}>Claro</option><option ${tema.TEMA_PREDETERMINADO==='Oscuro'?'selected':''}>Oscuro</option></select></label><p class="helper">Cada usuario puede alternar temporalmente entre claro y oscuro desde el botón superior.</p></div><div class="theme-config-layout"><div class="theme-color-sections"><section class="theme-color-group"><h4>Marca y acciones</h4><p>Botones, enlaces, indicadores y estados del sistema.</p><div class="theme-color-grid">${campoColorTema('COLOR_PRINCIPAL','Color principal',tema.COLOR_PRINCIPAL)}${campoColorTema('COLOR_SECUNDARIO','Color principal intenso',tema.COLOR_SECUNDARIO)}${campoColorTema('COLOR_ACENTO','Color de acento',tema.COLOR_ACENTO)}${campoColorTema('COLOR_EXITO','Éxito y conectado',tema.COLOR_EXITO)}${campoColorTema('COLOR_ADVERTENCIA','Advertencias',tema.COLOR_ADVERTENCIA)}${campoColorTema('COLOR_PELIGRO','Errores y bloqueos',tema.COLOR_PELIGRO)}</div></section><section class="theme-color-group"><h4>Modo claro</h4><p>Fondos, tarjetas, textos y bordes de la interfaz clara.</p><div class="theme-color-grid">${campoColorTema('COLOR_FONDO','Fondo general',tema.COLOR_FONDO)}${campoColorTema('COLOR_SUPERFICIE','Tarjetas y paneles',tema.COLOR_SUPERFICIE)}${campoColorTema('COLOR_TEXTO','Texto principal',tema.COLOR_TEXTO)}${campoColorTema('COLOR_TEXTO_SECUNDARIO','Texto secundario',tema.COLOR_TEXTO_SECUNDARIO)}${campoColorTema('COLOR_BORDE','Bordes',tema.COLOR_BORDE)}${campoColorTema('COLOR_MENU','Menú lateral',tema.COLOR_MENU)}${campoColorTema('COLOR_MENU_SECUNDARIO','Degradado del menú',tema.COLOR_MENU_SECUNDARIO)}</div></section><section class="theme-color-group"><h4>Modo oscuro</h4><p>Colores usados cuando el usuario activa el modo oscuro.</p><div class="theme-color-grid">${campoColorTema('COLOR_FONDO_OSCURO','Fondo oscuro',tema.COLOR_FONDO_OSCURO)}${campoColorTema('COLOR_SUPERFICIE_OSCURO','Tarjetas oscuras',tema.COLOR_SUPERFICIE_OSCURO)}${campoColorTema('COLOR_TEXTO_OSCURO','Texto oscuro',tema.COLOR_TEXTO_OSCURO)}${campoColorTema('COLOR_TEXTO_SECUNDARIO_OSCURO','Texto secundario oscuro',tema.COLOR_TEXTO_SECUNDARIO_OSCURO)}${campoColorTema('COLOR_BORDE_OSCURO','Bordes oscuros',tema.COLOR_BORDE_OSCURO)}</div></section></div><aside class="theme-preview-panel"><div class="theme-preview-window"><div class="theme-preview-top"><i></i><b>Vista previa del sistema</b></div><div class="theme-preview-body"><div class="theme-preview-menu"><span class="active"></span><span></span><span></span><span></span></div><div class="theme-preview-content"><h4>Panel principal</h4><div class="theme-preview-kpis"><div><b>24</b><small>Vehículos</small></div><div><b>18</b><small>En operación</small></div><div><b>6</b><small>Disponibles</small></div><div><b>2</b><small>Alertas</small></div></div><button class="theme-preview-button" type="button">Acción principal</button></div></div></div><article class="card"><div class="card-header"><div><h3>Contraste</h3><p>Lectura recomendada: 4.5:1 o superior</p></div></div><div class="theme-contrast-list" id="themeContrastList">${contrasteTemaMarkup(tema)}</div></article></aside></div><div class="theme-form-actions"><button class="btn soft" type="button" data-theme-discard>Descartar vista previa</button><button class="btn soft" type="button" data-theme-defaults>Restaurar colores originales</button><button class="btn primary" type="submit">Guardar colores del sistema</button></div></form></article></section>`+
+    `<section class="operation-location-settings"><article class="card"><div class="card-header"><div><span class="eyebrow">CONTROL GEOGRÁFICO</span><h3>Punto de inicio y finalización</h3><p>Esta ubicación bloquea el inicio y el cierre fuera del perímetro autorizado.</p></div>${configuracionPuntoOperacion(company).configurada?status('Configurado'):status('Pendiente')}</div><form id="operationLocationForm" class="form-grid"><input type="hidden" name="VALIDAR_UBICACION_OPERACION" value="SI"><div class="operation-policy-fixed full"><i>🔒</i><div><b>Validación GPS obligatoria</b><span>Este control no puede desactivarse: toda operación debe iniciar y finalizar en el punto autorizado.</span></div></div><label class="field"><span>Nombre del punto base</span><input name="PUNTO_OPERACION_NOMBRE" value="${companyValue(company,'PUNTO_OPERACION_NOMBRE','Base operacional')}" required></label><label class="field full"><span>Dirección del punto base</span><input name="PUNTO_OPERACION_DIRECCION" value="${companyValue(company,'PUNTO_OPERACION_DIRECCION',company.DIRECCION||'')}" data-address-autocomplete data-lat-target="PUNTO_OPERACION_LATITUD" data-lng-target="PUNTO_OPERACION_LONGITUD" required placeholder="Seleccione una dirección exacta"></label><label class="field"><span>Latitud</span><input name="PUNTO_OPERACION_LATITUD" type="number" step="any" value="${companyValue(company,'PUNTO_OPERACION_LATITUD')}" required></label><label class="field"><span>Longitud</span><input name="PUNTO_OPERACION_LONGITUD" type="number" step="any" value="${companyValue(company,'PUNTO_OPERACION_LONGITUD')}" required></label><label class="field"><span>Radio para iniciar</span><div class="input-suffix"><input name="RADIO_INICIO_METROS" type="number" min="10" max="5000" value="${companyValue(company,'RADIO_INICIO_METROS','150')}" required><span>metros</span></div></label><label class="field"><span>Radio para finalizar</span><div class="input-suffix"><input name="RADIO_FIN_METROS" type="number" min="10" max="5000" value="${companyValue(company,'RADIO_FIN_METROS','150')}" required><span>metros</span></div></label><label class="field"><span>Precisión GPS máxima</span><div class="input-suffix"><input name="PRECISION_GPS_MAXIMA_METROS" type="number" min="10" max="5000" value="${companyValue(company,'PRECISION_GPS_MAXIMA_METROS','120')}" required><span>metros</span></div></label><input type="hidden" name="RETORNO_BASE_OBLIGATORIO" value="SI"><div class="operation-location-status full" data-settings-location-status><i>⌖</i><div><b>${configuracionPuntoOperacion(company).configurada?'Punto guardado':'Ubicación pendiente'}</b><span>${configuracionPuntoOperacion(company).configurada?`${esc(configuracionPuntoOperacion(company).direccion)} · ${number(configuracionPuntoOperacion(company).radioInicio)} m al iniciar · ${number(configuracionPuntoOperacion(company).radioFin)} m al finalizar`:'Seleccione una dirección o capture la ubicación actual.'}</span></div></div><div class="form-actions"><button class="btn soft" type="button" data-capture-base-location>⌖ Usar mi ubicación actual</button><button class="btn primary" type="submit">Guardar punto operacional</button></div></form></article></section>`+
+    `<div class="danger-zone" style="margin-top:18px"><h3>Limpiar datos operativos</h3><p>Elimina vehículos, conductores, operaciones, check-ins, GPS, rutas, conexiones, mantenciones, documentos, notificaciones, alertas, reportes y bitácora. Conserva usuarios, roles, empresa y colores.</p><button class="btn danger" data-clear-data>Limpiar datos operativos</button></div>`;
+  }
 
   async function sincronizarSistema(button) {
     await conCargaBoton(button,'Sincronizando…',async()=>{
@@ -884,10 +1036,19 @@
     $$('[data-table-search]').forEach(input=>input.addEventListener('input',()=>filterTable(input)));
     $$('[data-sync],[data-refresh],[data-retry]').forEach(btn=>btn.addEventListener('click',()=>sincronizarSistema(btn)));
     $$('[data-new-operation]').forEach(btn=>btn.addEventListener('click',()=>openOperationModal()));
+    $$('[data-new-checkin]').forEach(btn=>btn.addEventListener('click',openCheckinModal));
+    $('[data-focus-checkin]')?.addEventListener('click',()=>$('#checkinVisibleCard')?.scrollIntoView({behavior:'smooth',block:'start'}));
+    const inlineCheckin=$('#checkinInlineForm');if(inlineCheckin)bindInlineCheckinForm(inlineCheckin);
+    $$('[data-review-checkin]').forEach(btn=>btn.addEventListener('click',()=>openCheckinReviewModal(btn.dataset.reviewCheckin)));
+    $$('[data-checkin-detail]').forEach(btn=>btn.addEventListener('click',()=>openCheckinDetailModal(btn.dataset.checkinDetail)));
     $$('[data-new-route]').forEach(btn=>btn.addEventListener('click',openRouteModal));
     $$('[data-route-state]').forEach(btn=>btn.addEventListener('click',()=>conCargaBoton(btn,'Actualizando…',()=>changeRouteState(btn.dataset.routeState))));
     $$('[data-new-notification]').forEach(btn=>btn.addEventListener('click',openNotificationModal));
     $$('[data-read-notification]').forEach(btn=>btn.addEventListener('click',()=>conCargaBoton(btn,'Actualizando…',()=>readNotification(btn.dataset.readNotification))));
+    $$('[data-user-permissions]').forEach(btn=>btn.addEventListener('click',()=>openUserPermissionsModal(btn.dataset.userPermissions)));
+    $$('[data-voice-command]').forEach(btn=>btn.addEventListener('click',iniciarComandoVoz));
+    $$('[data-speak-notifications]').forEach(btn=>btn.addEventListener('click',()=>leerNotificacionesVoz()));
+    $$('[data-stop-voice]').forEach(btn=>btn.addEventListener('click',detenerVoz));
     $$('[data-finish-operation]').forEach(btn=>btn.addEventListener('click',()=>finishOperation(btn.dataset.finishOperation,btn)));
     $$('[data-open-qr]').forEach(btn=>btn.addEventListener('click',openQr));
     $$('[data-refresh-locations]').forEach(btn=>btn.addEventListener('click',()=>conCargaBoton(btn,'Sincronizando…',()=>refreshLocations(true,false))));
@@ -901,8 +1062,21 @@
     $('[data-gps-reset]')?.addEventListener('click',resetGpsVehicleFilterDraft);
     $('[data-gps-vehicle-search]')?.addEventListener('input',event=>filterGpsVehicleOptions(event.target.value));
     $$('[data-focus-location]').forEach(btn=>btn.addEventListener('click',()=>{const [lat,lng]=btn.dataset.focusLocation.split(',').map(Number);mapaFlota?.establecerVista(lat,lng,16);}));
+    const operationLocationForm=$('#operationLocationForm');if(operationLocationForm){
+      bindAddressAutocomplete(operationLocationForm);
+      $('[data-capture-base-location]',operationLocationForm)?.addEventListener('click',event=>conCargaBoton(event.currentTarget,'Obteniendo GPS…',async()=>{try{const location=await obtenerUbicacionNavegador();operationLocationForm.elements.PUNTO_OPERACION_LATITUD.value=location.latitud;operationLocationForm.elements.PUNTO_OPERACION_LONGITUD.value=location.longitud;const node=$('[data-settings-location-status]',operationLocationForm);if(node){node.className='operation-location-status valid';node.innerHTML=`<i>✓</i><div><b>Coordenadas capturadas</b><span>${location.latitud.toFixed(6)}, ${location.longitud.toFixed(6)} · precisión ±${Math.round(location.precision)} m</span></div>`;}toast('Ubicación capturada','Revise la dirección y guarde la configuración.');}catch(error){toast('No se obtuvo la ubicación',translateError(error),'error');}}));
+      operationLocationForm.addEventListener('submit',event=>{event.preventDefault();const button=$('button[type="submit"]',operationLocationForm);conCargaBoton(button,'Guardando punto…',async()=>{try{const data=Object.fromEntries(new FormData(operationLocationForm).entries());data.VALIDAR_UBICACION_OPERACION='SI';const result=await api.request('saveCompany',{data});currentCompany=result.row||{...(currentCompany||{}),...data};invalidarListasFormulario('companies');['settings','operations','routes'].forEach(section=>cacheVistasModulo.delete(section));toast('Punto operacional guardado','El inicio y la finalización quedan bloqueados fuera de esta ubicación.');await go('settings');}catch(error){toast('No se guardó el punto',translateError(error),'error');}});});
+    }
     $('[data-clear-data]')?.addEventListener('click',event=>clearData(event.currentTarget));
     $('#darkSwitch')?.addEventListener('change',event=>setTheme(event.target.checked));
+    const themeForm=$('#themeForm');if(themeForm){
+      themeForm.addEventListener('submit',saveTheme);
+      $$('[data-theme-color]',themeForm).forEach(input=>input.addEventListener('input',()=>actualizarVistaPreviaTema(themeForm)));
+      themeForm.elements.TEMA_PREDETERMINADO?.addEventListener('change',()=>actualizarVistaPreviaTema(themeForm));
+      $$('[data-theme-preset]').forEach(button=>button.addEventListener('click',()=>{const preset=window.TemaFlotas?.PREAJUSTES?.[button.dataset.themePreset];if(preset)aplicarValoresTemaFormulario(themeForm,preset.valores);}));
+      $('[data-theme-defaults]')?.addEventListener('click',()=>aplicarValoresTemaFormulario(themeForm,window.TemaFlotas?.PREDETERMINADOS||{}));
+      $('[data-theme-discard]')?.addEventListener('click',()=>aplicarValoresTemaFormulario(themeForm,currentCompany||window.TemaFlotas?.guardado?.()||{}));
+    }
     $('#companyForm')?.addEventListener('submit',saveCompany);
     $('#companyLogo')?.addEventListener('change',async event=>{const file=event.target.files?.[0];if(!file)return;if(file.size>1572864){event.target.value='';return toast('Logotipo demasiado grande','El archivo debe pesar como máximo 1,5 MB.','error');}$('#companyLogoPreview').src=await readImageFile(file);$('#removeLogoValue').value='NO';});
     $('[data-remove-company-logo]')?.addEventListener('click',()=>{$('#companyLogoPreview').src=defaultLogo;$('#companyLogo').value='';$('#removeLogoValue').value='SI';});
@@ -916,15 +1090,15 @@
     if(kind==='routeDrivers'){values=values.filter(row=>row.ESTADO!=='Inactivo');}
     if(kind==='routeVehicles'){placeholder='Por definir';values=values.filter(row=>row.ESTADO!=='Inactivo');}
     if(kind==='notificationDrivers'){values=values.filter(row=>row.ESTADO!=='Inactivo');}
-    if(kind==='operationVehicles'){
+    if(['operationVehicles','checkinVehicles'].includes(kind)){
       values=values.filter(row=>row.ESTADO==='Disponible'||String(row.ID)===selectedValue);
       const selectedRecord=registroFormulario('vehicles',selectedValue);
       if(selectedRecord&&!values.some(row=>String(row.ID)===selectedValue))values.unshift(selectedRecord);
     }
-    if(kind==='operationDrivers')values=values.filter(row=>row.ESTADO==='Disponible'||String(row.ID)===selectedValue);
+    if(['operationDrivers','checkinDrivers'].includes(kind))values=values.filter(row=>row.ESTADO==='Disponible'||String(row.ID)===selectedValue);
     const label=row=>{
       if(kind==='users')return `${row.NOMBRE||'Usuario'} · ${row.CORREO||''}`;
-      if(['drivers','routeDrivers','notificationDrivers','operationDrivers'].includes(kind))return `${row.NOMBRE||'Conductor'} · ${row.RUT||''}`;
+      if(['drivers','routeDrivers','notificationDrivers','operationDrivers','checkinDrivers'].includes(kind))return `${row.NOMBRE||'Conductor'} · ${row.RUT||''}`;
       return `${row.PATENTE||'Vehículo'} · ${row.MARCA||''} ${row.MODELO||''}`;
     };
     const emptyLabel=kind.includes('Driver')||kind==='drivers'?'No hay conductores disponibles':kind==='users'?'No hay usuarios disponibles':'No hay vehículos disponibles';
@@ -1035,9 +1209,35 @@
   }
   function filterTable(input){const q=input.value.trim().toLowerCase();$$('[data-search-row]').forEach(row=>row.style.display=row.dataset.searchRow.includes(q)?'':'none');}
 
+  function permissionMatrixMarkup(user){
+    const custom=new Set(Array.isArray(user.PERMISOS_PERSONALIZADOS)?user.PERMISOS_PERSONALIZADOS:[]),admin=user.ROL_ID==='ROL-ADMIN';
+    const mandatory=new Set(['PANEL_PRINCIPAL:LEER','CONEXIONES:CREAR','CONEXIONES:ACTUALIZAR']);
+    return `<div class="permission-help"><b>${admin?'Administrador con acceso completo':'Permisos de '+esc(user.NOMBRE)}</b><span>${admin?'Los permisos del administrador no pueden reducirse para evitar perder el control del sistema.':'Puede mantener los permisos del rol o definir una selección personalizada. Los permisos técnicos mínimos aparecen bloqueados y permanecen activos para no interrumpir la sesión.'}</span></div><form id="userPermissionsForm" class="permission-form"><input type="hidden" name="USUARIO_ID" value="${esc(user.ID)}"><div class="permission-mode"><label><input type="radio" name="MODO_PERMISOS" value="ROL" ${user.MODO_PERMISOS!=='PERSONALIZADO'||admin?'checked':''} ${admin?'disabled':''}><span>Usar permisos del rol</span></label><label><input type="radio" name="MODO_PERMISOS" value="PERSONALIZADO" ${user.MODO_PERMISOS==='PERSONALIZADO'&&!admin?'checked':''} ${admin?'disabled':''}><span>Personalizar permisos</span></label></div><div class="permission-matrix ${user.MODO_PERMISOS==='PERSONALIZADO'&&!admin?'enabled':''}" data-permission-matrix><div class="permission-row permission-head"><b>Módulo</b>${permissionActions.map(([,label])=>`<b>${label}</b>`).join('')}</div>${permissionCatalog.map(([module,label])=>`<div class="permission-row"><span>${esc(label)}</span>${permissionActions.map(([action])=>{const value=`${module}:${action}`,required=mandatory.has(value);return `<label title="${required?'Permiso técnico obligatorio':''}"><input type="checkbox" name="PERMISOS" value="${value}" ${custom.has(value)||required?'checked':''} ${admin||required?'disabled':''}><i></i></label>`;}).join('')}</div>`).join('')}</div><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit" ${admin?'disabled':''}>Guardar permisos sin cerrar sesión</button></div></form>`;
+  }
+
+  function openUserPermissionsModal(userId){
+    const user=registroFormulario('users',userId);if(!user){toast('Usuario no disponible','Sincronice la lista e intente nuevamente.','error');return;}
+    $('#modalEyebrow').textContent='CONTROL DE ACCESO';$('#modalTitle').textContent='Permisos del usuario';$('#modalBody').innerHTML=permissionMatrixMarkup(user);openModal();
+    const form=$('#userPermissionsForm'),matrix=$('[data-permission-matrix]',form);$('[data-cancel-modal]',form).onclick=closeModal;
+    $$('input[name="MODO_PERMISOS"]',form).forEach(radio=>radio.addEventListener('change',()=>matrix.classList.toggle('enabled',radio.value==='PERSONALIZADO'&&radio.checked)));
+    form.onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',form),mode=form.elements.MODO_PERMISOS.value,permissions=[...form.querySelectorAll('input[name="PERMISOS"]:checked')].map(input=>input.value);await conCargaBoton(button,'Guardando…',async()=>{try{const result=await api.request('saveUserPermissions',{data:{USUARIO_ID:userId,MODO_PERMISOS:mode,PERMISOS:permissions}});guardarRegistro('users',result.row);invalidarListasFormulario('users');cacheVistasModulo.delete('users');if(currentUser.ID===userId){currentUser=result.row;const auth=api.getAuth();api.setAuth({...auth,user:result.row});postParent({tipo:'flotas:modulo-listo',usuario:result.row,seccion:currentSection});}closeModal();toast('Permisos actualizados','La sesión se mantuvo abierta y los nuevos permisos se aplicarán al cambiar de módulo.');await go('users');}catch(error){toast('No se pudieron actualizar los permisos',translateError(error),'error');}});};
+  }
+
+  function reconocimientoDisponible(){return window.SpeechRecognition||window.webkitSpeechRecognition||null;}
+  function actualizarEstadoVoz(texto){const element=$('#voiceCommandStatus');if(element)element.textContent=texto;}
+  function hablar(texto){if(!('speechSynthesis'in window)){toast('Lectura de voz no disponible','Este navegador no permite reproducir notificaciones por voz.','error');return false;}window.speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(String(texto||''));utterance.lang='es-CL';utterance.rate=1;utterance.pitch=1;window.speechSynthesis.speak(utterance);return true;}
+  function detenerVoz(){try{reconocimientoVoz?.stop();}catch(_){ }if('speechSynthesis'in window)window.speechSynthesis.cancel();vozEscuchando=false;actualizarEstadoVoz('Control de voz detenido.');}
+  function notificacionesActuales(){return (cacheListasFormulario.get('notifications')||[]).slice().sort((a,b)=>new Date(b.FECHA_ENVIO||0)-new Date(a.FECHA_ENVIO||0));}
+  function leerNotificacionesVoz(){const unread=notificacionesActuales().filter(item=>item.LEIDA!=='SI');if(!unread.length){hablar('No tiene notificaciones pendientes.');actualizarEstadoVoz('No hay notificaciones pendientes.');return;}const limit=unread.slice(0,10),text=`Tiene ${unread.length} notificaciones pendientes. `+limit.map((item,index)=>`Notificación ${index+1}. ${item.TITULO}. ${item.MENSAJE}`).join('. ');hablar(text);actualizarEstadoVoz(`Leyendo ${limit.length} de ${unread.length} notificaciones pendientes.`);}
+  async function marcarTodasNotificacionesLeidas(){const unread=notificacionesActuales().filter(item=>item.LEIDA!=='SI');if(!unread.length){hablar('No hay notificaciones pendientes.');return;}actualizarEstadoVoz('Marcando notificaciones como leídas…');for(const item of unread){await api.request('readNotification',{id:item.ID});}invalidarListasFormulario('notifications');cacheVistasModulo.delete('notifications');hablar(`${unread.length} notificaciones fueron marcadas como leídas.`);toast('Notificaciones actualizadas',`${unread.length} mensajes marcados como leídos.`);await go('notifications');}
+  async function ejecutarComandoVoz(transcript){const command=String(transcript||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();actualizarEstadoVoz(`Comando detectado: “${transcript}”`);if(/detener|parar|silencio/.test(command)){detenerVoz();return;}if(/leer.*(notificacion|pendiente)|notificacion.*leer/.test(command)){leerNotificacionesVoz();return;}if(/marcar.*todas.*leida/.test(command)){await marcarTodasNotificacionesLeidas();return;}if(/crear|nueva|enviar/.test(command)&&/notificacion|mensaje/.test(command)){openNotificationModal();hablar('Formulario de notificación abierto. Puede usar los micrófonos para dictar el título y el mensaje.');return;}hablar('Comando no reconocido. Diga leer notificaciones, marcar todas como leídas, crear notificación o detener lectura.');actualizarEstadoVoz('Comando no reconocido. Revise los ejemplos disponibles.');}
+  function iniciarComandoVoz(){const Recognition=reconocimientoDisponible();if(!Recognition){toast('Reconocimiento de voz no disponible','Use Chrome o un navegador compatible. La lectura en voz alta seguirá disponible.','error');actualizarEstadoVoz('Este navegador no admite reconocimiento de voz.');return;}detenerVoz();reconocimientoVoz=new Recognition();reconocimientoVoz.lang='es-CL';reconocimientoVoz.interimResults=false;reconocimientoVoz.continuous=false;reconocimientoVoz.maxAlternatives=1;reconocimientoVoz.onstart=()=>{vozEscuchando=true;actualizarEstadoVoz('Escuchando… diga un comando.');};reconocimientoVoz.onresult=event=>ejecutarComandoVoz(event.results?.[0]?.[0]?.transcript||'');reconocimientoVoz.onerror=event=>{vozEscuchando=false;const message=event.error==='not-allowed'?'Permiso de micrófono bloqueado.':'No se pudo reconocer el comando.';actualizarEstadoVoz(message);toast('Comando de voz',message,'error');};reconocimientoVoz.onend=()=>{vozEscuchando=false;};try{reconocimientoVoz.start();}catch(error){toast('Comando de voz','No se pudo activar el micrófono.','error');}}
+  function dictarEnCampo(campo,boton){const Recognition=reconocimientoDisponible();if(!Recognition){toast('Dictado no disponible','Este navegador no admite reconocimiento de voz.','error');return;}const recognition=new Recognition();recognition.lang='es-CL';recognition.interimResults=false;recognition.continuous=false;const original=boton.textContent;boton.textContent='●';boton.classList.add('listening');recognition.onresult=event=>{const text=event.results?.[0]?.[0]?.transcript||'';campo.value=(campo.value?campo.value.trim()+' ':'')+text;campo.dispatchEvent(new Event('input',{bubbles:true}));};recognition.onerror=()=>toast('Dictado','No se pudo reconocer la voz.','error');recognition.onend=()=>{boton.textContent=original;boton.classList.remove('listening');};try{recognition.start();}catch(_){boton.textContent=original;boton.classList.remove('listening');}}
+
   function openRouteModal(){
+    const base=configuracionPuntoOperacion();
     $('#modalEyebrow').textContent='PLANIFICACIÓN';$('#modalTitle').textContent='Asignar nueva ruta';
-    $('#modalBody').innerHTML=`<form class="form-grid" id="routeForm"><label class="field"><span>Conductor</span>${selectorDinamico('drivers','routeDrivers','CONDUCTOR_ID','',true)}</label><label class="field"><span>Vehículo</span>${selectorDinamico('vehicles','routeVehicles','VEHICULO_ID')}</label><label class="field"><span>Nombre de la ruta</span><input name="NOMBRE" placeholder="Ej. Entrega sector norte"></label><label class="field"><span>Aplicación de navegación</span><select name="PROVEEDOR_NAVEGACION"><option>Google Maps</option><option>Waze</option></select></label><label class="field full"><span>Origen en palabras</span><input name="ORIGEN" value="Ubicación actual" data-address-autocomplete data-lat-target="ORIGEN_LATITUD" data-lng-target="ORIGEN_LONGITUD" placeholder="Comience a escribir el origen"><input name="ORIGEN_LATITUD" type="hidden"><input name="ORIGEN_LONGITUD" type="hidden"></label><label class="field full"><span>Destino en palabras</span><input name="DESTINO" required data-address-autocomplete data-lat-target="DESTINO_LATITUD" data-lng-target="DESTINO_LONGITUD" placeholder="Comience a escribir el destino"></label><label class="field"><span>Latitud destino</span><input name="DESTINO_LATITUD" type="number" step="any" readonly placeholder="Se completará automáticamente"></label><label class="field"><span>Longitud destino</span><input name="DESTINO_LONGITUD" type="number" step="any" readonly placeholder="Se completará automáticamente"></label><label class="field"><span>Prioridad</span><select name="PRIORIDAD"><option>Normal</option><option selected>Alta</option><option>Urgente</option></select></label><label class="field full"><span>Instrucciones al conductor</span><textarea name="INSTRUCCIONES" placeholder="Indicaciones, horarios, contacto o restricciones"></textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Asignar y notificar</button></div></form>`;
+    $('#modalBody').innerHTML=`<form class="form-grid" id="routeForm">${base.configurada?`<div class="operation-base-summary full"><i>⌖</i><div><b>Salida operacional: ${esc(base.nombre)}</b><span>La ruta comenzará en ${esc(base.direccion)} y la operación solo podrá cerrarse al regresar a esta base.</span></div></div>`:''}<label class="field"><span>Conductor</span>${selectorDinamico('drivers','routeDrivers','CONDUCTOR_ID','',true)}</label><label class="field"><span>Vehículo</span>${selectorDinamico('vehicles','routeVehicles','VEHICULO_ID')}</label><label class="field"><span>Nombre de la ruta</span><input name="NOMBRE" placeholder="Ej. Entrega sector norte"></label><label class="field"><span>Aplicación de navegación</span><select name="PROVEEDOR_NAVEGACION"><option>Google Maps</option><option>Waze</option></select></label><label class="field full"><span>Origen operacional</span><input name="ORIGEN" value="${esc(base.configurada?base.direccion:'Ubicación actual')}" ${base.configurada?'readonly':'data-address-autocomplete data-lat-target="ORIGEN_LATITUD" data-lng-target="ORIGEN_LONGITUD"'}><input name="ORIGEN_LATITUD" type="hidden" value="${base.configurada?esc(base.latitud):''}"><input name="ORIGEN_LONGITUD" type="hidden" value="${base.configurada?esc(base.longitud):''}"></label><label class="field full"><span>Destino de la ruta</span><input name="DESTINO" required data-address-autocomplete data-lat-target="DESTINO_LATITUD" data-lng-target="DESTINO_LONGITUD" placeholder="Comience a escribir el destino"></label><label class="field"><span>Latitud destino</span><input name="DESTINO_LATITUD" type="number" step="any" readonly placeholder="Se completará automáticamente"></label><label class="field"><span>Longitud destino</span><input name="DESTINO_LONGITUD" type="number" step="any" readonly placeholder="Se completará automáticamente"></label><label class="field"><span>Prioridad</span><select name="PRIORIDAD"><option>Normal</option><option selected>Alta</option><option>Urgente</option></select></label><label class="field full"><span>Instrucciones al conductor</span><textarea name="INSTRUCCIONES" placeholder="Indicaciones, horarios, contacto o restricciones"></textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Asignar y notificar</button></div></form>`;
     const token=openModal();bindAddressAutocomplete($('#routeForm'));$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;
     $('#routeForm').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());await conCargaBoton(button,'Asignando…',async()=>{try{await api.request('assignRoute',{data});invalidarListasFormulario('routes','notifications');cacheVistasModulo.delete('routes');cacheVistasModulo.delete('dashboard');closeModal();toast('Ruta asignada','El conductor recibió una notificación en su bandeja.');await go('routes');}catch(error){toast('No se pudo asignar',translateError(error),'error');}});};
     prepararListasModal(token,['drivers','vehicles']);
@@ -1045,23 +1245,108 @@
   async function changeRouteState(value){const split=value.indexOf(':'),id=value.slice(0,split),state=value.slice(split+1);try{await api.request('updateRouteStatus',{id,ESTADO:state});invalidarListasFormulario('routes','notifications');cacheVistasModulo.delete(currentSection);cacheVistasModulo.delete('dashboard');toast('Ruta actualizada',`Nuevo estado: ${state}.`);await go(currentSection);}catch(error){toast('No se pudo actualizar',translateError(error),'error');}}
   function openNotificationModal(){
     $('#modalEyebrow').textContent='COMUNICACIONES';$('#modalTitle').textContent='Enviar notificación';
-    $('#modalBody').innerHTML=`<form class="form-grid" id="notificationForm"><label class="field full"><span>Conductor destinatario</span>${selectorDinamico('drivers','notificationDrivers','DESTINATARIO_CONDUCTOR_ID','',true)}</label><label class="field"><span>Tipo</span><select name="TIPO"><option>Información</option><option>Ruta</option><option>Operación</option><option>Seguridad</option><option>Documento</option></select></label><label class="field"><span>Prioridad</span><select name="PRIORIDAD"><option>Baja</option><option selected>Normal</option><option>Alta</option><option>Urgente</option></select></label><label class="field full"><span>Título</span><input name="TITULO" required></label><label class="field full"><span>Mensaje</span><textarea name="MENSAJE" required></textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Enviar notificación</button></div></form>`;
-    const token=openModal();$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;
+    $('#modalBody').innerHTML=`<form class="form-grid" id="notificationForm"><label class="field full"><span>Conductor destinatario</span>${selectorDinamico('drivers','notificationDrivers','DESTINATARIO_CONDUCTOR_ID','',true)}</label><label class="field"><span>Tipo</span><select name="TIPO"><option>Información</option><option>Ruta</option><option>Operación</option><option>Seguridad</option><option>Documento</option></select></label><label class="field"><span>Prioridad</span><select name="PRIORIDAD"><option>Baja</option><option selected>Normal</option><option>Alta</option><option>Urgente</option></select></label><label class="field full"><span>Título</span><div class="voice-field"><input name="TITULO" required><button type="button" class="voice-field-button" data-dictate-field="TITULO" title="Dictar título">🎙</button></div></label><label class="field full"><span>Mensaje</span><div class="voice-field"><textarea name="MENSAJE" required></textarea><button type="button" class="voice-field-button" data-dictate-field="MENSAJE" title="Dictar mensaje">🎙</button></div></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Enviar notificación</button></div></form>`;
+    const token=openModal();$$('[data-dictate-field]',$('#modalBody')).forEach(button=>button.addEventListener('click',()=>dictarEnCampo($('#notificationForm').elements[button.dataset.dictateField],button)));$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;
     $('#notificationForm').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());await conCargaBoton(button,'Enviando…',async()=>{try{await api.request('sendNotification',{data});invalidarListasFormulario('notifications');cacheVistasModulo.delete('notifications');cacheVistasModulo.delete('dashboard');closeModal();toast('Notificación enviada','El mensaje aparecerá en la cuenta del conductor.');await go('notifications');}catch(error){toast('No se pudo enviar',translateError(error),'error');}});};
     prepararListasModal(token,['drivers']);
   }
   async function readNotification(id){try{await api.request('readNotification',{id});invalidarListasFormulario('notifications');cacheVistasModulo.delete(currentSection);await refreshNotificationBadge();if(currentSection==='notifications'||currentSection==='dashboard')await go(currentSection);}catch(error){toast('No se pudo actualizar',translateError(error),'error');}}
 
-  function openOperationModal(prefillVehicle=null) {
-    const prefillObject=typeof prefillVehicle==='object'&&prefillVehicle?prefillVehicle:null,prefillId=prefillObject?.ID||String(prefillVehicle||'');
-    if(prefillObject)guardarRegistro('vehicles',prefillObject);
-    $('#modalEyebrow').textContent='OPERACIÓN';$('#modalTitle').textContent='Iniciar nueva operación';
-    $('#modalBody').innerHTML=`<form class="form-grid" id="operationForm">${prefillObject?`<div class="tracking-notice active full"><i>✓</i><div><b>QR validado: ${esc(prefillObject.PATENTE)}</b><span>${esc(prefillObject.MARCA||'')} ${esc(prefillObject.MODELO||'')} · ${esc(prefillObject.QR_CODIGO||'')}</span></div></div><input type="hidden" name="AUTORIZACION_QR" value="${esc(prefillObject.AUTORIZACION_QR||'')}">`:''}<label class="field"><span>Vehículo</span>${selectorDinamico('vehicles','operationVehicles','VEHICULO_ID',prefillId,true)}</label><label class="field"><span>Conductor</span>${selectorDinamico('drivers','operationDrivers','CONDUCTOR_ID',currentUser.CONDUCTOR_ID||'',true)}</label><label class="field"><span>Origen</span><input name="ORIGEN" value="Ubicación actual" data-address-autocomplete placeholder="Comience a escribir el origen"></label><label class="field"><span>Destino</span><input name="DESTINO" required data-address-autocomplete placeholder="Comience a escribir el destino"></label><label class="field"><span>KM inicial</span><input name="KM_INICIO" type="number" min="0"></label><label class="field full"><span>Observaciones</span><textarea name="OBSERVACIONES"></textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Iniciar operación</button></div></form>`;
-    const token=openModal();bindAddressAutocomplete($('#operationForm'));$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;
-    $('#operationForm').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());await conCargaBoton(button,'Iniciando…',async()=>{try{await api.request('startOperation',{data});invalidarListasFormulario('operations','vehicles','drivers','history');cacheVistasModulo.delete('operations');cacheVistasModulo.delete('dashboard');closeModal();toast('Operación iniciada','El vehículo y el conductor quedaron en ruta.');await go('operations');}catch(error){toast('No se pudo iniciar',translateError(error),'error');}});};
-    prepararListasModal(token,['vehicles','drivers']);
+  function updateInlineCheckinProgress(form) {
+    const answered=checkinCatalog.filter(item=>form.querySelector(`input[name="checkin_${item.id}"]:checked`)).length;
+    const count=$('[data-checkin-progress-count]');if(count)count.textContent=`${answered} / ${checkinCatalog.length}`;
+    const bar=$('[data-checkin-progress-bar]');if(bar)bar.style.width=`${Math.round(answered/checkinCatalog.length*100)}%`;
+    checkinCatalog.forEach(item=>{
+      const selected=form.querySelector(`input[name="checkin_${item.id}"]:checked`),card=form.querySelector(`[data-checkin-control="${item.id}"]`),state=form.querySelector(`[data-checkin-state="${item.id}"]`);
+      card?.classList.toggle('answered',Boolean(selected));card?.classList.toggle('failed',selected?.value==='FALLA');
+      if(state){state.textContent=selected?.value==='OK'?'Conforme':selected?.value==='FALLA'?'Con falla':selected?.value==='NA'?'No aplica':'Sin revisar';state.className=`checkin-control-state ${selected?.value==='FALLA'?'failed':selected?'done':''}`;}
+      const note=form.querySelector(`[data-checkin-note="${item.id}"]`);if(note)note.required=selected?.value==='FALLA';
+    });
   }
-  async function finishOperation(id,button){const km=prompt('Kilometraje final del vehículo:','0');if(km===null)return;await conCargaBoton(button,'Finalizando…',async()=>{try{await api.request('finishOperation',{id,KM_FIN:Number(km)});invalidarListasFormulario('operations','vehicles','drivers','history');cacheVistasModulo.delete('operations');cacheVistasModulo.delete('dashboard');toast('Operación finalizada');await go('operations');}catch(error){toast('No se pudo finalizar',translateError(error),'error');}});}
+
+  async function submitInlineCheckin(form) {
+    const button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());
+    const incomplete=checkinCatalog.filter(item=>!form.querySelector(`input[name="checkin_${item.id}"]:checked`));
+    if(incomplete.length){toast('Faltan controles por revisar',`Complete los ${incomplete.length} controles pendientes antes de guardar.`,'error');form.querySelector(`[data-checkin-control="${incomplete[0].id}"]`)?.scrollIntoView({behavior:'smooth',block:'center'});return;}
+    const missingNotes=checkinCatalog.filter(item=>form.querySelector(`input[name="checkin_${item.id}"]:checked`)?.value==='FALLA'&&!form.querySelector(`[data-checkin-note="${item.id}"]`)?.value.trim());
+    if(missingNotes.length){toast('Describa las fallas',`Agregue una observación en ${missingNotes.length} control(es) marcados con falla.`,'error');form.querySelector(`[data-checkin-control="${missingNotes[0].id}"]`)?.scrollIntoView({behavior:'smooth',block:'center'});return;}
+    data.LISTA_CODIFICADA=JSON.stringify(checkinCatalog.map(item=>({id:item.id,respuesta:form.querySelector(`input[name="checkin_${item.id}"]:checked`)?.value||'',observacion:form.querySelector(`[data-checkin-note="${item.id}"]`)?.value||''})));
+    data.SOLICITUD_CLIENTE_ID=form.dataset.solicitudClienteId||crearSolicitudClienteCheckin();
+    form.dataset.solicitudClienteId=data.SOLICITUD_CLIENTE_ID;
+    await conCargaBoton(button,'Guardando en la base…',async()=>{try{
+      const result=await api.request('createVehicleCheckin',{data});
+      if(!result.row?.ID)throw new Error('CHECKIN_RESPUESTA_SIN_IDENTIFICADOR');
+      const persistencia=result.persistencia || (api.isRemote()?'CENTRAL_CONFIRMADA':'LOCAL');
+      if(api.isRemote()&&result.persistenciaConfirmada!==true)throw new Error('CHECKIN_NO_CONFIRMADO_EN_BASE_CENTRAL');
+      guardarReciboCheckin(result.row,persistencia);
+      invalidarListasFormulario('checkins');['checkin','checkinApprovals','checkinHistory','operations','dashboard'].forEach(section=>cacheVistasModulo.delete(section));
+      const state=result.row.ESTADO_REVISION||'Registrado',isCentral=persistencia==='CENTRAL_CONFIRMADA';
+      toast(state==='Bloqueado'?'Salida bloqueada':'Check-in guardado',`${isCentral?'Base central confirmada':'Almacenamiento local'} · ${result.row.ID}. ${state==='Aprobado'?'La inspección quedó aprobada y vigente por 12 horas.':state==='Pendiente'?'Un supervisor debe revisar las observaciones antes de iniciar.':'Se detectaron fallas críticas.'}`,state==='Bloqueado'?'error':'success');
+      form.dataset.solicitudClienteId='';
+      await go('checkin',{force:true});
+    }catch(error){
+      const code=String(error?.message||error||'');
+      const detail=code.includes('HOJA_NO_ENCONTRADA_CHECKINS')?'La hoja CHECKINS no existe. Actualice Google Apps Script y ejecute actualizarSistema().':code.includes('CHECKIN_NO_CONFIRMADO')?'El servidor respondió, pero no confirmó el registro en la hoja CHECKINS.':translateError(error);
+      toast('No se pudo confirmar el guardado',detail,'error');
+    }});
+  }
+
+  function bindInlineCheckinForm(form) {
+    form.addEventListener('change',()=>updateInlineCheckinProgress(form));
+    form.querySelector('[data-checkin-all-ok]')?.addEventListener('click',()=>{checkinCatalog.forEach(item=>{const input=form.querySelector(`input[name="checkin_${item.id}"][value="OK"]`);if(input)input.checked=true;});updateInlineCheckinProgress(form);});
+    form.querySelector('[data-checkin-clear]')?.addEventListener('click',()=>{form.querySelectorAll('input[type="radio"]').forEach(input=>input.checked=false);form.querySelectorAll('[data-checkin-note]').forEach(input=>{input.value='';input.required=false;});updateInlineCheckinProgress(form);});
+    form.addEventListener('submit',event=>{event.preventDefault();submitInlineCheckin(form);});
+    updateInlineCheckinProgress(form);
+  }
+
+  function checkinItemsMarkup() {
+    const groups={};checkinCatalog.forEach(item=>(groups[item.categoria]||(groups[item.categoria]=[])).push(item));
+    return Object.entries(groups).map(([category,items])=>`<fieldset class="checkin-group full"><legend>${esc(category)}</legend>${items.map(item=>`<div class="checkin-item"><div class="checkin-item-copy"><b>${esc(item.item)}</b><span class="${item.critico?'critical-label':''}">${item.critico?'Crítico · No admite N/A':'Control complementario'}</span></div><label><span>Resultado</span><select data-checkin-item="${esc(item.id)}" required><option value="">Seleccione</option><option value="OK">✓ Conforme</option><option value="FALLA">! Falla</option>${item.critico?'':'<option value="NA">— No aplica</option>'}</select></label><label class="checkin-observation"><span>Observación</span><input data-checkin-note="${esc(item.id)}" placeholder="Detalle opcional"></label></div>`).join('')}</fieldset>`).join('');
+  }
+  function openCheckinModal() {
+    $('#modalEyebrow').textContent='SEGURIDAD PREOPERACIONAL';$('#modalTitle').textContent='Realizar check-in vehicular';
+    $('#modalBody').innerHTML=`<form class="form-grid checkin-form" id="checkinForm"><div class="tracking-notice active full"><i>✓</i><div><b>Inspección obligatoria antes de la operación</b><span>Complete los 16 controles. Las fallas críticas bloquean el inicio.</span></div></div><label class="field"><span>Vehículo</span>${selectorDinamico('vehicles','checkinVehicles','VEHICULO_ID','',true)}</label><label class="field"><span>Conductor</span>${selectorDinamico('drivers','checkinDrivers','CONDUCTOR_ID',currentUser.CONDUCTOR_ID||'',true)}</label><label class="field"><span>Kilometraje actual</span><input name="KILOMETRAJE" type="number" min="0" required inputmode="numeric"></label><label class="field"><span>Nivel de combustible/carga</span><select name="NIVEL_COMBUSTIBLE" required><option value="">Seleccione</option><option>Vacío / crítico</option><option>1/4</option><option>1/2</option><option>3/4</option><option>Lleno</option><option>No aplica</option></select></label>${checkinItemsMarkup()}<label class="field full"><span>Observaciones generales</span><textarea name="OBSERVACIONES" placeholder="Indique ruidos, daños, testigos del tablero u otras condiciones"></textarea></label><label class="field full"><span>Nombre o firma del conductor</span><input name="FIRMA_CONDUCTOR" value="${esc(currentUser.NOMBRE||'')}" required></label><label class="checkin-confirm full"><input type="checkbox" name="CONFIRMACION_CONDUCTOR" value="SI" required><span>Confirmo que realicé personalmente esta inspección y que la información es correcta.</span></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Guardar y evaluar check-in</button></div></form>`;
+    const token=openModal();$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;prepararListasModal(token,['vehicles','drivers']);
+    $('#checkinForm').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());const list=checkinCatalog.map(item=>({id:item.id,respuesta:$(`[data-checkin-item="${item.id}"]`,form)?.value||'',observacion:$(`[data-checkin-note="${item.id}"]`,form)?.value||''}));data.LISTA_CODIFICADA=JSON.stringify(list);await conCargaBoton(button,'Evaluando…',async()=>{try{const result=await api.request('createVehicleCheckin',{data});invalidarListasFormulario('checkins');cacheVistasModulo.delete('checkin');cacheVistasModulo.delete('checkinApprovals');cacheVistasModulo.delete('checkinHistory');cacheVistasModulo.delete('operations');closeModal();const state=result.row?.ESTADO_REVISION||'Registrado';toast(state==='Bloqueado'?'Salida bloqueada':'Check-in guardado',state==='Aprobado'?'La inspección quedó aprobada y vigente por 12 horas.':state==='Pendiente'?'Un supervisor debe revisar las observaciones antes de iniciar.':'Se detectaron fallas críticas. Corríjalas y realice un nuevo check-in.',state==='Bloqueado'?'error':'success');await go('checkin');}catch(error){toast('No se pudo guardar el check-in',translateError(error),'error');}});};
+  }
+  function checkinDetailMarkup(row) {
+    const vehicle=registroFormulario('vehicles',row.VEHICULO_ID),driver=registroFormulario('drivers',row.CONDUCTOR_ID),items=parseCheckinItems(row);
+    return `<div class="checkin-detail"><div class="info-grid"><div class="info-item"><span>Check-in</span><b>${esc(row.ID)}</b></div><div class="info-item"><span>Estado</span><b>${status(checkinVisualState(row))}</b></div><div class="info-item"><span>Vehículo</span><b>${esc(vehicle?.PATENTE||row.VEHICULO_ID)}</b></div><div class="info-item"><span>Conductor</span><b>${esc(driver?.NOMBRE||row.CONDUCTOR_ID)}</b></div><div class="info-item"><span>Fecha</span><b>${fmtDate(row.FECHA_HORA,true)}</b></div><div class="info-item"><span>Vigencia</span><b>${fmtDate(row.VIGENTE_HASTA,true)}</b></div><div class="info-item"><span>Kilometraje</span><b>${number(row.KILOMETRAJE)} km</b></div><div class="info-item"><span>Combustible/carga</span><b>${esc(row.NIVEL_COMBUSTIBLE||'—')}</b></div></div><div class="checkin-detail-list">${items.map(item=>`<article class="${item.respuesta==='FALLA'?'failed':''}"><i>${item.respuesta==='OK'?'✓':item.respuesta==='NA'?'—':'!'}</i><div><b>${esc(item.item)}</b><span>${esc(item.categoria)} · ${item.critico?'Crítico':'Complementario'}</span>${item.observacion?`<small>${esc(item.observacion)}</small>`:''}</div>${status(item.respuesta)}</article>`).join('')}</div>${row.OBSERVACIONES?`<div class="checkin-comment"><b>Observaciones generales</b><p>${esc(row.OBSERVACIONES)}</p></div>`:''}${row.COMENTARIO_REVISION?`<div class="checkin-comment"><b>Comentario de revisión</b><p>${esc(row.COMENTARIO_REVISION)}</p></div>`:''}<div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cerrar</button></div></div>`;
+  }
+  function openCheckinDetailModal(id) {
+    const row=registroFormulario('checkins',id);$('#modalEyebrow').textContent='DETALLE DE INSPECCIÓN';$('#modalTitle').textContent=id;$('#modalBody').innerHTML=row?checkinDetailMarkup(row):contenidoCargaModal('Cargando check-in…');const token=openModal();
+    const bind=()=>{const close=$('[data-cancel-modal]',$('#modalBody'));if(close)close.onclick=closeModal;};
+    if(row){bind();return;}
+    api.request('get',{resource:'checkins',id}).then(result=>{if(token!==secuenciaModal)return;guardarRegistro('checkins',result.row);$('#modalBody').innerHTML=checkinDetailMarkup(result.row);bind();}).catch(error=>{if(token!==secuenciaModal)return;$('#modalBody').innerHTML=`<div class="modal-error"><b>No se pudo cargar el check-in</b><p>${esc(translateError(error))}</p><button class="btn soft" data-cancel-modal>Cerrar</button></div>`;bind();});
+  }
+  function openCheckinReviewModal(id) {
+    const row=registroFormulario('checkins',id);if(!row){openCheckinDetailModal(id);return;}
+    $('#modalEyebrow').textContent='APROBACIÓN DE SEGURIDAD';$('#modalTitle').textContent=`Revisar ${id}`;
+    $('#modalBody').innerHTML=`<div class="checkin-review">${checkinDetailMarkup(row).replace(/<div class="form-actions">[\s\S]*?<\/div><\/div>$/,'')}</div><label class="field"><span>Comentario del supervisor</span><textarea id="checkinReviewComment" required placeholder="Indique la decisión y las medidas necesarias"></textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn danger" type="button" data-checkin-decision="RECHAZAR">Rechazar</button>${Number(row.FALLAS_CRITICAS||0)===0?'<button class="btn primary" type="button" data-checkin-decision="APROBAR">Aprobar check-in</button>':''}</div></div>`;
+    openModal();$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;$$('[data-checkin-decision]',$('#modalBody')).forEach(button=>button.onclick=()=>conCargaBoton(button,button.dataset.checkinDecision==='APROBAR'?'Aprobando…':'Rechazando…',async()=>{const comment=$('#checkinReviewComment').value.trim();if(!comment){toast('Comentario requerido','Explique la decisión tomada.','error');return;}try{await api.request('reviewVehicleCheckin',{id,data:{CHECKIN_ID:id,DECISION:button.dataset.checkinDecision,COMENTARIO_REVISION:comment}});invalidarListasFormulario('checkins','notifications');['checkin','checkinApprovals','checkinHistory','operations','dashboard'].forEach(section=>cacheVistasModulo.delete(section));closeModal();toast('Check-in revisado',button.dataset.checkinDecision==='APROBAR'?'La operación puede iniciarse mientras la inspección esté vigente.':'El conductor deberá corregir y realizar un check-in nuevo.');await go(currentSection);}catch(error){toast('No se pudo revisar',translateError(error),'error');}}));
+  }
+  async function refreshOperationCheckins(form) {
+    const vehicle=form.elements.VEHICULO_ID?.value||'',driver=form.elements.CONDUCTOR_ID?.value||'',select=form.elements.CHECKIN_ID;if(!select)return;
+    if(!vehicle||!driver){select.innerHTML='<option value="">Seleccione primero vehículo y conductor</option>';select.disabled=true;return;}
+    select.disabled=true;select.innerHTML='<option value="">Buscando check-ins aprobados…</option>';
+    try{const result=await api.request('availableCheckins',{data:{VEHICULO_ID:vehicle,CONDUCTOR_ID:driver},cache:false});const rows=result.rows||[];select.innerHTML=`<option value="">${rows.length?'Seleccione check-in aprobado':'No hay check-in vigente para esta combinación'}</option>${rows.map(row=>`<option value="${esc(row.ID)}">${esc(row.ID)} · ${fmtDate(row.FECHA_HORA,true)} · vigente hasta ${fmtDate(row.VIGENTE_HASTA,true)}</option>`).join('')}`;select.disabled=false;}catch(error){select.innerHTML='<option value="">No fue posible consultar check-ins</option>';select.disabled=true;toast('No se pudieron consultar los check-ins',translateError(error),'error');}
+  }
+
+  function openOperationModal(prefillVehicle=null) {
+    const base=configuracionPuntoOperacion();
+    if(!base.configurada){$('#modalEyebrow').textContent='UBICACIÓN OBLIGATORIA';$('#modalTitle').textContent='Punto operacional no configurado';$('#modalBody').innerHTML=`<div class="modal-error"><b>No se puede iniciar una operación</b><p>El Administrador debe definir la dirección, coordenadas y radios autorizados en Configuración.</p><div class="form-actions"><button class="btn soft" data-cancel-modal>Cerrar</button>${hasPermission('CONFIGURACION','ACTUALIZAR')?'<button class="btn primary" data-go-operation-settings>Ir a Configuración</button>':''}</div></div>`;openModal();$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;$('[data-go-operation-settings]',$('#modalBody'))?.addEventListener('click',()=>{closeModal();navigateSection('settings');});return;}
+    const prefillObject=typeof prefillVehicle==='object'&&prefillVehicle?prefillVehicle:null,prefillId=prefillObject?.ID||String(prefillVehicle||'');if(prefillObject)guardarRegistro('vehicles',prefillObject);
+    $('#modalEyebrow').textContent='OPERACIÓN GEOVALIDADA';$('#modalTitle').textContent='Iniciar nueva operación';
+    $('#modalBody').innerHTML=`<form class="form-grid" id="operationForm">${prefillObject?`<div class="tracking-notice active full"><i>✓</i><div><b>QR validado: ${esc(prefillObject.PATENTE)}</b><span>${esc(prefillObject.MARCA||'')} ${esc(prefillObject.MODELO||'')}</span></div></div><input type="hidden" name="AUTORIZACION_QR" value="${esc(prefillObject.AUTORIZACION_QR||'')}">`:''}<div class="operation-base-summary full"><i>⌖</i><div><b>${esc(base.nombre)}</b><span>${esc(base.direccion)} · inicio permitido en un radio de ${number(base.radioInicio)} m</span></div></div><div class="operation-checkin-required full"><i>✓</i><div><b>Check-in preoperacional obligatorio</b><span>Solo aparecen inspecciones aprobadas, vigentes y sin utilizar.</span></div><button class="btn soft small" type="button" data-nav-checkin>Realizar check-in</button></div><label class="field"><span>Vehículo</span>${selectorDinamico('vehicles','operationVehicles','VEHICULO_ID',prefillId,true)}</label><label class="field"><span>Conductor</span>${selectorDinamico('drivers','operationDrivers','CONDUCTOR_ID',currentUser.CONDUCTOR_ID||'',true)}</label><label class="field full"><span>Check-in aprobado</span><select name="CHECKIN_ID" required disabled><option value="">Seleccione primero vehículo y conductor</option></select></label><label class="field full"><span>Ruta asignada</span><select name="RUTA_ID"><option value="">Sin ruta asignada · salida y regreso a base</option></select><small data-operation-type>Salida y regreso al mismo punto base</small></label><label class="field"><span>Origen obligatorio</span><input name="ORIGEN" value="${esc(base.direccion)}" readonly></label><label class="field"><span>Destino operacional</span><input name="DESTINO" value="${esc(base.direccion)}" readonly></label><label class="field"><span>KM inicial</span><input name="KM_INICIO" type="number" min="0" required></label><label class="field full"><span>Observaciones</span><textarea name="OBSERVACIONES"></textarea></label><input type="hidden" name="INICIO_LATITUD"><input type="hidden" name="INICIO_LONGITUD"><input type="hidden" name="INICIO_PRECISION"><div class="operation-location-status full" data-operation-location-status><i>⌖</i><div><b>Ubicación aún no validada</b><span>Pulse el botón para comprobar que está dentro del punto autorizado.</span></div></div><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn soft" type="button" data-capture-operation-location>⌖ Validar ubicación</button><button class="btn primary" type="submit">Iniciar operación</button></div></form>`;
+    const token=openModal(),form=$('#operationForm');$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;$('[data-nav-checkin]',form).onclick=()=>{closeModal();navigateSection('checkin');};
+    const updateDependencies=()=>{refreshOperationCheckins(form);rutasDisponiblesOperacion(form);};['VEHICULO_ID','CONDUCTOR_ID'].forEach(name=>form.elements[name]?.addEventListener('change',updateDependencies));form.elements.RUTA_ID?.addEventListener('change',()=>actualizarDestinoOperacion(form));
+    $('[data-capture-operation-location]',form).onclick=event=>conCargaBoton(event.currentTarget,'Validando GPS…',async()=>{try{await capturarUbicacionFormularioOperacion(form,'INICIO');}catch(error){toast('No se validó la ubicación',translateError(error),'error');}});
+    form.onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',form);await conCargaBoton(button,'Validando e iniciando…',async()=>{try{let locationResult=null;if(!form.elements.INICIO_LATITUD.value)locationResult=await capturarUbicacionFormularioOperacion(form,'INICIO');else locationResult=resumenValidacionLocalUbicacion({latitud:Number(form.elements.INICIO_LATITUD.value),longitud:Number(form.elements.INICIO_LONGITUD.value),precision:Number(form.elements.INICIO_PRECISION.value)},base,'INICIO');if(!locationResult.valida)throw new Error(locationResult.precisionValida?'FUERA_DEL_PUNTO_DE_INICIO':'UBICACION_GPS_IMPRECISA');const data=Object.fromEntries(new FormData(form).entries()),result=await api.request('startOperation',{data});invalidarListasFormulario('operations','vehicles','drivers','history','checkins','routes');['operations','dashboard','checkin','checkinHistory','routes'].forEach(section=>cacheVistasModulo.delete(section));closeModal();toast('Operación iniciada',`Ubicación confirmada a ${Math.round(result.locationValidation?.DISTANCIA_METROS??locationResult.distancia)} m de la base.`);await go('operations');}catch(error){toast('No se pudo iniciar',translateError(error),'error');}});};
+    prepararListasModal(token,['vehicles','drivers','routes']);Promise.all(['vehicles','drivers','routes'].map(cargarListaFormulario)).then(()=>{if(token!==secuenciaModal)return;actualizarSelectoresModal(token);updateDependencies();}).catch(()=>{});
+  }
+  function openFinishOperationModal(id,button){const operation=registroFormulario('operations',id)||(listasFormulario.get('operations')||[]).find(row=>row.ID===id);if(!operation)return toast('Operación no encontrada','Sincronice el módulo e inténtelo nuevamente.','error');const base=configuracionPuntoOperacion({...currentCompany,VALIDAR_UBICACION_OPERACION:'SI',PUNTO_OPERACION_NOMBRE:operation.BASE_NOMBRE||currentCompany?.PUNTO_OPERACION_NOMBRE,PUNTO_OPERACION_DIRECCION:operation.BASE_DIRECCION||operation.PUNTO_RETORNO||currentCompany?.PUNTO_OPERACION_DIRECCION,PUNTO_OPERACION_LATITUD:operation.BASE_LATITUD||currentCompany?.PUNTO_OPERACION_LATITUD,PUNTO_OPERACION_LONGITUD:operation.BASE_LONGITUD||currentCompany?.PUNTO_OPERACION_LONGITUD,RADIO_FIN_METROS:operation.RADIO_FIN_METROS||currentCompany?.RADIO_FIN_METROS,PRECISION_GPS_MAXIMA_METROS:operation.PRECISION_GPS_MAXIMA_METROS||currentCompany?.PRECISION_GPS_MAXIMA_METROS});$('#modalEyebrow').textContent='RETORNO OBLIGATORIO';$('#modalTitle').textContent=`Finalizar ${esc(id)}`;$('#modalBody').innerHTML=`<form class="form-grid" id="finishOperationForm"><div class="operation-base-summary full"><i>⌖</i><div><b>Debe regresar a ${esc(base.nombre)}</b><span>${esc(base.direccion)} · finalización permitida dentro de ${number(base.radioFin)} m</span></div></div><label class="field"><span>KM final</span><input name="KM_FIN" type="number" min="${number(operation.KM_INICIO||0)}" value="${number(operation.KM_INICIO||0)}" required></label><label class="field full"><span>Observaciones de cierre</span><textarea name="OBSERVACIONES" placeholder="Novedades al regresar"></textarea></label><input type="hidden" name="FIN_LATITUD"><input type="hidden" name="FIN_LONGITUD"><input type="hidden" name="FIN_PRECISION"><div class="operation-location-status full" data-operation-location-status><i>⌖</i><div><b>Retorno aún no validado</b><span>El sistema comprobará que el vehículo regresó al punto autorizado.</span></div></div><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn soft" type="button" data-capture-operation-location>⌖ Validar retorno</button><button class="btn danger" type="submit">Finalizar operación</button></div></form>`;openModal();const form=$('#finishOperationForm');$('[data-cancel-modal]',form).onclick=closeModal;$('[data-capture-operation-location]',form).onclick=event=>conCargaBoton(event.currentTarget,'Validando GPS…',async()=>{try{await capturarUbicacionFormularioOperacion(form,'FIN');}catch(error){toast('No se validó el retorno',translateError(error),'error');}});form.onsubmit=async event=>{event.preventDefault();const submit=$('button[type="submit"]',form);await conCargaBoton(submit,'Validando y finalizando…',async()=>{try{let locationResult=null;if(!form.elements.FIN_LATITUD.value)locationResult=await capturarUbicacionFormularioOperacion(form,'FIN');else locationResult=resumenValidacionLocalUbicacion({latitud:Number(form.elements.FIN_LATITUD.value),longitud:Number(form.elements.FIN_LONGITUD.value),precision:Number(form.elements.FIN_PRECISION.value)},base,'FIN');if(!locationResult.valida)throw new Error(locationResult.precisionValida?'FUERA_DEL_PUNTO_DE_FINALIZACION':'UBICACION_GPS_IMPRECISA');const data=Object.fromEntries(new FormData(form).entries()),result=await api.request('finishOperation',{id,data});invalidarListasFormulario('operations','vehicles','drivers','history','routes');['operations','dashboard','routes'].forEach(section=>cacheVistasModulo.delete(section));closeModal();toast('Operación finalizada',`Regreso confirmado a ${Math.round(result.locationValidation?.DISTANCIA_METROS??locationResult.distancia)} m de la base.`);await go('operations');}catch(error){toast('No se pudo finalizar',translateError(error),'error');}});};}
+  async function finishOperation(id,button){openFinishOperationModal(id,button);}
+
 
   function antiguedadUbicacion(fecha) {
     const tiempo = new Date(fecha || 0).getTime();
@@ -1298,7 +1583,7 @@
   async function exportResource(resource){try{const result=await api.request('list',{resource});const rows=result.rows||[];if(!rows.length)return toast('Sin datos','No hay registros para exportar.','error');const headers=[...new Set(rows.flatMap(Object.keys))];const csv=[headers,...rows.map(row=>headers.map(h=>row[h]??''))].map(line=>line.map(value=>`"${String(value).replaceAll('"','""')}"`).join(';')).join('\n');const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=`${resource}_${new Date().toISOString().slice(0,10)}.csv`;link.click();URL.revokeObjectURL(url);toast('CSV generado',`${rows.length} registros exportados.`);}catch(error){toast('No se pudo exportar',translateError(error),'error');}}
 
   async function clearData(button){const confirmation=prompt('Escriba exactamente LIMPIAR DATOS para continuar:','');if(confirmation===null)return;await conCargaBoton(button,'Limpiando…',async()=>{try{await api.request('clearOperationalData',{confirmacion:confirmation});invalidarListasFormulario();cacheVistasModulo.clear();toast('Datos operativos eliminados','Se conservaron los usuarios, roles y la configuración de empresa.');await go('settings');}catch(error){toast('No se pudo limpiar',translateError(error),'error');}});}
-  function setTheme(dark){document.body.classList.toggle('dark',dark);localStorage.setItem('flotas_tema',dark?'dark':'light');}
+  function setTheme(dark){document.body.classList.toggle('dark',dark);localStorage.setItem('flotas_tema',dark?'dark':'light');window.TemaFlotas?.aplicarGuardado?.();}
 
   function openModal(){const token=++secuenciaModal;$('#modalBackdrop').classList.add('open');document.body.classList.add('modal-open');return token;}
   function closeModal(){secuenciaModal+=1;$('#modalBackdrop').classList.remove('open');document.body.classList.remove('modal-open');}
@@ -1350,7 +1635,7 @@
     document.addEventListener('visibilitychange',()=>{if(document.hidden){if(currentUser)sendHeartbeat('En segundo plano');releaseWakeLock();return;}if(currentUser){sendHeartbeat('En línea');resumeTrackingIfAllowed();if(gpsWatchId!==null)requestWakeLock();if(currentSection==='gps')refreshLocations(false,false);}});
   }
 
-  function init(){bindGlobal();setTheme(localStorage.getItem('flotas_tema')==='dark');checkSystem();}
+  function init(){bindGlobal();setTheme(window.TemaFlotas?.modoOscuroInicial?.()??localStorage.getItem('flotas_tema')==='dark');checkSystem();}
   window.addEventListener('pagehide',()=>{cleanupSection();stopRealtimeServices();stopCamera();releaseWakeLock();});
   init();
 })();

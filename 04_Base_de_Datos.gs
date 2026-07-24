@@ -230,11 +230,13 @@ function filtrarPorUsuario_(sheetName, rows, user) {
     });
   } else if (sheetName === 'CONEXIONES') {
     rows = rows.filter(function(row) { return row.USUARIO_ID === user.ID; });
-  } else if (!driver && ['CONDUCTORES','VEHICULOS','OPERACIONES','GPS','GPS_ACTUAL','RUTAS','HISTORIAL','DOCUMENTOS','MANTENCIONES'].indexOf(sheetName) >= 0) {
+  } else if (!driver && ['CONDUCTORES','VEHICULOS','OPERACIONES','GPS','GPS_ACTUAL','RUTAS','HISTORIAL','DOCUMENTOS','MANTENCIONES','CHECKINS'].indexOf(sheetName) >= 0) {
     rows = [];
   } else if (sheetName === 'CONDUCTORES') {
     rows = rows.filter(function(row) { return row.ID === driver.ID; });
   } else if (sheetName === 'OPERACIONES' || sheetName === 'GPS' || sheetName === 'GPS_ACTUAL' || sheetName === 'RUTAS') {
+    rows = rows.filter(function(row) { return row.CONDUCTOR_ID === driver.ID; });
+  } else if (sheetName === 'CHECKINS') {
     rows = rows.filter(function(row) { return row.CONDUCTOR_ID === driver.ID; });
   } else if (sheetName === 'VEHICULOS') {
     const vehicleIds = {};

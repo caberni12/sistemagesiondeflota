@@ -13,15 +13,17 @@ function asignarRuta_(request, session) {
   if (data.VEHICULO_ID && !vehicle) throw new Error('VEHICULO_NO_ENCONTRADO');
   const provider = ['Google Maps','Waze'].indexOf(data.PROVEEDOR_NAVEGACION) >= 0
     ? data.PROVEEDOR_NAVEGACION : 'Google Maps';
+  let base = null;
+  try { base = obtenerPuntoOperacionConfigurado_(); } catch (error) { base = null; }
 
   const route = insertarRegistro_('RUTAS', {
     NOMBRE: data.NOMBRE || ('Ruta a ' + data.DESTINO),
     CONDUCTOR_ID: driver.ID,
     VEHICULO_ID: vehicle ? vehicle.ID : '',
     OPERACION_ID: data.OPERACION_ID || '',
-    ORIGEN: data.ORIGEN || 'Ubicación actual',
-    ORIGEN_LATITUD: data.ORIGEN_LATITUD || '',
-    ORIGEN_LONGITUD: data.ORIGEN_LONGITUD || '',
+    ORIGEN: data.ORIGEN || (base ? base.DIRECCION : 'Ubicación actual'),
+    ORIGEN_LATITUD: data.ORIGEN_LATITUD || (base ? base.LATITUD : ''),
+    ORIGEN_LONGITUD: data.ORIGEN_LONGITUD || (base ? base.LONGITUD : ''),
     DESTINO: data.DESTINO,
     DESTINO_LATITUD: data.DESTINO_LATITUD || '',
     DESTINO_LONGITUD: data.DESTINO_LONGITUD || '',

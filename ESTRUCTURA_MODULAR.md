@@ -1,27 +1,32 @@
-# Estructura modular 2.5.0
+# Sistema de Gestión de Flotas 3.0.0
+
+# Estructura modular 2.8.0
 
 ## Flujo principal
 
-1. `index.html` contiene exclusivamente la pantalla de inicio de sesión.
-2. Después de validar las credenciales, el navegador redirige a `main.html`.
-3. `main.html` valida nuevamente la sesión antes de mostrar el panel.
-4. El botón hamburguesa abre el menú lateral.
-5. Cada opción carga una sola vista desde `` dentro del iframe `marcoModulo`.
-6. Al cambiar de opción, el iframe descarga el módulo anterior y libera sus procesos.
-7. Si la sesión expira o se cierra, el sistema regresa a `index.html`.
+`index.html` → inicio de sesión → `main.html` → botón hamburguesa → vista seleccionada.
 
-## Archivos principales
+`main.html` mantiene un único iframe. Al abrir otra opción, la vista anterior se descarga y se libera.
 
-- `index.html`: acceso únicamente.
-- `acceso.css`: diseño del acceso.
-- `acceso.js`: validación, autenticación y redirección.
-- `main.html`: panel principal y contenedor de módulos.
-- `menu-principal.css`: barra superior y menú hamburguesa.
-- `menu-principal.js`: permisos, sesión y carga de vistas.
-- `*.html`: vistas independientes.
-- `aplicacion.js`: funcionamiento interno de cada vista.
-- `mapa.js`: cargado solamente por Ubicación en tiempo real.
+## Flujo preoperacional
 
-## Regla de rendimiento
+1. El conductor abre `checkin-vehicular.html`.
+2. Selecciona el vehículo y completa los 16 controles.
+3. El sistema evalúa la inspección.
+4. Si hay observaciones leves, Administrador o Supervisor revisa en `checkin-aprobaciones.html`.
+5. Una falla crítica bloquea la salida.
+6. El módulo Operaciones solo acepta un check-in aprobado, vigente, sin utilizar y coincidente.
+7. Al iniciar, el check-in queda vinculado a la operación y marcado como utilizado.
+8. La trazabilidad queda disponible en `checkin-historial.html`.
 
-Nunca se abren varios iframes simultáneamente. Solo existe un contenedor activo y cada módulo ejecuta únicamente sus propios procesos.
+## Flujo de primera configuración
+
+`index.html` consulta el estado del servicio. Si no existe ningún usuario con acceso, cambia automáticamente del formulario de inicio de sesión al formulario de preconfiguración. Después de crear la empresa y el primer Administrador, abre `main.html`.
+
+## Flujo de permisos
+
+El Administrador puede mantener los permisos del rol o guardar una matriz personalizada por usuario. La sesión permanece activa, mientras el servidor vuelve a calcular los permisos efectivos en cada solicitud.
+
+## Flujo de voz
+
+El módulo `notificaciones.html` permite escuchar pendientes, activar comandos predefinidos y dictar el título o el cuerpo de una notificación.

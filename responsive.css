@@ -1,5 +1,5 @@
 /* ==========================================================
-   RESPUESTA ADAPTABLE 2.6.2
+   RESPUESTA ADAPTABLE 2.8.2
    Ajustes compartidos para acceso, panel principal y módulos.
    ========================================================== */
 
@@ -244,3 +244,26 @@ body.modo-modulo-iframe .content{width:100%;max-width:100%;overflow-x:hidden}
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 }
+
+/* Check-in vehicular adaptable */
+@media (max-width:680px){
+  .checkin-process{grid-template-columns:1fr!important}
+  .checkin-form .checkin-group{grid-column:1!important}
+  .checkin-item{grid-template-columns:1fr!important}
+  .checkin-item select,.checkin-item input{min-height:46px}
+  .checkin-confirm{font-size:12px}
+  .operation-checkin-required{grid-template-columns:30px minmax(0,1fr)!important}
+  .operation-checkin-required .btn{grid-column:1/-1;width:100%}
+  .checkin-detail-list article{grid-template-columns:31px minmax(0,1fr)!important}
+  .checkin-detail-list article>.status{grid-column:1/-1;justify-self:stretch}
+}
+
+
+/* Personalización visual responsive */
+@media(max-width:980px){.theme-config-layout{grid-template-columns:1fr}.theme-preview-panel{position:static}.theme-presets{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:640px){.theme-intro{display:block}.theme-presets{grid-template-columns:repeat(2,minmax(0,1fr))}.theme-color-grid{grid-template-columns:1fr}.theme-mode-row{grid-template-columns:1fr}.theme-form-actions{display:grid;grid-template-columns:1fr}.theme-form-actions .btn{width:100%}.theme-preview-body{grid-template-columns:64px 1fr}}
+
+
+/* Punto operacional y validación geográfica 3.0.0 */
+.operation-geofence-banner,.operation-base-summary{display:flex;align-items:center;gap:14px;padding:16px 18px;border:1px solid color-mix(in srgb,var(--success) 32%,var(--border));border-radius:16px;background:color-mix(in srgb,var(--success) 8%,var(--surface));margin-bottom:18px}.operation-geofence-banner>i,.operation-base-summary>i{display:grid;place-items:center;flex:0 0 42px;height:42px;border-radius:13px;background:var(--success);color:#fff;font-style:normal;font-size:21px}.operation-geofence-banner div,.operation-base-summary div{min-width:0;flex:1}.operation-geofence-banner h3,.operation-base-summary b{display:block;margin:0 0 4px}.operation-geofence-banner p,.operation-base-summary span{display:block;margin:0;color:var(--text-soft);line-height:1.45}.operation-geofence-banner.blocked{border-color:color-mix(in srgb,var(--danger) 38%,var(--border));background:color-mix(in srgb,var(--danger) 8%,var(--surface))}.operation-geofence-banner.blocked>i{background:var(--danger)}.operation-location-status{display:flex;align-items:flex-start;gap:12px;padding:14px;border:1px dashed var(--border);border-radius:14px;background:var(--surface-soft)}.operation-location-status>i{display:grid;place-items:center;flex:0 0 34px;height:34px;border-radius:10px;background:var(--border);font-style:normal}.operation-location-status div{min-width:0}.operation-location-status b,.operation-location-status span,.operation-location-status small{display:block}.operation-location-status span,.operation-location-status small{color:var(--text-soft);margin-top:3px;line-height:1.4}.operation-location-status.valid{border-style:solid;border-color:color-mix(in srgb,var(--success) 45%,var(--border));background:color-mix(in srgb,var(--success) 8%,var(--surface))}.operation-location-status.valid>i{background:var(--success);color:#fff}.operation-location-status.invalid{border-style:solid;border-color:color-mix(in srgb,var(--danger) 45%,var(--border));background:color-mix(in srgb,var(--danger) 7%,var(--surface))}.operation-location-status.invalid>i{background:var(--danger);color:#fff}.operation-location-status.loading>i{animation:spin 1s linear infinite}.operation-location-settings{margin-top:18px}.operation-location-settings .card{overflow:visible}.input-suffix{display:flex;align-items:center;border:1px solid var(--border);border-radius:12px;background:var(--surface);overflow:hidden}.input-suffix input{border:0!important;border-radius:0!important;min-width:0}.input-suffix span{padding:0 12px;color:var(--text-soft);font-size:13px;white-space:nowrap}.requirement-list{display:grid;gap:12px}.requirement-list>div{display:flex;align-items:flex-start;gap:12px;padding:12px;border:1px solid var(--border);border-radius:13px}.requirement-list i{display:grid;place-items:center;flex:0 0 30px;height:30px;border-radius:9px;background:var(--primary-soft);color:var(--primary);font-style:normal;font-weight:800}.requirement-list span,.requirement-list b,.requirement-list small{display:block}.requirement-list small{margin-top:3px;color:var(--text-soft);line-height:1.4}
+@media(max-width:760px){.operation-geofence-banner,.operation-base-summary{align-items:flex-start;flex-wrap:wrap}.operation-geofence-banner .btn{width:100%}.operation-location-status{padding:12px}.operation-location-settings .form-actions{display:grid;grid-template-columns:1fr}.operation-location-settings .form-actions .btn{width:100%}}

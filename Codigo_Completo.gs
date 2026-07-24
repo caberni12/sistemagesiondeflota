@@ -1,13 +1,10 @@
-/** ARCHIVO ÚNICO - Sistema de Gestión de Flotas 2.6.1 */
-/** Generado a partir de los módulos .gs incluidos en esta entrega. */
-
-// ===== 00_Configuracion.gs =====
+/* ===== 00_Configuracion.gs ===== */
 /**
  * Sistema de Gestión de Flotas - Configuración central.
  * Si el proyecto Apps Script está vinculado a la hoja, instalarSistema() guardará
  * automáticamente el ID. Para un proyecto independiente, pegue el ID aquí.
  */
-const VERSION_APLICACION = '2.6.1';
+const VERSION_APLICACION = '3.0.0';
 
 const CONFIGURACION_APLICACION = Object.freeze({
   ID_HOJA_CALCULO: '1onJJEN1rgz0N9GXOiUqV7ong4-nlbdAjzMyW_rumXCM',
@@ -27,12 +24,12 @@ const CONFIGURACION_APLICACION = Object.freeze({
 
 const ESQUEMAS_APLICACION = Object.freeze({
   CONFIGURACION: ['CLAVE','VALOR','DESCRIPCION','ACTUALIZADO_EN'],
-  USUARIOS: ['ID','NOMBRE','CORREO','CONTRASENA_CIFRADA','SAL_CONTRASENA','ROL_ID','ESTADO','TELEFONO','ULTIMO_ACCESO','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
+  USUARIOS: ['ID','NOMBRE','CORREO','CONTRASENA_CIFRADA','SAL_CONTRASENA','ROL_ID','ESTADO','TELEFONO','ULTIMO_ACCESO','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','MODO_PERMISOS','PERMISOS_PERSONALIZADOS','VERSION_PERMISOS'],
   ROLES: ['ID','NOMBRE','DESCRIPCION','ESTADO','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   PERMISOS: ['ID','ROL_ID','MODULO','ACCION','PERMITIDO','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   VEHICULOS: ['ID','PATENTE','MARCA','MODELO','ANIO','COLOR','COMBUSTIBLE','VIN','KILOMETRAJE','ESTADO','QR_CODIGO','PROXIMA_MANTENCION','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   CONDUCTORES: ['ID','NOMBRE','RUT','TELEFONO','CORREO','LICENCIA_CLASE','LICENCIA_VENCIMIENTO','ESTADO','USUARIO_ID','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
-  OPERACIONES: ['ID','VEHICULO_ID','CONDUCTOR_ID','ORIGEN','DESTINO','FECHA_INICIO','FECHA_FIN','ESTADO','KM_INICIO','KM_FIN','DISTANCIA_KM','OBSERVACIONES','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
+  OPERACIONES: ['ID','VEHICULO_ID','CONDUCTOR_ID','ORIGEN','DESTINO','FECHA_INICIO','FECHA_FIN','ESTADO','KM_INICIO','KM_FIN','DISTANCIA_KM','OBSERVACIONES','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','CHECKIN_ID','RUTA_ID','TIPO_OPERACION','PUNTO_RETORNO','BASE_NOMBRE','BASE_DIRECCION','BASE_LATITUD','BASE_LONGITUD','RADIO_INICIO_METROS','RADIO_FIN_METROS','PRECISION_GPS_MAXIMA_METROS','INICIO_LATITUD','INICIO_LONGITUD','INICIO_PRECISION','DISTANCIA_INICIO_BASE_METROS','VALIDACION_INICIO','FIN_LATITUD','FIN_LONGITUD','FIN_PRECISION','DISTANCIA_FIN_BASE_METROS','VALIDACION_FIN'],
   GPS: ['ID','OPERACION_ID','CONDUCTOR_ID','VEHICULO_ID','LATITUD','LONGITUD','PRECISION_METROS','VELOCIDAD_KMH','RUMBO','FECHA_HORA','FUENTE','CREADO_EN','ELIMINADO','DIRECCION','BATERIA_PORCENTAJE','DISPOSITIVO_ID'],
   GPS_ACTUAL: ['ID','CLAVE_SEGUIMIENTO','OPERACION_ID','CONDUCTOR_ID','VEHICULO_ID','LATITUD','LONGITUD','PRECISION_METROS','VELOCIDAD_KMH','RUMBO','FECHA_HORA','FUENTE','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','DIRECCION','BATERIA_PORCENTAJE','DISPOSITIVO_ID'],
   HISTORIAL: ['ID','OPERACION_ID','EVENTO','DETALLE','FECHA_HORA','USUARIO_ID','CREADO_EN','ELIMINADO'],
@@ -42,10 +39,11 @@ const ESQUEMAS_APLICACION = Object.freeze({
   REPORTES: ['ID','TIPO','PARAMETROS_CODIFICADOS','DIRECCION_ARCHIVO','GENERADO_POR','FECHA_HORA','ESTADO','CREADO_EN','ELIMINADO'],
   BITACORA: ['ID','USUARIO_ID','USUARIO_NOMBRE','ACCION','MODULO','REGISTRO_ID','DETALLE','IP_CLIENTE','FECHA_HORA','CREADO_EN','ELIMINADO'],
   PARAMETROS: ['ID','GRUPO','CLAVE','VALOR','TIPO','DESCRIPCION','ACTIVO','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
-  EMPRESAS: ['ID','RUT','RAZON_SOCIAL','NOMBRE_FANTASIA','GIRO','DIRECCION','COMUNA','CIUDAD','REGION','PAIS','TELEFONO_PRINCIPAL','TELEFONO_SECUNDARIO','CORREO','SITIO_WEB','REPRESENTANTE_LEGAL','RUT_REPRESENTANTE','DIRECCION_LOGOTIPO','ID_ARCHIVO_LOGOTIPO','NOMBRE_ARCHIVO_LOGOTIPO','TIPO_ARCHIVO_LOGOTIPO','COLOR_PRINCIPAL','COLOR_SECUNDARIO','ZONA_HORARIA','MONEDA','UNIDAD_DISTANCIA','FORMATO_FECHA','TEXTO_PIE','ESTADO','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
+  EMPRESAS: ['ID','RUT','RAZON_SOCIAL','NOMBRE_FANTASIA','GIRO','DIRECCION','COMUNA','CIUDAD','REGION','PAIS','TELEFONO_PRINCIPAL','TELEFONO_SECUNDARIO','CORREO','SITIO_WEB','REPRESENTANTE_LEGAL','RUT_REPRESENTANTE','DIRECCION_LOGOTIPO','ID_ARCHIVO_LOGOTIPO','NOMBRE_ARCHIVO_LOGOTIPO','TIPO_ARCHIVO_LOGOTIPO','COLOR_PRINCIPAL','COLOR_SECUNDARIO','ZONA_HORARIA','MONEDA','UNIDAD_DISTANCIA','FORMATO_FECHA','TEXTO_PIE','ESTADO','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','COLOR_ACENTO','COLOR_FONDO','COLOR_SUPERFICIE','COLOR_TEXTO','COLOR_TEXTO_SECUNDARIO','COLOR_BORDE','COLOR_MENU','COLOR_MENU_SECUNDARIO','COLOR_EXITO','COLOR_ADVERTENCIA','COLOR_PELIGRO','COLOR_FONDO_OSCURO','COLOR_SUPERFICIE_OSCURO','COLOR_TEXTO_OSCURO','COLOR_TEXTO_SECUNDARIO_OSCURO','COLOR_BORDE_OSCURO','TEMA_PREDETERMINADO','VALIDAR_UBICACION_OPERACION','PUNTO_OPERACION_NOMBRE','PUNTO_OPERACION_DIRECCION','PUNTO_OPERACION_LATITUD','PUNTO_OPERACION_LONGITUD','RADIO_INICIO_METROS','RADIO_FIN_METROS','PRECISION_GPS_MAXIMA_METROS','RETORNO_BASE_OBLIGATORIO'],
   QR: ['ID','CODIGO','TIPO','REGISTRO_ID','ESTADO','FECHA_GENERACION','FECHA_ULTIMO_USO','USOS','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   RUTAS: ['ID','NOMBRE','CONDUCTOR_ID','VEHICULO_ID','OPERACION_ID','ORIGEN','ORIGEN_LATITUD','ORIGEN_LONGITUD','DESTINO','DESTINO_LATITUD','DESTINO_LONGITUD','PARADAS_CODIFICADAS','PROVEEDOR_NAVEGACION','ESTADO','INSTRUCCIONES','FECHA_ASIGNACION','FECHA_INICIO','FECHA_FIN','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   NOTIFICACIONES: ['ID','DESTINATARIO_USUARIO_ID','DESTINATARIO_CONDUCTOR_ID','TITULO','MENSAJE','TIPO','PRIORIDAD','RUTA_ID','OPERACION_ID','LEIDA','FECHA_ENVIO','FECHA_LECTURA','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
+  CHECKINS: ['ID','VEHICULO_ID','CONDUCTOR_ID','OPERACION_ID','FECHA_HORA','KILOMETRAJE','NIVEL_COMBUSTIBLE','LISTA_CODIFICADA','TOTAL_ITEMS','ITEMS_OK','FALLAS_LEVES','FALLAS_CRITICAS','RESULTADO','ESTADO_REVISION','OBSERVACIONES','FIRMA_CONDUCTOR','REVISADO_POR','FECHA_REVISION','COMENTARIO_REVISION','VIGENTE_HASTA','UTILIZADO','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','SOLICITUD_CLIENTE_ID'],
   CONEXIONES: ['ID','USUARIO_ID','CONDUCTOR_ID','DISPOSITIVO_ID','SESION_ID','SESION_CLIENTE_ID','SECCION_ACTUAL','ACTIVIDAD','VEHICULO_ID','OPERACION_ID','RUTA_ID','GPS_ACTIVO','PAGINA_VISIBLE','ESTADO','ULTIMA_CONEXION','PLATAFORMA','NAVEGADOR','TIPO_RED','BATERIA_PORCENTAJE','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   SESIONES: ['ID','USUARIO_ID','FICHA_SESION_CIFRADA','FECHA_INICIO','FECHA_EXPIRACION','ULTIMO_USO','ACTIVA','AGENTE_NAVEGADOR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
 });
@@ -57,6 +55,7 @@ const RECURSOS_APLICACION = Object.freeze({
   vehiculos: { sheet: 'VEHICULOS', prefix: 'VEH', module: 'VEHICULOS' },
   conductores: { sheet: 'CONDUCTORES', prefix: 'CON', module: 'CONDUCTORES' },
   operaciones: { sheet: 'OPERACIONES', prefix: 'OPE', module: 'OPERACIONES' },
+  checkins: { sheet: 'CHECKINS', prefix: 'CHK', module: 'CHECKIN' },
   gps: { sheet: 'GPS', prefix: 'GPS', module: 'GPS' },
   historial: { sheet: 'HISTORIAL', prefix: 'HIS', module: 'HISTORIAL' },
   mantenciones: { sheet: 'MANTENCIONES', prefix: 'MAN', module: 'MANTENCIONES' },
@@ -74,7 +73,7 @@ const RECURSOS_APLICACION = Object.freeze({
 
 const ACCIONES_PUBLICAS = Object.freeze(['salud','estadoSistema','instalacionInicial','iniciarSesion']);
 
-// ===== 01_Principal.gs =====
+/* ===== 01_Principal.gs ===== */
 /** Punto de entrada de la aplicación web. */
 function doGet(e) {
   try {
@@ -95,7 +94,7 @@ function doPost(e) {
   }
 }
 
-// ===== 02_Rutas.gs =====
+/* ===== 02_Rutas.gs ===== */
 /** Enrutador único del servicio de datos. */
 function enrutarSolicitud_(request, event) {
   reiniciarCachesEjecucion_();
@@ -123,6 +122,9 @@ function enrutarSolicitud_(request, event) {
     case 'eliminar': return servicioEliminar_(request, session);
     case 'iniciarOperacion': return iniciarOperacion_(request, session);
     case 'finalizarOperacion': return finalizarOperacion_(request, session);
+    case 'crearCheckinVehicular': return crearCheckinVehicular_(request, session);
+    case 'revisarCheckinVehicular': return revisarCheckinVehicular_(request, session);
+    case 'checkinsDisponibles': return checkinsDisponibles_(request, session);
     case 'validarQrVehiculo': return validarQrVehiculo_(request, session);
     case 'guardarUbicacion': return guardarUbicacion_(request, session);
     case 'ultimasUbicaciones': return ultimasUbicaciones_(request, session);
@@ -133,6 +135,7 @@ function enrutarSolicitud_(request, event) {
     case 'actualizarConexion': return actualizarConexion_(request, session);
     case 'resumenTiempoReal': return resumenTiempoReal_(request, session);
     case 'cambiarContrasena': return cambiarPassword_(request, session);
+    case 'actualizarPermisosUsuario': return actualizarPermisosUsuario_(request, session);
     case 'guardarEmpresa': return guardarEmpresaServicio_(request, session);
     case 'limpiarDatosOperativos': return limpiarDatosOperativosServicio_(request, session);
     default: throw new Error('ACCION_NO_ENCONTRADA');
@@ -194,6 +197,7 @@ function servicioCrear_(request, session) {
   const resource = obtenerRecurso_(request.recurso);
   exigirPermiso_(session.user, resource.module, 'CREAR');
   if (resource.sheet === 'USUARIOS') return crearUsuarioServicio_(request.datos || {}, session);
+  if (resource.sheet === 'CHECKINS') return crearCheckinVehicular_({ datos:request.datos || {} }, session);
   if (session.user.ROL_ID === 'ROL-CONDUCTOR') {
     if (resource.sheet === 'OPERACIONES') return iniciarOperacion_({ datos:request.datos || {} }, session);
     if (resource.sheet === 'GPS') return guardarUbicacion_({ datos:request.datos || {} }, session);
@@ -211,6 +215,7 @@ function servicioActualizar_(request, session) {
   const existing = obtenerRegistro_(resource.sheet, request.identificador);
   if (!existing) throw new Error('REGISTRO_NO_ENCONTRADO');
   if (!filtrarPorUsuario_(resource.sheet, [existing], session.user).length) throw new Error('PERMISO_DENEGADO');
+  if (resource.sheet === 'CHECKINS') throw new Error('ACCION_ESPECIAL_REQUERIDA');
   if (session.user.ROL_ID === 'ROL-CONDUCTOR') {
     const driverData = request.datos || {};
     if (resource.sheet === 'RUTAS') {
@@ -244,7 +249,7 @@ function servicioEliminar_(request, session) {
   return ok_({ id: request.identificador });
 }
 
-// ===== 03_Seguridad.gs =====
+/* ===== 03_Seguridad.gs ===== */
 /** Seguridad, contraseñas, sesiones y permisos. */
 function validarContrasenaElegida_(contrasena) {
   if (contrasena === null || typeof contrasena === 'undefined' || String(contrasena).length === 0) {
@@ -262,31 +267,64 @@ function usuarioTieneAccesoConfigurado_(usuario) {
 }
 
 function instalarSistemaInicial_(request) {
-  const users = listarRegistros_('USUARIOS', {});
-  if (users.some(usuarioTieneAccesoConfigurado_)) throw new Error('SISTEMA_YA_INICIALIZADO');
-  const claveEsperada = obtenerOCrearClaveInstalacion_();
-  if (String(request.claveInstalacion || '') !== claveEsperada) throw new Error('CLAVE_INSTALACION_INVALIDA');
-  validarRequeridos_(request, ['nombre','correo']);
-  const contrasena = validarContrasenaElegida_(request.contrasena);
+  // La instalación prepara hojas y catálogos antes de tomar el bloqueo final.
+  // Esto evita intentar adquirir el mismo ScriptLock de forma anidada.
+  instalarSistema();
+  reiniciarCachesEjecucion_();
+  const bloqueo = LockService.getScriptLock();
+  bloqueo.waitLock(30000);
+  try {
+    const users = listarRegistros_('USUARIOS', {});
+    if (users.some(usuarioTieneAccesoConfigurado_)) throw new Error('SISTEMA_YA_INICIALIZADO');
+    validarRequeridos_(request, ['nombre','correo']);
+    const contrasena = validarContrasenaElegida_(request.contrasena);
+    if (String(request.contrasenaConfirmacion || request.contrasena || '') !== contrasena) {
+      throw new Error('CONTRASENAS_NO_COINCIDEN');
+    }
 
-  asegurarCatalogos_();
-  users.forEach(function(usuario) {
-    actualizarRegistro_('USUARIOS', usuario.ID, {
-      ESTADO: 'Inactivo',
-      ELIMINADO: 'SI',
+    asegurarCatalogos_();
+    users.forEach(function(usuario) {
+      actualizarRegistro_('USUARIOS', usuario.ID, { ESTADO:'Inactivo', ELIMINADO:'SI' });
     });
-  });
-  const user = crearUsuarioInterno_({
-    NOMBRE: request.nombre,
-    CORREO: request.correo,
-    CONTRASENA: contrasena,
-    ROL_ID: 'ROL-ADMIN',
-    ESTADO: 'Activo',
-    TELEFONO: request.telefono || '',
-  });
-  PropertiesService.getScriptProperties().setProperty('INSTALACION_COMPLETADA', 'SI');
-  registrarBitacora_(user, 'INSTALACION_INICIAL', 'SEGURIDAD', user.ID, 'Administrador inicial creado');
-  return ok_({ initialized: true, user: usuarioPublico_(user) });
+    const user = crearUsuarioInterno_({
+      NOMBRE: request.nombre,
+      CORREO: request.correo,
+      CONTRASENA: contrasena,
+      ROL_ID: 'ROL-ADMIN',
+      ESTADO: 'Activo',
+      TELEFONO: request.telefono || '',
+    });
+
+    const nombreEmpresa = String(request.nombreEmpresa || request.empresa || '').trim();
+    if (nombreEmpresa) {
+      const actual = listarRegistros_('EMPRESAS', {})[0] || null;
+      const empresa = {
+        RUT: String(request.rutEmpresa || '').trim(),
+        RAZON_SOCIAL: String(request.razonSocial || nombreEmpresa).trim(),
+        NOMBRE_FANTASIA: nombreEmpresa,
+        TELEFONO_PRINCIPAL: String(request.telefonoEmpresa || request.telefono || '').trim(),
+        CORREO: normalizarEmail_(request.correoEmpresa || request.correo),
+        PAIS: String(request.pais || 'Chile').trim(),
+        ZONA_HORARIA: CONFIGURACION_APLICACION.ZONA_HORARIA,
+        MONEDA: 'CLP',
+        UNIDAD_DISTANCIA: 'km',
+        FORMATO_FECHA: 'DD/MM/AAAA',
+        COLOR_PRINCIPAL: '#0E9F91', COLOR_SECUNDARIO: '#08746B', COLOR_ACENTO: '#3578E5',
+        COLOR_FONDO: '#F3F7FA', COLOR_SUPERFICIE: '#FFFFFF', COLOR_TEXTO: '#173047', COLOR_TEXTO_SECUNDARIO: '#65798B', COLOR_BORDE: '#DCE6EC',
+        COLOR_MENU: '#071725', COLOR_MENU_SECUNDARIO: '#0D2638', COLOR_EXITO: '#0E9F91', COLOR_ADVERTENCIA: '#D89216', COLOR_PELIGRO: '#DC4D60',
+        COLOR_FONDO_OSCURO: '#071725', COLOR_SUPERFICIE_OSCURO: '#0D2638', COLOR_TEXTO_OSCURO: '#E9F1F7', COLOR_TEXTO_SECUNDARIO_OSCURO: '#9EB0BF', COLOR_BORDE_OSCURO: '#214359',
+        TEMA_PREDETERMINADO: 'Sistema',
+        ESTADO: 'Activo',
+      };
+      actual ? actualizarRegistro_('EMPRESAS', actual.ID, empresa) : insertarRegistro_('EMPRESAS', empresa, 'EMP');
+    }
+
+    PropertiesService.getScriptProperties().setProperty('INSTALACION_COMPLETADA', 'SI');
+    registrarBitacora_(user, 'INSTALACION_INICIAL', 'SEGURIDAD', user.ID, 'Preconfiguración automática y administrador inicial creados');
+    return ok_({ initialized:true, user:usuarioPublico_(user), companyConfigured:Boolean(nombreEmpresa) });
+  } finally {
+    bloqueo.releaseLock();
+  }
 }
 
 function iniciarSesion_(request) {
@@ -388,6 +426,9 @@ function crearUsuarioInterno_(data) {
     ROL_ID: data.ROL_ID || 'ROL-CONDUCTOR',
     ESTADO: data.ESTADO || 'Activo',
     TELEFONO: data.TELEFONO || '',
+    MODO_PERMISOS: data.MODO_PERMISOS || 'ROL',
+    PERMISOS_PERSONALIZADOS: JSON.stringify(normalizarListaPermisos_(data.PERMISOS_PERSONALIZADOS || [])),
+    VERSION_PERMISOS: 1,
     ELIMINADO: 'NO',
   }, 'USR');
 }
@@ -400,9 +441,16 @@ function crearUsuarioServicio_(data, session) {
 }
 
 function actualizarUsuarioServicio_(id, data, session) {
+  const existente = obtenerRegistro_('USUARIOS', id);
+  if (!existente) throw new Error('REGISTRO_NO_ENCONTRADO');
+  protegerUltimoAdministrador_(existente, data || {});
   const clean = Object.assign({}, data);
   delete clean.CONTRASENA_CIFRADA;
   delete clean.SAL_CONTRASENA;
+  // Los permisos solo se actualizan mediante actualizarPermisosUsuario_.
+  delete clean.MODO_PERMISOS;
+  delete clean.PERMISOS_PERSONALIZADOS;
+  delete clean.VERSION_PERMISOS;
   if (Object.prototype.hasOwnProperty.call(clean, 'CONTRASENA')) {
     const contrasena = validarContrasenaElegida_(clean.CONTRASENA);
     const salt = crearToken_();
@@ -416,15 +464,63 @@ function actualizarUsuarioServicio_(id, data, session) {
   return ok_({ row: usuarioPublico_(row) });
 }
 
+function protegerUltimoAdministrador_(usuarioActual, cambios) {
+  if (!usuarioActual || usuarioActual.ROL_ID !== 'ROL-ADMIN' || usuarioActual.ESTADO !== 'Activo') return;
+  const nuevoRol = Object.prototype.hasOwnProperty.call(cambios, 'ROL_ID') ? String(cambios.ROL_ID) : usuarioActual.ROL_ID;
+  const nuevoEstado = Object.prototype.hasOwnProperty.call(cambios, 'ESTADO') ? String(cambios.ESTADO) : usuarioActual.ESTADO;
+  const eliminado = String(cambios.ELIMINADO || usuarioActual.ELIMINADO || 'NO');
+  if (nuevoRol === 'ROL-ADMIN' && nuevoEstado === 'Activo' && eliminado !== 'SI') return;
+  const otros = listarRegistros_('USUARIOS', {}).filter(function(row) {
+    return row.ID !== usuarioActual.ID && row.ROL_ID === 'ROL-ADMIN' && usuarioTieneAccesoConfigurado_(row);
+  });
+  if (!otros.length) throw new Error('ULTIMO_ADMINISTRADOR_PROTEGIDO');
+}
+
+const PERMISOS_TECNICOS_OBLIGATORIOS_ = Object.freeze([
+  'PANEL_PRINCIPAL:LEER',
+  'CONEXIONES:CREAR',
+  'CONEXIONES:ACTUALIZAR'
+]);
+
+function normalizarListaPermisos_(value) {
+  let lista = value;
+  if (typeof lista === 'string') {
+    try { lista = JSON.parse(lista || '[]'); } catch (error) { lista = []; }
+  }
+  if (!Array.isArray(lista)) lista = [];
+  const validos = {};
+  lista.forEach(function(item) {
+    const permiso = String(item || '').trim().toUpperCase();
+    if (/^[A-Z_]+:(LEER|CREAR|ACTUALIZAR|ELIMINAR)$/.test(permiso)) validos[permiso] = true;
+  });
+  return Object.keys(validos).sort();
+}
+
+function permisosBaseRol_(user) {
+  if (!user) return [];
+  if (user.ROL_ID === 'ROL-ADMIN') return ['*:*'];
+  return listarRegistros_('PERMISOS', {}).filter(function(row) {
+    return row.ROL_ID === user.ROL_ID && row.PERMITIDO === 'SI';
+  }).map(function(row) { return row.MODULO + ':' + row.ACCION; });
+}
+
+function permisosEfectivosUsuario_(user) {
+  if (!user) return [];
+  if (user.ROL_ID === 'ROL-ADMIN') return ['*:*'];
+  const modo = String(user.MODO_PERMISOS || 'ROL').toUpperCase();
+  const seleccionados = modo === 'PERSONALIZADO'
+    ? normalizarListaPermisos_(user.PERMISOS_PERSONALIZADOS)
+    : permisosBaseRol_(user);
+  const mapa = {};
+  seleccionados.concat(PERMISOS_TECNICOS_OBLIGATORIOS_).forEach(function(item) { mapa[item] = true; });
+  return Object.keys(mapa).sort();
+}
+
 function usuarioPublico_(user) {
   if (!user) return null;
   const role = obtenerRegistro_('ROLES', user.ROL_ID);
   const driver = listarRegistros_('CONDUCTORES', {}).find(function(row) { return row.USUARIO_ID === user.ID; });
-  const permissions = user.ROL_ID === 'ROL-ADMIN'
-    ? ['*:*']
-    : listarRegistros_('PERMISOS', {}).filter(function(row) {
-        return row.ROL_ID === user.ROL_ID && row.PERMITIDO === 'SI';
-      }).map(function(row) { return row.MODULO + ':' + row.ACCION; });
+  const personalizados = normalizarListaPermisos_(user.PERMISOS_PERSONALIZADOS);
   return {
     ID: user.ID,
     NOMBRE: user.NOMBRE,
@@ -435,7 +531,10 @@ function usuarioPublico_(user) {
     TELEFONO: user.TELEFONO || '',
     ULTIMO_ACCESO: serializarValor_(user.ULTIMO_ACCESO),
     CONDUCTOR_ID: driver ? driver.ID : '',
-    PERMISOS: permissions,
+    MODO_PERMISOS: String(user.MODO_PERMISOS || 'ROL').toUpperCase(),
+    PERMISOS_PERSONALIZADOS: personalizados,
+    VERSION_PERMISOS: Number(user.VERSION_PERMISOS || 0),
+    PERMISOS: permisosEfectivosUsuario_(user),
   };
 }
 
@@ -445,10 +544,10 @@ function exigirPermiso_(user, moduleName, action) {
 }
 
 function tienePermiso_(user, moduleName, action) {
+  if (!user) return false;
   if (user.ROL_ID === 'ROL-ADMIN') return true;
-  return listarRegistros_('PERMISOS', {}).some(function(row) {
-    return row.ROL_ID === user.ROL_ID && row.MODULO === moduleName && row.ACCION === action && row.PERMITIDO === 'SI';
-  });
+  const permiso = String(moduleName || '').toUpperCase() + ':' + String(action || '').toUpperCase();
+  return permisosEfectivosUsuario_(user).indexOf(permiso) >= 0;
 }
 
 function cifrarContrasena_(password, salt) {
@@ -485,7 +584,7 @@ function limpiarSesionesExpiradas_() {
   });
 }
 
-// ===== 04_Base_de_Datos.gs =====
+/* ===== 04_Base_de_Datos.gs ===== */
 /** Capa genérica de acceso a Google Sheets. */
 let CACHE_SPREADSHEET_EJECUCION_ = null;
 let CACHE_HOJAS_EJECUCION_ = {};
@@ -718,11 +817,13 @@ function filtrarPorUsuario_(sheetName, rows, user) {
     });
   } else if (sheetName === 'CONEXIONES') {
     rows = rows.filter(function(row) { return row.USUARIO_ID === user.ID; });
-  } else if (!driver && ['CONDUCTORES','VEHICULOS','OPERACIONES','GPS','GPS_ACTUAL','RUTAS','HISTORIAL','DOCUMENTOS','MANTENCIONES'].indexOf(sheetName) >= 0) {
+  } else if (!driver && ['CONDUCTORES','VEHICULOS','OPERACIONES','GPS','GPS_ACTUAL','RUTAS','HISTORIAL','DOCUMENTOS','MANTENCIONES','CHECKINS'].indexOf(sheetName) >= 0) {
     rows = [];
   } else if (sheetName === 'CONDUCTORES') {
     rows = rows.filter(function(row) { return row.ID === driver.ID; });
   } else if (sheetName === 'OPERACIONES' || sheetName === 'GPS' || sheetName === 'GPS_ACTUAL' || sheetName === 'RUTAS') {
+    rows = rows.filter(function(row) { return row.CONDUCTOR_ID === driver.ID; });
+  } else if (sheetName === 'CHECKINS') {
     rows = rows.filter(function(row) { return row.CONDUCTOR_ID === driver.ID; });
   } else if (sheetName === 'VEHICULOS') {
     const vehicleIds = {};
@@ -766,7 +867,7 @@ function filtrarPorUsuario_(sheetName, rows, user) {
   return rows.map(function(row) { return limpiarSalidaRecurso_(sheetName, row); });
 }
 
-// ===== 05_Instalacion_Inicial.gs =====
+/* ===== 05_Instalacion_Inicial.gs ===== */
 /** Instalación y mantenimiento inicial del sistema. */
 function generarClaveInstalacion_() {
   const entropia = (
@@ -935,21 +1036,21 @@ function asegurarCatalogos_() {
   asegurarRol_('ROL-SUPERVISOR', 'Supervisor', 'Gestión operacional y reportes');
   asegurarRol_('ROL-CONDUCTOR', 'Conductor', 'Operaciones, rutas, GPS y notificaciones propias');
 
-  const modules = ['PANEL_PRINCIPAL','USUARIOS','VEHICULOS','CONDUCTORES','OPERACIONES','GPS','HISTORIAL','MANTENCIONES','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','CONFIGURACION','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
+  const modules = ['PANEL_PRINCIPAL','USUARIOS','VEHICULOS','CONDUCTORES','OPERACIONES','CHECKIN','CHECKIN_APROBACIONES','GPS','HISTORIAL','MANTENCIONES','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','CONFIGURACION','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
   const actions = ['LEER','CREAR','ACTUALIZAR','ELIMINAR'];
   modules.forEach(function(moduleName) {
     actions.forEach(function(action) {
       asegurarPermisoCatalogo_('ROL-ADMIN', moduleName, action, 'SI');
     });
   });
-  const supervisorModules = ['PANEL_PRINCIPAL','VEHICULOS','CONDUCTORES','OPERACIONES','GPS','HISTORIAL','MANTENCIONES','DOCUMENTOS','ALERTAS','REPORTES','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
+  const supervisorModules = ['PANEL_PRINCIPAL','VEHICULOS','CONDUCTORES','OPERACIONES','CHECKIN','CHECKIN_APROBACIONES','GPS','HISTORIAL','MANTENCIONES','DOCUMENTOS','ALERTAS','REPORTES','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
   supervisorModules.forEach(function(moduleName) {
     actions.forEach(function(action) {
       asegurarPermisoCatalogo_('ROL-SUPERVISOR', moduleName, action, action === 'ELIMINAR' ? 'NO' : 'SI');
     });
   });
   const driverRules = {
-    PANEL_PRINCIPAL:['LEER'], VEHICULOS:['LEER'], CONDUCTORES:['LEER'], OPERACIONES:['LEER','CREAR','ACTUALIZAR'],
+    PANEL_PRINCIPAL:['LEER'], VEHICULOS:['LEER'], CONDUCTORES:['LEER'], OPERACIONES:['LEER','CREAR','ACTUALIZAR'], CHECKIN:['LEER','CREAR'],
     GPS:['LEER','CREAR'], HISTORIAL:['LEER'], DOCUMENTOS:['LEER'], ALERTAS:['LEER','ACTUALIZAR'],
     QR:['LEER','ACTUALIZAR'], RUTAS:['LEER','ACTUALIZAR'], NOTIFICACIONES:['LEER','ACTUALIZAR'],
     CONEXIONES:['LEER','CREAR','ACTUALIZAR']
@@ -980,19 +1081,19 @@ function limpiarDatosOperativosServicio_(request, session) {
   exigirPermiso_(session.user, 'CONFIGURACION', 'ELIMINAR');
   if (String(request.confirmacion || '') !== 'LIMPIAR DATOS') throw new Error('CONFIRMACION_REQUERIDA');
   PropertiesService.getScriptProperties().deleteProperty('GPS_ACTUAL_MIGRADO_' + VERSION_APLICACION);
-  ['VEHICULOS','CONDUCTORES','OPERACIONES','GPS','GPS_ACTUAL','HISTORIAL','MANTENCIONES','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','QR','RUTAS','NOTIFICACIONES','CONEXIONES'].forEach(limpiarHojaDatos_);
+  ['VEHICULOS','CONDUCTORES','OPERACIONES','CHECKINS','GPS','GPS_ACTUAL','HISTORIAL','MANTENCIONES','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','QR','RUTAS','NOTIFICACIONES','CONEXIONES'].forEach(limpiarHojaDatos_);
   registrarBitacora_(session.user, 'LIMPIAR', 'CONFIGURACION', '', 'Datos operativos eliminados; usuarios y empresa conservados');
   return ok_({ cleared: true });
 }
 
-// ===== 10_Usuarios.gs =====
+/* ===== 10_Usuarios.gs ===== */
 /** Módulo Usuarios. Las operaciones CRUD se enrutan mediante create/update/list/delete. */
 function listarUsuarios_(session) {
   exigirPermiso_(session.user, 'USUARIOS', 'LEER');
   return listarRegistros_('USUARIOS', {}).map(usuarioPublico_);
 }
 
-// ===== 11_Vehiculos.gs =====
+/* ===== 11_Vehiculos.gs ===== */
 /** Módulo Vehículos. */
 function obtenerVehiculoPorQr_(code) {
   const normalized = String(code || '').trim().toUpperCase();
@@ -1028,14 +1129,94 @@ function validarQrVehiculo_(request, session) {
   return ok_({ row: limpiarSalidaRecurso_('VEHICULOS', vehicle), autorizacionQr:authorization, validaPorSegundos:300 });
 }
 
-// ===== 12_Conductores.gs =====
+/* ===== 12_Conductores.gs ===== */
 /** Módulo Conductores. */
 function obtenerConductorDeUsuario_(userId) {
   return listarRegistros_('CONDUCTORES', {}).find(function(row) { return row.USUARIO_ID === userId; }) || null;
 }
 
-// ===== 13_Operaciones.gs =====
-/** Inicio y finalización de operaciones. */
+/* ===== 13_Operaciones.gs ===== */
+/** Inicio y finalización de operaciones con validación geográfica. */
+function numeroUbicacionOperacion_(value, field) {
+  const number = Number(value);
+  if (!isFinite(number)) throw new Error('UBICACION_OPERACION_REQUERIDA');
+  if ((field === 'LATITUD' && (number < -90 || number > 90)) || (field === 'LONGITUD' && (number < -180 || number > 180))) {
+    throw new Error('COORDENADAS_INVALIDAS');
+  }
+  return number;
+}
+
+function distanciaGeograficaMetros_(lat1, lng1, lat2, lng2) {
+  const radius = 6371000;
+  const radians = function(value) { return Number(value) * Math.PI / 180; };
+  const dLat = radians(lat2 - lat1);
+  const dLng = radians(lng2 - lng1);
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+    + Math.cos(radians(lat1)) * Math.cos(radians(lat2))
+    * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return 2 * radius * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function obtenerPuntoOperacionConfigurado_() {
+  const company = listarRegistros_('EMPRESAS', {})[0] || null;
+  if (!company) throw new Error('PUNTO_OPERACION_NO_CONFIGURADO');
+  const enabled = String(company.VALIDAR_UBICACION_OPERACION || 'SI') !== 'NO';
+  if (!enabled) throw new Error('VALIDACION_UBICACION_DESACTIVADA');
+  const latitudeText = String(company.PUNTO_OPERACION_LATITUD == null ? '' : company.PUNTO_OPERACION_LATITUD).trim();
+  const longitudeText = String(company.PUNTO_OPERACION_LONGITUD == null ? '' : company.PUNTO_OPERACION_LONGITUD).trim();
+  const latitude = Number(latitudeText);
+  const longitude = Number(longitudeText);
+  if (!latitudeText || !longitudeText || !isFinite(latitude) || !isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    throw new Error('PUNTO_OPERACION_NO_CONFIGURADO');
+  }
+  return {
+    NOMBRE: String(company.PUNTO_OPERACION_NOMBRE || 'Base operacional').trim(),
+    DIRECCION: String(company.PUNTO_OPERACION_DIRECCION || company.DIRECCION || 'Base operacional').trim(),
+    LATITUD: latitude,
+    LONGITUD: longitude,
+    RADIO_INICIO_METROS: Math.max(10, Number(company.RADIO_INICIO_METROS || 150)),
+    RADIO_FIN_METROS: Math.max(10, Number(company.RADIO_FIN_METROS || 150)),
+    PRECISION_GPS_MAXIMA_METROS: Math.max(10, Number(company.PRECISION_GPS_MAXIMA_METROS || 120)),
+    RETORNO_BASE_OBLIGATORIO: String(company.RETORNO_BASE_OBLIGATORIO || 'SI') !== 'NO' ? 'SI' : 'NO'
+  };
+}
+
+function validarUbicacionEnPuntoOperacion_(data, point, phase) {
+  const prefix = phase === 'FIN' ? 'FIN_' : 'INICIO_';
+  const latitude = numeroUbicacionOperacion_(data[prefix + 'LATITUD'] || data.LATITUD, 'LATITUD');
+  const longitude = numeroUbicacionOperacion_(data[prefix + 'LONGITUD'] || data.LONGITUD, 'LONGITUD');
+  const accuracy = Number(data[prefix + 'PRECISION'] || data.PRECISION || 0);
+  if (!isFinite(accuracy) || accuracy <= 0) throw new Error('PRECISION_GPS_REQUERIDA');
+  if (accuracy > point.PRECISION_GPS_MAXIMA_METROS) throw new Error('UBICACION_GPS_IMPRECISA');
+  const distance = distanciaGeograficaMetros_(latitude, longitude, point.LATITUD, point.LONGITUD);
+  const allowedRadius = phase === 'FIN' ? point.RADIO_FIN_METROS : point.RADIO_INICIO_METROS;
+  if (distance > allowedRadius) throw new Error(phase === 'FIN' ? 'FUERA_DEL_PUNTO_DE_FINALIZACION' : 'FUERA_DEL_PUNTO_DE_INICIO');
+  return {
+    LATITUD: latitude,
+    LONGITUD: longitude,
+    PRECISION: Math.round(accuracy * 10) / 10,
+    DISTANCIA_METROS: Math.round(distance * 10) / 10,
+    RADIO_PERMITIDO: allowedRadius,
+    ESTADO: 'VALIDADA'
+  };
+}
+
+function obtenerRutaParaOperacion_(data, vehicle, driver, session) {
+  const routeId = String(data.RUTA_ID || '').trim();
+  if (!routeId) return null;
+  const route = obtenerRegistro_('RUTAS', routeId);
+  if (!route) throw new Error('RUTA_NO_ENCONTRADA');
+  if (!filtrarPorUsuario_('RUTAS', [route], session.user).length) throw new Error('PERMISO_DENEGADO');
+  if (['Asignada','En curso'].indexOf(String(route.ESTADO || '')) < 0) throw new Error('RUTA_NO_DISPONIBLE');
+  if (String(route.CONDUCTOR_ID || '') !== String(driver.ID)) throw new Error('RUTA_NO_COINCIDE_CONDUCTOR');
+  if (route.VEHICULO_ID && String(route.VEHICULO_ID) !== String(vehicle.ID)) throw new Error('RUTA_NO_COINCIDE_VEHICULO');
+  if (route.OPERACION_ID) {
+    const linked = obtenerRegistro_('OPERACIONES', route.OPERACION_ID);
+    if (linked && linked.ESTADO === 'Activa') throw new Error('RUTA_YA_VINCULADA');
+  }
+  return route;
+}
+
 function iniciarOperacion_(request, session) {
   exigirPermiso_(session.user, 'OPERACIONES', 'CREAR');
   const data = request.datos || request;
@@ -1053,31 +1234,70 @@ function iniciarOperacion_(request, session) {
     }
     CacheService.getScriptCache().remove(cacheKey);
   }
-  validarRequeridos_(data, ['VEHICULO_ID','CONDUCTOR_ID','DESTINO']);
+  validarRequeridos_(data, ['VEHICULO_ID','CONDUCTOR_ID']);
   const vehicle = obtenerRegistro_('VEHICULOS', data.VEHICULO_ID);
   const driver = obtenerRegistro_('CONDUCTORES', data.CONDUCTOR_ID);
   if (!vehicle || vehicle.ESTADO !== 'Disponible') throw new Error('VEHICULO_NO_DISPONIBLE');
   if (!driver || driver.ESTADO !== 'Disponible') throw new Error('CONDUCTOR_NO_DISPONIBLE');
+  const checkin = validarCheckinParaOperacion_(data.CHECKIN_ID, vehicle.ID, driver.ID);
+  const point = obtenerPuntoOperacionConfigurado_();
+  const startLocation = validarUbicacionEnPuntoOperacion_(data, point, 'INICIO');
+  const route = obtenerRutaParaOperacion_(data, vehicle, driver, session);
+  const destination = route ? String(route.DESTINO || point.DIRECCION) : point.DIRECCION;
+  const operationType = route ? 'Ruta asignada con retorno a base' : 'Salida y regreso a base';
 
   const operation = insertarRegistro_('OPERACIONES', {
     VEHICULO_ID: vehicle.ID,
     CONDUCTOR_ID: driver.ID,
-    ORIGEN: data.ORIGEN || 'Ubicación actual',
-    DESTINO: data.DESTINO,
+    ORIGEN: point.DIRECCION,
+    DESTINO: destination,
     FECHA_INICIO: new Date(),
     ESTADO: 'Activa',
     KM_INICIO: Number(data.KM_INICIO || vehicle.KILOMETRAJE || 0),
     OBSERVACIONES: data.OBSERVACIONES || '',
     CREADO_POR: session.user.ID,
     ELIMINADO: 'NO',
+    CHECKIN_ID: checkin.ID,
+    RUTA_ID: route ? route.ID : '',
+    TIPO_OPERACION: operationType,
+    PUNTO_RETORNO: point.DIRECCION,
+    BASE_NOMBRE: point.NOMBRE,
+    BASE_DIRECCION: point.DIRECCION,
+    BASE_LATITUD: point.LATITUD,
+    BASE_LONGITUD: point.LONGITUD,
+    RADIO_INICIO_METROS: point.RADIO_INICIO_METROS,
+    RADIO_FIN_METROS: point.RADIO_FIN_METROS,
+    PRECISION_GPS_MAXIMA_METROS: point.PRECISION_GPS_MAXIMA_METROS,
+    INICIO_LATITUD: startLocation.LATITUD,
+    INICIO_LONGITUD: startLocation.LONGITUD,
+    INICIO_PRECISION: startLocation.PRECISION,
+    DISTANCIA_INICIO_BASE_METROS: startLocation.DISTANCIA_METROS,
+    VALIDACION_INICIO: 'VALIDADA'
   }, 'OPE');
   actualizarRegistro_('VEHICULOS', vehicle.ID, { ESTADO:'En ruta' });
   actualizarRegistro_('CONDUCTORES', driver.ID, { ESTADO:'En viaje' });
+  consumirCheckinOperacion_(checkin.ID, operation.ID);
+  if (route) {
+    actualizarRegistro_('RUTAS', route.ID, {
+      OPERACION_ID: operation.ID,
+      VEHICULO_ID: vehicle.ID,
+      ORIGEN: point.DIRECCION,
+      ORIGEN_LATITUD: point.LATITUD,
+      ORIGEN_LONGITUD: point.LONGITUD,
+      ESTADO: 'En curso',
+      FECHA_INICIO: route.FECHA_INICIO || new Date()
+    });
+  }
   insertarRegistro_('HISTORIAL', {
-    OPERACION_ID: operation.ID, EVENTO:'INICIO', DETALLE:'Operación iniciada', FECHA_HORA:new Date(), USUARIO_ID:session.user.ID, ELIMINADO:'NO'
+    OPERACION_ID: operation.ID,
+    EVENTO:'INICIO',
+    DETALLE:'Operación iniciada en punto autorizado a ' + startLocation.DISTANCIA_METROS + ' m de la base',
+    FECHA_HORA:new Date(),
+    USUARIO_ID:session.user.ID,
+    ELIMINADO:'NO'
   }, 'HIS');
-  registrarBitacora_(session.user, 'INICIAR', 'OPERACIONES', operation.ID, vehicle.PATENTE + ' / ' + driver.NOMBRE);
-  return ok_({ row: operation });
+  registrarBitacora_(session.user, 'INICIAR', 'OPERACIONES', operation.ID, vehicle.PATENTE + ' / ' + driver.NOMBRE + ' / ubicación validada');
+  return ok_({ row: limpiarSalidaRecurso_('OPERACIONES', operation), locationValidation:startLocation, base:point });
 }
 
 function finalizarOperacion_(request, session) {
@@ -1085,25 +1305,57 @@ function finalizarOperacion_(request, session) {
   const operation = obtenerRegistro_('OPERACIONES', request.identificador || request.OPERACION_ID);
   if (!operation || operation.ESTADO !== 'Activa') throw new Error('OPERACION_NO_ACTIVA');
   if (!filtrarPorUsuario_('OPERACIONES', [operation], session.user).length) throw new Error('PERMISO_DENEGADO');
-  const kmEnd = Number(request.KM_FIN || operation.KM_INICIO || 0);
+  const currentPoint = obtenerPuntoOperacionConfigurado_();
+  const snapshotLatitudeText = String(operation.BASE_LATITUD == null ? '' : operation.BASE_LATITUD).trim();
+  const snapshotLongitudeText = String(operation.BASE_LONGITUD == null ? '' : operation.BASE_LONGITUD).trim();
+  const hasSnapshot = Boolean(snapshotLatitudeText && snapshotLongitudeText);
+  const point = {
+    NOMBRE: hasSnapshot ? (operation.BASE_NOMBRE || currentPoint.NOMBRE) : currentPoint.NOMBRE,
+    DIRECCION: hasSnapshot ? (operation.BASE_DIRECCION || operation.PUNTO_RETORNO || operation.ORIGEN || currentPoint.DIRECCION) : currentPoint.DIRECCION,
+    LATITUD: hasSnapshot ? Number(snapshotLatitudeText) : currentPoint.LATITUD,
+    LONGITUD: hasSnapshot ? Number(snapshotLongitudeText) : currentPoint.LONGITUD,
+    RADIO_INICIO_METROS: hasSnapshot ? Number(operation.RADIO_INICIO_METROS || currentPoint.RADIO_INICIO_METROS) : currentPoint.RADIO_INICIO_METROS,
+    RADIO_FIN_METROS: hasSnapshot ? Number(operation.RADIO_FIN_METROS || currentPoint.RADIO_FIN_METROS) : currentPoint.RADIO_FIN_METROS,
+    PRECISION_GPS_MAXIMA_METROS: hasSnapshot ? Math.max(10, Number(operation.PRECISION_GPS_MAXIMA_METROS || currentPoint.PRECISION_GPS_MAXIMA_METROS)) : currentPoint.PRECISION_GPS_MAXIMA_METROS,
+    RETORNO_BASE_OBLIGATORIO: 'SI'
+  };
+  if (!isFinite(point.LATITUD) || !isFinite(point.LONGITUD)) throw new Error('PUNTO_OPERACION_NO_CONFIGURADO');
+  const finishLocation = validarUbicacionEnPuntoOperacion_(request.datos || request, point, 'FIN');
+  const kmEnd = Number(request.KM_FIN || (request.datos || {}).KM_FIN || operation.KM_INICIO || 0);
   const kmStart = Number(operation.KM_INICIO || 0);
   const updated = actualizarRegistro_('OPERACIONES', operation.ID, {
     FECHA_FIN: new Date(),
     ESTADO: 'Finalizada',
     KM_FIN: kmEnd,
     DISTANCIA_KM: Math.max(0, kmEnd - kmStart),
-    OBSERVACIONES: request.OBSERVACIONES || operation.OBSERVACIONES || '',
+    OBSERVACIONES: request.OBSERVACIONES || (request.datos || {}).OBSERVACIONES || operation.OBSERVACIONES || '',
+    FIN_LATITUD: finishLocation.LATITUD,
+    FIN_LONGITUD: finishLocation.LONGITUD,
+    FIN_PRECISION: finishLocation.PRECISION,
+    DISTANCIA_FIN_BASE_METROS: finishLocation.DISTANCIA_METROS,
+    VALIDACION_FIN: 'VALIDADA'
   });
   actualizarRegistro_('VEHICULOS', operation.VEHICULO_ID, { ESTADO:'Disponible', KILOMETRAJE:kmEnd });
   actualizarRegistro_('CONDUCTORES', operation.CONDUCTOR_ID, { ESTADO:'Disponible' });
+  if (operation.RUTA_ID) {
+    const route = obtenerRegistro_('RUTAS', operation.RUTA_ID);
+    if (route && ['Asignada','En curso'].indexOf(route.ESTADO) >= 0) {
+      actualizarRegistro_('RUTAS', route.ID, { ESTADO:'Completada', FECHA_FIN:new Date(), OPERACION_ID:operation.ID });
+    }
+  }
   insertarRegistro_('HISTORIAL', {
-    OPERACION_ID: operation.ID, EVENTO:'FIN', DETALLE:'Operación finalizada', FECHA_HORA:new Date(), USUARIO_ID:session.user.ID, ELIMINADO:'NO'
+    OPERACION_ID: operation.ID,
+    EVENTO:'FIN',
+    DETALLE:'Operación finalizada en punto autorizado a ' + finishLocation.DISTANCIA_METROS + ' m de la base',
+    FECHA_HORA:new Date(),
+    USUARIO_ID:session.user.ID,
+    ELIMINADO:'NO'
   }, 'HIS');
-  registrarBitacora_(session.user, 'FINALIZAR', 'OPERACIONES', operation.ID, 'Operación finalizada');
-  return ok_({ row: updated });
+  registrarBitacora_(session.user, 'FINALIZAR', 'OPERACIONES', operation.ID, 'Operación finalizada con ubicación validada');
+  return ok_({ row: limpiarSalidaRecurso_('OPERACIONES', updated), locationValidation:finishLocation, base:point });
 }
 
-// ===== 14_GPS.gs =====
+/* ===== 14_GPS.gs ===== */
 /** Registro rápido de posición actual y conservación espaciada del historial GPS. */
 function obtenerHojaGpsActual_() {
   try {
@@ -1386,7 +1638,7 @@ function obtenerDireccionCoordenadas_(latitude, longitude) {
   return address;
 }
 
-// ===== 15_Mantenciones.gs =====
+/* ===== 15_Mantenciones.gs ===== */
 /** Módulo de mantenciones. */
 function mantencionesAbiertas_() {
   return listarRegistros_('MANTENCIONES', {}).filter(function(row) {
@@ -1394,7 +1646,7 @@ function mantencionesAbiertas_() {
   });
 }
 
-// ===== 16_Documentos.gs =====
+/* ===== 16_Documentos.gs ===== */
 /** Módulo de documentos y vencimientos. */
 function actualizarEstadosDocumentos_() {
   const today = new Date();
@@ -1407,7 +1659,7 @@ function actualizarEstadosDocumentos_() {
   });
 }
 
-// ===== 17_Alertas.gs =====
+/* ===== 17_Alertas.gs ===== */
 /** Módulo de alertas. */
 function crearAlerta_(data) {
   return insertarRegistro_('ALERTAS', {
@@ -1417,7 +1669,7 @@ function crearAlerta_(data) {
   }, 'ALT');
 }
 
-// ===== 18_Reportes.gs =====
+/* ===== 18_Reportes.gs ===== */
 /** Panel principal y datos de reportes. */
 function panelPrincipal_(session) {
   exigirPermiso_(session.user, 'PANEL_PRINCIPAL', 'LEER');
@@ -1435,6 +1687,7 @@ function panelPrincipal_(session) {
   const routes = visibleRows('RUTAS', 'RUTAS');
   const notifications = visibleRows('NOTIFICACIONES', 'NOTIFICACIONES')
     .filter(function(row) { return row.LEIDA !== 'SI'; });
+  const checkins = visibleRows('CHECKINS', 'CHECKIN');
   const activeLimit = Date.now() - CONFIGURACION_APLICACION.SEGUNDOS_CONEXION_ACTIVA * 1000;
   const connections = visibleRows('CONEXIONES', 'CONEXIONES')
     .filter(function(row) {
@@ -1453,6 +1706,9 @@ function panelPrincipal_(session) {
       assignedRoutes: routes.filter(function(row) { return row.ESTADO === 'Asignada' || row.ESTADO === 'En curso'; }).length,
       unreadNotifications: notifications.length,
       onlineDevices: connections.length,
+      pendingCheckins: checkins.filter(function(row) { return row.ESTADO_REVISION === 'Pendiente' && row.UTILIZADO !== 'SI'; }).length,
+      blockedCheckins: checkins.filter(function(row) { return row.ESTADO_REVISION === 'Bloqueado' && row.UTILIZADO !== 'SI'; }).length,
+      approvedCheckins: checkins.filter(function(row) { return row.ESTADO_REVISION === 'Aprobado' && row.UTILIZADO !== 'SI' && new Date(row.VIGENTE_HASTA || 0).getTime() > Date.now(); }).length,
     },
     recentOperations: operations.slice(-10).reverse(),
     alerts: alerts.slice(-10).reverse(),
@@ -1500,7 +1756,7 @@ function contarPorEstado_(rows) {
   }).sort(function(a, b) { return b.TOTAL - a.TOTAL; });
 }
 
-// ===== 19_Auditoria.gs =====
+/* ===== 19_Auditoria.gs ===== */
 /** Bitácora de auditoría. */
 function registrarBitacora_(user, action, moduleName, recordId, detail) {
   try {
@@ -1520,10 +1776,62 @@ function registrarBitacora_(user, action, moduleName, recordId, detail) {
   }
 }
 
-// ===== 20_Empresa_y_Configuracion.gs =====
+/* ===== 20_Empresa_y_Configuracion.gs ===== */
 /** Configuración y parámetros. */
+
+const CAMPOS_COLOR_TEMA_EMPRESA_ = [
+  'COLOR_PRINCIPAL','COLOR_SECUNDARIO','COLOR_ACENTO','COLOR_FONDO','COLOR_SUPERFICIE','COLOR_TEXTO','COLOR_TEXTO_SECUNDARIO','COLOR_BORDE',
+  'COLOR_MENU','COLOR_MENU_SECUNDARIO','COLOR_EXITO','COLOR_ADVERTENCIA','COLOR_PELIGRO','COLOR_FONDO_OSCURO','COLOR_SUPERFICIE_OSCURO',
+  'COLOR_TEXTO_OSCURO','COLOR_TEXTO_SECUNDARIO_OSCURO','COLOR_BORDE_OSCURO'
+];
+function validarTemaEmpresa_(data) {
+  CAMPOS_COLOR_TEMA_EMPRESA_.forEach(function(campo) {
+    if (!Object.prototype.hasOwnProperty.call(data, campo) || data[campo] === '') return;
+    const value = String(data[campo] || '').trim().toUpperCase();
+    if (!/^#[0-9A-F]{6}$/.test(value)) throw new Error('COLOR_TEMA_INVALIDO_' + campo);
+    data[campo] = value;
+  });
+  if (Object.prototype.hasOwnProperty.call(data, 'TEMA_PREDETERMINADO')) {
+    const mode = String(data.TEMA_PREDETERMINADO || 'Sistema');
+    if (['Claro','Oscuro','Sistema'].indexOf(mode) < 0) throw new Error('TEMA_PREDETERMINADO_INVALIDO');
+    data.TEMA_PREDETERMINADO = mode;
+  }
+  return data;
+}
+
+
+function validarPuntoOperacionEmpresa_(data, current) {
+  const merged = Object.assign({}, current || {}, data || {});
+  const enabled = String(merged.VALIDAR_UBICACION_OPERACION || 'SI') !== 'NO';
+  if (Object.prototype.hasOwnProperty.call(data, 'VALIDAR_UBICACION_OPERACION')) data.VALIDAR_UBICACION_OPERACION = enabled ? 'SI' : 'NO';
+  if (Object.prototype.hasOwnProperty.call(data, 'RETORNO_BASE_OBLIGATORIO')) data.RETORNO_BASE_OBLIGATORIO = String(data.RETORNO_BASE_OBLIGATORIO || 'SI') === 'NO' ? 'NO' : 'SI';
+  ['PUNTO_OPERACION_LATITUD','PUNTO_OPERACION_LONGITUD'].forEach(function(field) {
+    if (!Object.prototype.hasOwnProperty.call(data, field) || data[field] === '') return;
+    const value = Number(data[field]);
+    if (!isFinite(value)) throw new Error('COORDENADAS_INVALIDAS');
+    if (field.indexOf('LATITUD') >= 0 && (value < -90 || value > 90)) throw new Error('COORDENADAS_INVALIDAS');
+    if (field.indexOf('LONGITUD') >= 0 && (value < -180 || value > 180)) throw new Error('COORDENADAS_INVALIDAS');
+    data[field] = value;
+  });
+  ['RADIO_INICIO_METROS','RADIO_FIN_METROS','PRECISION_GPS_MAXIMA_METROS'].forEach(function(field) {
+    if (!Object.prototype.hasOwnProperty.call(data, field) || data[field] === '') return;
+    const value = Math.round(Number(data[field]));
+    if (!isFinite(value) || value < 10 || value > 5000) throw new Error('RADIO_OPERACION_INVALIDO');
+    data[field] = value;
+  });
+  if (enabled && (Object.prototype.hasOwnProperty.call(data, 'PUNTO_OPERACION_LATITUD') || Object.prototype.hasOwnProperty.call(data, 'PUNTO_OPERACION_LONGITUD') || Object.prototype.hasOwnProperty.call(data, 'VALIDAR_UBICACION_OPERACION'))) {
+    const latitude = Number(Object.prototype.hasOwnProperty.call(data, 'PUNTO_OPERACION_LATITUD') ? data.PUNTO_OPERACION_LATITUD : merged.PUNTO_OPERACION_LATITUD);
+    const longitude = Number(Object.prototype.hasOwnProperty.call(data, 'PUNTO_OPERACION_LONGITUD') ? data.PUNTO_OPERACION_LONGITUD : merged.PUNTO_OPERACION_LONGITUD);
+    if (!isFinite(latitude) || !isFinite(longitude)) throw new Error('PUNTO_OPERACION_NO_CONFIGURADO');
+  }
+  return data;
+}
+
 function estadoSistema_() {
   const ss = obtenerSpreadsheet_();
+  try { obtenerHoja_('USUARIOS'); }
+  catch (error) { instalarSistema(); reiniciarCachesEjecucion_(); }
+  asegurarCatalogos_();
   const users = listarRegistros_('USUARIOS', {});
   const usersWithAccess = users.filter(usuarioTieneAccesoConfigurado_);
   const companies = listarRegistros_('EMPRESAS', {});
@@ -1532,6 +1840,7 @@ function estadoSistema_() {
     version: VERSION_APLICACION,
     spreadsheetName: ss.getName(),
     needsSetup: usersWithAccess.length === 0,
+    setupMode: usersWithAccess.length === 0 ? 'PRECONFIGURACION_AUTOMATICA' : 'ACCESO',
     company: companies.length ? limpiarSalidaRecurso_('EMPRESAS', companies[0]) : null,
     rows: {
       users: users.length,
@@ -1548,7 +1857,7 @@ function estadoSistema_() {
 function guardarEmpresaServicio_(request, session) {
   exigirPermiso_(session.user, 'CONFIGURACION', 'ACTUALIZAR');
   const current = listarRegistros_('EMPRESAS', {})[0] || null;
-  const data = normalizarEntradaRecurso_('EMPRESAS', request.datos || {}, session.user);
+  const data = validarPuntoOperacionEmpresa_(validarTemaEmpresa_(normalizarEntradaRecurso_('EMPRESAS', request.datos || {}, session.user)), current);
 
   if (String(request.eliminarLogotipo || '') === 'SI') {
     eliminarLogoAnterior_(current);
@@ -1613,7 +1922,7 @@ function eliminarLogoAnterior_(company) {
   try { DriveApp.getFileById(company.ID_ARCHIVO_LOGOTIPO).setTrashed(true); } catch (error) {}
 }
 
-// ===== 21_Tiempo_Real_Rutas_y_Notificaciones.gs =====
+/* ===== 21_Tiempo_Real_Rutas_y_Notificaciones.gs ===== */
 /**
  * Asignación de rutas, mensajería dirigida y presencia de dispositivos.
  * Google Apps Script no mantiene conexiones WebSocket; la interfaz consulta
@@ -1629,15 +1938,17 @@ function asignarRuta_(request, session) {
   if (data.VEHICULO_ID && !vehicle) throw new Error('VEHICULO_NO_ENCONTRADO');
   const provider = ['Google Maps','Waze'].indexOf(data.PROVEEDOR_NAVEGACION) >= 0
     ? data.PROVEEDOR_NAVEGACION : 'Google Maps';
+  let base = null;
+  try { base = obtenerPuntoOperacionConfigurado_(); } catch (error) { base = null; }
 
   const route = insertarRegistro_('RUTAS', {
     NOMBRE: data.NOMBRE || ('Ruta a ' + data.DESTINO),
     CONDUCTOR_ID: driver.ID,
     VEHICULO_ID: vehicle ? vehicle.ID : '',
     OPERACION_ID: data.OPERACION_ID || '',
-    ORIGEN: data.ORIGEN || 'Ubicación actual',
-    ORIGEN_LATITUD: data.ORIGEN_LATITUD || '',
-    ORIGEN_LONGITUD: data.ORIGEN_LONGITUD || '',
+    ORIGEN: data.ORIGEN || (base ? base.DIRECCION : 'Ubicación actual'),
+    ORIGEN_LATITUD: data.ORIGEN_LATITUD || (base ? base.LATITUD : ''),
+    ORIGEN_LONGITUD: data.ORIGEN_LONGITUD || (base ? base.LONGITUD : ''),
     DESTINO: data.DESTINO,
     DESTINO_LATITUD: data.DESTINO_LATITUD || '',
     DESTINO_LONGITUD: data.DESTINO_LONGITUD || '',
@@ -1894,7 +2205,308 @@ function resumenTiempoReal_(request, session) {
   });
 }
 
-// ===== 99_Utilidades.gs =====
+/* ===== 22_Checkin_Vehicular.gs ===== */
+/** Inspección preoperacional (check-in) de vehículos. */
+function catalogoCheckinVehicular_() {
+  return [
+    { id:'documentacion', categoria:'Documentación', item:'Documentos obligatorios vigentes y disponibles', critico:true },
+    { id:'luces', categoria:'Exterior', item:'Luces, intermitentes y señalización', critico:true },
+    { id:'frenos', categoria:'Seguridad', item:'Frenos de servicio y estacionamiento', critico:true },
+    { id:'direccion', categoria:'Seguridad', item:'Dirección sin juego, trabas ni ruidos anormales', critico:true },
+    { id:'neumaticos', categoria:'Exterior', item:'Neumáticos, presión, desgaste y rueda de repuesto', critico:true },
+    { id:'espejos_vidrios', categoria:'Exterior', item:'Espejos, parabrisas y vidrios con visibilidad segura', critico:true },
+    { id:'cinturones', categoria:'Cabina', item:'Cinturones de seguridad y asientos', critico:true },
+    { id:'bocina', categoria:'Cabina', item:'Bocina operativa', critico:false },
+    { id:'limpiaparabrisas', categoria:'Cabina', item:'Limpiaparabrisas y líquido lavador', critico:false },
+    { id:'aceite', categoria:'Motor y fluidos', item:'Nivel de aceite de motor', critico:true },
+    { id:'refrigerante', categoria:'Motor y fluidos', item:'Nivel de refrigerante y temperatura normal', critico:true },
+    { id:'fugas', categoria:'Motor y fluidos', item:'Ausencia de fugas de combustible, aceite o refrigerante', critico:true },
+    { id:'extintor', categoria:'Emergencia', item:'Extintor vigente y accesible', critico:true },
+    { id:'botiquin', categoria:'Emergencia', item:'Botiquín disponible', critico:false },
+    { id:'herramientas', categoria:'Emergencia', item:'Gata, triángulos y herramientas básicas', critico:false },
+    { id:'combustible', categoria:'Operación', item:'Combustible o carga suficiente para la ruta', critico:false },
+  ];
+}
+
+function normalizarListaCheckin_(valor) {
+  let recibidos = valor;
+  if (typeof recibidos === 'string') {
+    try { recibidos = JSON.parse(recibidos); }
+    catch (error) { throw new Error('CHECKIN_LISTA_INVALIDA'); }
+  }
+  if (!Array.isArray(recibidos)) throw new Error('CHECKIN_LISTA_INVALIDA');
+
+  const porId = {};
+  recibidos.forEach(function(item) {
+    if (item && item.id) porId[String(item.id)] = item;
+  });
+
+  return catalogoCheckinVehicular_().map(function(definicion) {
+    const recibido = porId[definicion.id] || {};
+    const respuesta = String(recibido.respuesta || '').toUpperCase();
+    if (['OK','FALLA','NA'].indexOf(respuesta) < 0) {
+      throw new Error('CHECKIN_ITEM_INCOMPLETO_' + definicion.id.toUpperCase());
+    }
+    const respuestaAjustada = definicion.critico && respuesta === 'NA' ? 'FALLA' : respuesta;
+    return {
+      id: definicion.id,
+      categoria: definicion.categoria,
+      item: definicion.item,
+      critico: definicion.critico,
+      respuesta: respuestaAjustada,
+      observacion: String(recibido.observacion || '').trim().slice(0, 500),
+    };
+  });
+}
+
+function asegurarPersistenciaCheckin_() {
+  ['CHECKINS','ALERTAS','BITACORA'].forEach(function(sheetName) {
+    asegurarHoja_(sheetName);
+  });
+}
+
+function buscarCheckinPorSolicitud_(solicitudClienteId, usuarioId) {
+  if (!solicitudClienteId) return null;
+  return listarRegistros_('CHECKINS', {}).find(function(row) {
+    return String(row.SOLICITUD_CLIENTE_ID || '') === String(solicitudClienteId) &&
+      String(row.CREADO_POR || '') === String(usuarioId || '');
+  }) || null;
+}
+
+function repararModuloCheckin() {
+  reiniciarCachesEjecucion_();
+  asegurarPersistenciaCheckin_();
+  SpreadsheetApp.flush();
+  const sheet = obtenerHoja_('CHECKINS');
+  return {
+    ok:true,
+    version:VERSION_APLICACION,
+    hoja:sheet.getName(),
+    filas:Math.max(0, sheet.getLastRow() - 1),
+    columnas:sheet.getLastColumn(),
+    message:'Módulo de check-in verificado y preparado para guardar registros.',
+  };
+}
+
+function crearCheckinVehicular_(request, session) {
+  exigirPermiso_(session.user, 'CHECKIN', 'CREAR');
+  asegurarPersistenciaCheckin_();
+
+  const data = Object.assign({}, request.datos || request || {});
+  if (session.user.ROL_ID === 'ROL-CONDUCTOR') {
+    const propio = obtenerConductorDeUsuario_(session.user.ID);
+    if (!propio) throw new Error('CONDUCTOR_NO_ASOCIADO');
+    data.CONDUCTOR_ID = propio.ID;
+  }
+  validarRequeridos_(data, ['VEHICULO_ID','CONDUCTOR_ID','KILOMETRAJE','LISTA_CODIFICADA']);
+  if (String(data.CONFIRMACION_CONDUCTOR || '') !== 'SI') throw new Error('CHECKIN_CONFIRMACION_REQUERIDA');
+
+  const solicitudClienteId = String(data.SOLICITUD_CLIENTE_ID || '').trim().slice(0, 120);
+  const existente = buscarCheckinPorSolicitud_(solicitudClienteId, session.user.ID);
+  if (existente) {
+    return ok_({
+      row:limpiarSalidaRecurso_('CHECKINS', existente),
+      catalogo:catalogoCheckinVehicular_(),
+      persistenciaConfirmada:true,
+      persistencia:'CENTRAL_CONFIRMADA',
+      duplicadoEvitado:true,
+      advertencias:[],
+    });
+  }
+
+  const vehiculo = obtenerRegistro_('VEHICULOS', data.VEHICULO_ID);
+  const conductor = obtenerRegistro_('CONDUCTORES', data.CONDUCTOR_ID);
+  if (!vehiculo) throw new Error('VEHICULO_NO_ENCONTRADO');
+  if (!conductor) throw new Error('CONDUCTOR_NO_ENCONTRADO');
+  if (vehiculo.ESTADO !== 'Disponible') throw new Error('VEHICULO_NO_DISPONIBLE');
+  if (conductor.ESTADO !== 'Disponible') throw new Error('CONDUCTOR_NO_DISPONIBLE');
+
+  const lista = normalizarListaCheckin_(data.LISTA_CODIFICADA);
+  const fallasCriticas = lista.filter(function(item) { return item.respuesta === 'FALLA' && item.critico; }).length;
+  const fallasLeves = lista.filter(function(item) { return item.respuesta === 'FALLA' && !item.critico; }).length;
+  const itemsOk = lista.filter(function(item) { return item.respuesta === 'OK'; }).length;
+  const ahora = new Date();
+  const vigenteHasta = new Date(ahora.getTime() + 12 * 60 * 60 * 1000);
+  const estadoRevision = fallasCriticas > 0 ? 'Bloqueado' : (fallasLeves > 0 ? 'Pendiente' : 'Aprobado');
+  const resultado = fallasCriticas > 0 ? 'Falla crítica' : (fallasLeves > 0 ? 'Con observaciones' : 'Conforme');
+
+  const row = insertarRegistro_('CHECKINS', {
+    VEHICULO_ID: vehiculo.ID,
+    CONDUCTOR_ID: conductor.ID,
+    OPERACION_ID: '',
+    FECHA_HORA: ahora,
+    KILOMETRAJE: Number(data.KILOMETRAJE || vehiculo.KILOMETRAJE || 0),
+    NIVEL_COMBUSTIBLE: String(data.NIVEL_COMBUSTIBLE || 'No informado').slice(0, 40),
+    LISTA_CODIFICADA: JSON.stringify(lista),
+    TOTAL_ITEMS: lista.length,
+    ITEMS_OK: itemsOk,
+    FALLAS_LEVES: fallasLeves,
+    FALLAS_CRITICAS: fallasCriticas,
+    RESULTADO: resultado,
+    ESTADO_REVISION: estadoRevision,
+    OBSERVACIONES: String(data.OBSERVACIONES || '').slice(0, 1500),
+    FIRMA_CONDUCTOR: String(data.FIRMA_CONDUCTOR || session.user.NOMBRE || conductor.NOMBRE).slice(0, 180),
+    REVISADO_POR: estadoRevision === 'Aprobado' ? session.user.ID : '',
+    FECHA_REVISION: estadoRevision === 'Aprobado' ? ahora : '',
+    COMENTARIO_REVISION: estadoRevision === 'Aprobado' ? 'Aprobación automática sin fallas detectadas.' : '',
+    VIGENTE_HASTA: vigenteHasta,
+    UTILIZADO: 'NO',
+    CREADO_POR: session.user.ID,
+    ELIMINADO: 'NO',
+    SOLICITUD_CLIENTE_ID: solicitudClienteId,
+  }, 'CHK');
+
+  SpreadsheetApp.flush();
+  invalidarCacheHoja_('CHECKINS');
+  const confirmado = obtenerRegistro_('CHECKINS', row.ID);
+  if (!confirmado) throw new Error('CHECKIN_NO_CONFIRMADO_EN_BASE_CENTRAL');
+
+  const advertencias = [];
+  if (fallasCriticas > 0 || fallasLeves > 0) {
+    try {
+      const critica = fallasCriticas > 0;
+      insertarRegistro_('ALERTAS', {
+        TIPO:'Check-in vehicular',
+        NIVEL: critica ? 'Crítica' : 'Advertencia',
+        TITULO: critica ? 'Vehículo bloqueado por inspección' : 'Check-in pendiente de revisión',
+        MENSAJE: vehiculo.PATENTE + ': ' + fallasCriticas + ' falla(s) crítica(s) y ' + fallasLeves + ' observación(es) leve(s).',
+        MODULO:'CHECKIN',
+        REGISTRO_ID:confirmado.ID,
+        LEIDA:'NO',
+        USUARIO_ID:'',
+        FECHA_HORA:ahora,
+        ELIMINADO:'NO',
+      }, 'ALT');
+    } catch (errorAlerta) {
+      advertencias.push('ALERTA_NO_GENERADA');
+      console.error(errorAlerta && errorAlerta.stack ? errorAlerta.stack : errorAlerta);
+    }
+  }
+
+  try {
+    registrarBitacora_(session.user, 'CREAR', 'CHECKIN', confirmado.ID, vehiculo.PATENTE + ' · ' + resultado);
+  } catch (errorBitacora) {
+    advertencias.push('BITACORA_NO_GENERADA');
+    console.error(errorBitacora && errorBitacora.stack ? errorBitacora.stack : errorBitacora);
+  }
+
+  return ok_({
+    row:limpiarSalidaRecurso_('CHECKINS', confirmado),
+    catalogo:catalogoCheckinVehicular_(),
+    persistenciaConfirmada:true,
+    persistencia:'CENTRAL_CONFIRMADA',
+    duplicadoEvitado:false,
+    advertencias:advertencias,
+  });
+}
+
+function revisarCheckinVehicular_(request, session) {
+  exigirPermiso_(session.user, 'CHECKIN_APROBACIONES', 'ACTUALIZAR');
+  const id = request.identificador || request.CHECKIN_ID || (request.datos && request.datos.CHECKIN_ID);
+  const data = request.datos || request || {};
+  const decision = String(data.DECISION || '').toUpperCase();
+  if (['APROBAR','RECHAZAR'].indexOf(decision) < 0) throw new Error('CHECKIN_DECISION_INVALIDA');
+  const checkin = obtenerRegistro_('CHECKINS', id);
+  if (!checkin) throw new Error('CHECKIN_NO_ENCONTRADO');
+  if (checkin.UTILIZADO === 'SI') throw new Error('CHECKIN_YA_UTILIZADO');
+  if (decision === 'APROBAR' && Number(checkin.FALLAS_CRITICAS || 0) > 0) throw new Error('CHECKIN_CRITICO_NO_APROBABLE');
+
+  const ahora = new Date();
+  const nuevoEstado = decision === 'APROBAR' ? 'Aprobado' : 'Rechazado';
+  const actualizado = actualizarRegistro_('CHECKINS', checkin.ID, {
+    ESTADO_REVISION: nuevoEstado,
+    REVISADO_POR: session.user.ID,
+    FECHA_REVISION: ahora,
+    COMENTARIO_REVISION: String(data.COMENTARIO_REVISION || '').slice(0, 1000),
+    VIGENTE_HASTA: decision === 'APROBAR' ? new Date(ahora.getTime() + 12 * 60 * 60 * 1000) : checkin.VIGENTE_HASTA,
+  });
+
+  const conductor = obtenerRegistro_('CONDUCTORES', checkin.CONDUCTOR_ID);
+  if (conductor && conductor.USUARIO_ID) {
+    insertarRegistro_('NOTIFICACIONES', {
+      DESTINATARIO_USUARIO_ID:conductor.USUARIO_ID,
+      DESTINATARIO_CONDUCTOR_ID:conductor.ID,
+      TITULO:'Check-in ' + nuevoEstado.toLowerCase(),
+      MENSAJE:'La inspección ' + checkin.ID + ' fue ' + nuevoEstado.toLowerCase() + '. ' + String(data.COMENTARIO_REVISION || ''),
+      TIPO:'Seguridad',
+      PRIORIDAD: decision === 'APROBAR' ? 'Normal' : 'Alta',
+      LEIDA:'NO',
+      FECHA_ENVIO:ahora,
+      CREADO_POR:session.user.ID,
+      ELIMINADO:'NO',
+    }, 'NOT');
+  }
+
+  registrarBitacora_(session.user, decision, 'CHECKIN_APROBACIONES', checkin.ID, String(data.COMENTARIO_REVISION || nuevoEstado));
+  return ok_({ row: limpiarSalidaRecurso_('CHECKINS', actualizado) });
+}
+
+function checkinsDisponibles_(request, session) {
+  exigirPermiso_(session.user, 'OPERACIONES', 'CREAR');
+  const data = request.datos || request || {};
+  let conductorId = String(data.CONDUCTOR_ID || '');
+  if (session.user.ROL_ID === 'ROL-CONDUCTOR') {
+    const propio = obtenerConductorDeUsuario_(session.user.ID);
+    if (!propio) throw new Error('CONDUCTOR_NO_ASOCIADO');
+    conductorId = propio.ID;
+  }
+  const vehiculoId = String(data.VEHICULO_ID || '');
+  const ahora = Date.now();
+  let rows = listarRegistros_('CHECKINS', {}).filter(function(row) {
+    const vigente = new Date(row.VIGENTE_HASTA || 0).getTime();
+    return row.ESTADO_REVISION === 'Aprobado' && row.UTILIZADO !== 'SI' && vigente > ahora &&
+      (!vehiculoId || row.VEHICULO_ID === vehiculoId) && (!conductorId || row.CONDUCTOR_ID === conductorId);
+  });
+  rows = filtrarPorUsuario_('CHECKINS', rows, session.user);
+  rows.sort(function(a,b) { return new Date(b.FECHA_HORA || 0) - new Date(a.FECHA_HORA || 0); });
+  return ok_({ rows:rows.slice(0, 50), total:rows.length });
+}
+
+function validarCheckinParaOperacion_(checkinId, vehiculoId, conductorId) {
+  if (!checkinId) throw new Error('CHECKIN_REQUERIDO');
+  const checkin = obtenerRegistro_('CHECKINS', checkinId);
+  if (!checkin) throw new Error('CHECKIN_NO_ENCONTRADO');
+  if (checkin.VEHICULO_ID !== vehiculoId || checkin.CONDUCTOR_ID !== conductorId) throw new Error('CHECKIN_NO_COINCIDE');
+  if (checkin.ESTADO_REVISION !== 'Aprobado') throw new Error('CHECKIN_NO_APROBADO');
+  if (checkin.UTILIZADO === 'SI') throw new Error('CHECKIN_YA_UTILIZADO');
+  if (new Date(checkin.VIGENTE_HASTA || 0).getTime() <= Date.now()) throw new Error('CHECKIN_EXPIRADO');
+  return checkin;
+}
+
+function consumirCheckinOperacion_(checkinId, operacionId) {
+  return actualizarRegistro_('CHECKINS', checkinId, { OPERACION_ID:operacionId, UTILIZADO:'SI' });
+}
+
+/* ===== 23_Permisos_Usuario.gs ===== */
+/** Permisos personalizados por usuario sin invalidar su sesión. */
+function actualizarPermisosUsuario_(request, session) {
+  exigirPermiso_(session.user, 'USUARIOS', 'ACTUALIZAR');
+  const data = request.datos || request;
+  const userId = String(data.USUARIO_ID || request.identificador || '').trim();
+  if (!userId) throw new Error('USUARIO_REQUERIDO');
+  const user = obtenerRegistro_('USUARIOS', userId);
+  if (!user) throw new Error('REGISTRO_NO_ENCONTRADO');
+  if (user.ROL_ID === 'ROL-ADMIN') {
+    const updatedAdmin = actualizarRegistro_('USUARIOS', user.ID, {
+      MODO_PERMISOS:'ROL',
+      PERMISOS_PERSONALIZADOS:'[]',
+      VERSION_PERMISOS:Number(user.VERSION_PERMISOS || 0) + 1,
+    });
+    return ok_({ row:usuarioPublico_(updatedAdmin), admin:true });
+  }
+  const modo = String(data.MODO_PERMISOS || 'ROL').toUpperCase() === 'PERSONALIZADO' ? 'PERSONALIZADO' : 'ROL';
+  const permisos = modo === 'PERSONALIZADO' ? normalizarListaPermisos_(data.PERMISOS || data.PERMISOS_PERSONALIZADOS || []) : [];
+  const updated = actualizarRegistro_('USUARIOS', user.ID, {
+    MODO_PERMISOS:modo,
+    PERMISOS_PERSONALIZADOS:JSON.stringify(permisos),
+    VERSION_PERMISOS:Number(user.VERSION_PERMISOS || 0) + 1,
+  });
+  registrarBitacora_(session.user, 'ACTUALIZAR_PERMISOS', 'USUARIOS', user.ID,
+    modo === 'PERSONALIZADO' ? 'Permisos personalizados actualizados sin cerrar sesiones' : 'Permisos restaurados al rol');
+  return ok_({ row:usuarioPublico_(updated), sessionPreserved:true });
+}
+
+/* ===== 99_Utilidades.gs ===== */
 /** Utilidades compartidas. */
 function parsearSolicitud_(e) {
   if (!e) return {};

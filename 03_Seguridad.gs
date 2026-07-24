@@ -15,31 +15,64 @@ function usuarioTieneAccesoConfigurado_(usuario) {
 }
 
 function instalarSistemaInicial_(request) {
-  const users = listarRegistros_('USUARIOS', {});
-  if (users.some(usuarioTieneAccesoConfigurado_)) throw new Error('SISTEMA_YA_INICIALIZADO');
-  const claveEsperada = obtenerOCrearClaveInstalacion_();
-  if (String(request.claveInstalacion || '') !== claveEsperada) throw new Error('CLAVE_INSTALACION_INVALIDA');
-  validarRequeridos_(request, ['nombre','correo']);
-  const contrasena = validarContrasenaElegida_(request.contrasena);
+  // La instalación prepara hojas y catálogos antes de tomar el bloqueo final.
+  // Esto evita intentar adquirir el mismo ScriptLock de forma anidada.
+  instalarSistema();
+  reiniciarCachesEjecucion_();
+  const bloqueo = LockService.getScriptLock();
+  bloqueo.waitLock(30000);
+  try {
+    const users = listarRegistros_('USUARIOS', {});
+    if (users.some(usuarioTieneAccesoConfigurado_)) throw new Error('SISTEMA_YA_INICIALIZADO');
+    validarRequeridos_(request, ['nombre','correo']);
+    const contrasena = validarContrasenaElegida_(request.contrasena);
+    if (String(request.contrasenaConfirmacion || request.contrasena || '') !== contrasena) {
+      throw new Error('CONTRASENAS_NO_COINCIDEN');
+    }
 
-  asegurarCatalogos_();
-  users.forEach(function(usuario) {
-    actualizarRegistro_('USUARIOS', usuario.ID, {
-      ESTADO: 'Inactivo',
-      ELIMINADO: 'SI',
+    asegurarCatalogos_();
+    users.forEach(function(usuario) {
+      actualizarRegistro_('USUARIOS', usuario.ID, { ESTADO:'Inactivo', ELIMINADO:'SI' });
     });
-  });
-  const user = crearUsuarioInterno_({
-    NOMBRE: request.nombre,
-    CORREO: request.correo,
-    CONTRASENA: contrasena,
-    ROL_ID: 'ROL-ADMIN',
-    ESTADO: 'Activo',
-    TELEFONO: request.telefono || '',
-  });
-  PropertiesService.getScriptProperties().setProperty('INSTALACION_COMPLETADA', 'SI');
-  registrarBitacora_(user, 'INSTALACION_INICIAL', 'SEGURIDAD', user.ID, 'Administrador inicial creado');
-  return ok_({ initialized: true, user: usuarioPublico_(user) });
+    const user = crearUsuarioInterno_({
+      NOMBRE: request.nombre,
+      CORREO: request.correo,
+      CONTRASENA: contrasena,
+      ROL_ID: 'ROL-ADMIN',
+      ESTADO: 'Activo',
+      TELEFONO: request.telefono || '',
+    });
+
+    const nombreEmpresa = String(request.nombreEmpresa || request.empresa || '').trim();
+    if (nombreEmpresa) {
+      const actual = listarRegistros_('EMPRESAS', {})[0] || null;
+      const empresa = {
+        RUT: String(request.rutEmpresa || '').trim(),
+        RAZON_SOCIAL: String(request.razonSocial || nombreEmpresa).trim(),
+        NOMBRE_FANTASIA: nombreEmpresa,
+        TELEFONO_PRINCIPAL: String(request.telefonoEmpresa || request.telefono || '').trim(),
+        CORREO: normalizarEmail_(request.correoEmpresa || request.correo),
+        PAIS: String(request.pais || 'Chile').trim(),
+        ZONA_HORARIA: CONFIGURACION_APLICACION.ZONA_HORARIA,
+        MONEDA: 'CLP',
+        UNIDAD_DISTANCIA: 'km',
+        FORMATO_FECHA: 'DD/MM/AAAA',
+        COLOR_PRINCIPAL: '#0E9F91', COLOR_SECUNDARIO: '#08746B', COLOR_ACENTO: '#3578E5',
+        COLOR_FONDO: '#F3F7FA', COLOR_SUPERFICIE: '#FFFFFF', COLOR_TEXTO: '#173047', COLOR_TEXTO_SECUNDARIO: '#65798B', COLOR_BORDE: '#DCE6EC',
+        COLOR_MENU: '#071725', COLOR_MENU_SECUNDARIO: '#0D2638', COLOR_EXITO: '#0E9F91', COLOR_ADVERTENCIA: '#D89216', COLOR_PELIGRO: '#DC4D60',
+        COLOR_FONDO_OSCURO: '#071725', COLOR_SUPERFICIE_OSCURO: '#0D2638', COLOR_TEXTO_OSCURO: '#E9F1F7', COLOR_TEXTO_SECUNDARIO_OSCURO: '#9EB0BF', COLOR_BORDE_OSCURO: '#214359',
+        TEMA_PREDETERMINADO: 'Sistema',
+        ESTADO: 'Activo',
+      };
+      actual ? actualizarRegistro_('EMPRESAS', actual.ID, empresa) : insertarRegistro_('EMPRESAS', empresa, 'EMP');
+    }
+
+    PropertiesService.getScriptProperties().setProperty('INSTALACION_COMPLETADA', 'SI');
+    registrarBitacora_(user, 'INSTALACION_INICIAL', 'SEGURIDAD', user.ID, 'Preconfiguración automática y administrador inicial creados');
+    return ok_({ initialized:true, user:usuarioPublico_(user), companyConfigured:Boolean(nombreEmpresa) });
+  } finally {
+    bloqueo.releaseLock();
+  }
 }
 
 function iniciarSesion_(request) {
@@ -141,6 +174,9 @@ function crearUsuarioInterno_(data) {
     ROL_ID: data.ROL_ID || 'ROL-CONDUCTOR',
     ESTADO: data.ESTADO || 'Activo',
     TELEFONO: data.TELEFONO || '',
+    MODO_PERMISOS: data.MODO_PERMISOS || 'ROL',
+    PERMISOS_PERSONALIZADOS: JSON.stringify(normalizarListaPermisos_(data.PERMISOS_PERSONALIZADOS || [])),
+    VERSION_PERMISOS: 1,
     ELIMINADO: 'NO',
   }, 'USR');
 }
@@ -153,9 +189,16 @@ function crearUsuarioServicio_(data, session) {
 }
 
 function actualizarUsuarioServicio_(id, data, session) {
+  const existente = obtenerRegistro_('USUARIOS', id);
+  if (!existente) throw new Error('REGISTRO_NO_ENCONTRADO');
+  protegerUltimoAdministrador_(existente, data || {});
   const clean = Object.assign({}, data);
   delete clean.CONTRASENA_CIFRADA;
   delete clean.SAL_CONTRASENA;
+  // Los permisos solo se actualizan mediante actualizarPermisosUsuario_.
+  delete clean.MODO_PERMISOS;
+  delete clean.PERMISOS_PERSONALIZADOS;
+  delete clean.VERSION_PERMISOS;
   if (Object.prototype.hasOwnProperty.call(clean, 'CONTRASENA')) {
     const contrasena = validarContrasenaElegida_(clean.CONTRASENA);
     const salt = crearToken_();
@@ -169,15 +212,63 @@ function actualizarUsuarioServicio_(id, data, session) {
   return ok_({ row: usuarioPublico_(row) });
 }
 
+function protegerUltimoAdministrador_(usuarioActual, cambios) {
+  if (!usuarioActual || usuarioActual.ROL_ID !== 'ROL-ADMIN' || usuarioActual.ESTADO !== 'Activo') return;
+  const nuevoRol = Object.prototype.hasOwnProperty.call(cambios, 'ROL_ID') ? String(cambios.ROL_ID) : usuarioActual.ROL_ID;
+  const nuevoEstado = Object.prototype.hasOwnProperty.call(cambios, 'ESTADO') ? String(cambios.ESTADO) : usuarioActual.ESTADO;
+  const eliminado = String(cambios.ELIMINADO || usuarioActual.ELIMINADO || 'NO');
+  if (nuevoRol === 'ROL-ADMIN' && nuevoEstado === 'Activo' && eliminado !== 'SI') return;
+  const otros = listarRegistros_('USUARIOS', {}).filter(function(row) {
+    return row.ID !== usuarioActual.ID && row.ROL_ID === 'ROL-ADMIN' && usuarioTieneAccesoConfigurado_(row);
+  });
+  if (!otros.length) throw new Error('ULTIMO_ADMINISTRADOR_PROTEGIDO');
+}
+
+const PERMISOS_TECNICOS_OBLIGATORIOS_ = Object.freeze([
+  'PANEL_PRINCIPAL:LEER',
+  'CONEXIONES:CREAR',
+  'CONEXIONES:ACTUALIZAR'
+]);
+
+function normalizarListaPermisos_(value) {
+  let lista = value;
+  if (typeof lista === 'string') {
+    try { lista = JSON.parse(lista || '[]'); } catch (error) { lista = []; }
+  }
+  if (!Array.isArray(lista)) lista = [];
+  const validos = {};
+  lista.forEach(function(item) {
+    const permiso = String(item || '').trim().toUpperCase();
+    if (/^[A-Z_]+:(LEER|CREAR|ACTUALIZAR|ELIMINAR)$/.test(permiso)) validos[permiso] = true;
+  });
+  return Object.keys(validos).sort();
+}
+
+function permisosBaseRol_(user) {
+  if (!user) return [];
+  if (user.ROL_ID === 'ROL-ADMIN') return ['*:*'];
+  return listarRegistros_('PERMISOS', {}).filter(function(row) {
+    return row.ROL_ID === user.ROL_ID && row.PERMITIDO === 'SI';
+  }).map(function(row) { return row.MODULO + ':' + row.ACCION; });
+}
+
+function permisosEfectivosUsuario_(user) {
+  if (!user) return [];
+  if (user.ROL_ID === 'ROL-ADMIN') return ['*:*'];
+  const modo = String(user.MODO_PERMISOS || 'ROL').toUpperCase();
+  const seleccionados = modo === 'PERSONALIZADO'
+    ? normalizarListaPermisos_(user.PERMISOS_PERSONALIZADOS)
+    : permisosBaseRol_(user);
+  const mapa = {};
+  seleccionados.concat(PERMISOS_TECNICOS_OBLIGATORIOS_).forEach(function(item) { mapa[item] = true; });
+  return Object.keys(mapa).sort();
+}
+
 function usuarioPublico_(user) {
   if (!user) return null;
   const role = obtenerRegistro_('ROLES', user.ROL_ID);
   const driver = listarRegistros_('CONDUCTORES', {}).find(function(row) { return row.USUARIO_ID === user.ID; });
-  const permissions = user.ROL_ID === 'ROL-ADMIN'
-    ? ['*:*']
-    : listarRegistros_('PERMISOS', {}).filter(function(row) {
-        return row.ROL_ID === user.ROL_ID && row.PERMITIDO === 'SI';
-      }).map(function(row) { return row.MODULO + ':' + row.ACCION; });
+  const personalizados = normalizarListaPermisos_(user.PERMISOS_PERSONALIZADOS);
   return {
     ID: user.ID,
     NOMBRE: user.NOMBRE,
@@ -188,7 +279,10 @@ function usuarioPublico_(user) {
     TELEFONO: user.TELEFONO || '',
     ULTIMO_ACCESO: serializarValor_(user.ULTIMO_ACCESO),
     CONDUCTOR_ID: driver ? driver.ID : '',
-    PERMISOS: permissions,
+    MODO_PERMISOS: String(user.MODO_PERMISOS || 'ROL').toUpperCase(),
+    PERMISOS_PERSONALIZADOS: personalizados,
+    VERSION_PERMISOS: Number(user.VERSION_PERMISOS || 0),
+    PERMISOS: permisosEfectivosUsuario_(user),
   };
 }
 
@@ -198,10 +292,10 @@ function exigirPermiso_(user, moduleName, action) {
 }
 
 function tienePermiso_(user, moduleName, action) {
+  if (!user) return false;
   if (user.ROL_ID === 'ROL-ADMIN') return true;
-  return listarRegistros_('PERMISOS', {}).some(function(row) {
-    return row.ROL_ID === user.ROL_ID && row.MODULO === moduleName && row.ACCION === action && row.PERMITIDO === 'SI';
-  });
+  const permiso = String(moduleName || '').toUpperCase() + ':' + String(action || '').toUpperCase();
+  return permisosEfectivosUsuario_(user).indexOf(permiso) >= 0;
 }
 
 function cifrarContrasena_(password, salt) {

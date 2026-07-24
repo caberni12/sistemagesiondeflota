@@ -31,6 +31,10 @@
   let realtimeTimer = null;
   let heartbeatTimer = null;
   let notificationTimer = null;
+  let notificationSnapshotReady = false;
+  let notificationCenterState = { notifications:[], alerts:[] };
+  let knownNotificationIds = new Set();
+  let knownAlertIds = new Set();
   let gpsWatchId = null;
   let mediaStream = null;
   let barcodeDetector = null;
@@ -47,22 +51,24 @@
   const cacheRegistros = new Map();
   const listasFormularioPendientes = new Map();
   const claveEstadoSincronizacion = 'flotas_estado_sincronizacion_modulos_v1';
-  const estadoSincronizacionModulos = (() => {
-    try { return JSON.parse(localStorage.getItem(claveEstadoSincronizacion) || '{}') || {}; }
-    catch (_) { return {}; }
-  })();
+  const cargaManualModulos = config.CARGA_MANUAL_MODULOS !== false;
+  const estadoSincronizacionModulos = {};
+  const modulosSincronizadosSesion = new Set();
+  const actualizacionesModuloPendientes = new Map();
+  try { localStorage.removeItem(claveEstadoSincronizacion); } catch (_) {}
   const dependenciasCacheSeccion = Object.freeze({
     dashboard:{ actions:['dashboard','realtimeSummary'], resources:['operations','routes','notifications','vehicles','drivers','connections'] },
     routes:{ actions:['dashboard','realtimeSummary'], resources:['routes','drivers','vehicles','notifications','companies'] },
     checkin:{ actions:['dashboard'], resources:['checkins','vehicles','drivers'] },
     checkinApprovals:{ actions:['dashboard'], resources:['checkins','vehicles','drivers','notifications'] },
     checkinHistory:{ actions:['dashboard'], resources:['checkins','vehicles','drivers','operations'] },
-    operations:{ actions:['dashboard','realtimeSummary','getOperationalPoint'], resources:['operations','routes','vehicles','drivers','checkins','companies'] },
+    operations:{ actions:['dashboard','operationsSummary','realtimeSummary','getOperationalPoint'], resources:['operations','routes','vehicles','drivers','checkins','companies'] },
     gps:{ actions:['realtimeSummary','getOperationalPoint'], resources:['gps','connections','vehicles','drivers','operations','routes','companies'] },
     notifications:{ actions:['dashboard','realtimeSummary'], resources:['notifications','drivers','users'] },
     vehicles:{ actions:['dashboard'], resources:['vehicles'] },
     drivers:{ actions:['dashboard'], resources:['drivers','users'] },
     maintenance:{ actions:['dashboard'], resources:['maintenance','vehicles'] },
+    fuel:{ actions:['dashboard','fuelSummary'], resources:['fuel','fuelAuthorizations','vehicles','drivers','operations','routes'] },
     documents:{ actions:['dashboard'], resources:['documents','vehicles','drivers','companies'] },
     history:{ actions:['dashboard'], resources:['history','operations','routes','checkins','alerts','notifications'] },
     alerts:{ actions:['dashboard'], resources:['alerts'] },
@@ -83,6 +89,7 @@
   const trackingPreferenceKey = 'flotas_ubicacion_continua_v1';
   const gpsTrackingModeKey = 'flotas_seguimiento_modo_v1';
   const gpsSelectedVehiclesKey = 'flotas_seguimiento_vehiculos_v1';
+  const gpsConnectionFilterKey = 'flotas_seguimiento_estado_v1';
   const checkinReceiptKey = 'flotas_ultimo_checkin_confirmado_v1';
   let gpsTrackingMode = localStorage.getItem(gpsTrackingModeKey) === 'specific' ? 'specific' : 'all';
   let gpsSelectedVehicles = (() => {
@@ -91,6 +98,9 @@
   })();
   let gpsDraftTrackingMode = gpsTrackingMode;
   let gpsDraftSelectedVehicles = new Set(gpsSelectedVehicles);
+  const estadosConexionGpsPermitidos = new Set(['all','online','driving','withoutGps','offline']);
+  let gpsConnectionFilter = estadosConexionGpsPermitidos.has(localStorage.getItem(gpsConnectionFilterKey)) ? localStorage.getItem(gpsConnectionFilterKey) : 'all';
+  let gpsDraftConnectionFilter = gpsConnectionFilter;
   const deviceId = (() => {
     const key='flotas_dispositivo_id_v1';let value=localStorage.getItem(key);
     if(!value){value=`DISP-${crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)}`;localStorage.setItem(key,value);}
@@ -108,7 +118,7 @@
       ['notifications','🔔','Notificaciones']
     ]],
     ['GESTIÓN', [
-      ['vehicles','▣','Vehículos'], ['drivers','♙','Conductores'], ['checkinApprovals','☑','Aprobar check-ins'], ['checkinHistory','▤','Historial de check-in'], ['maintenance','⚙','Mantenciones'],
+      ['vehicles','▣','Vehículos'], ['drivers','♙','Conductores'], ['checkinApprovals','☑','Aprobar check-ins'], ['checkinHistory','▤','Historial de check-in'], ['maintenance','⚙','Mantenciones'], ['fuel','⛽','Combustible'],
       ['documents','▤','Documentos'], ['history','↻','Historial'], ['alerts','!','Alertas']
     ]],
     ['ADMINISTRACIÓN', [
@@ -171,20 +181,20 @@
   });
 
   const labels = {
-    dashboard:'Panel principal',routes:'Rutas asignadas',vehicles:'Vehículos',drivers:'Conductores',checkin:'Check-in vehicular',checkinApprovals:'Aprobación de check-ins',checkinHistory:'Historial de check-in',operations:'Operaciones',gps:'GPS en tiempo real',maintenance:'Mantenciones',
+    dashboard:'Panel principal',routes:'Rutas asignadas',vehicles:'Vehículos',drivers:'Conductores',checkin:'Check-in vehicular',checkinApprovals:'Aprobación de check-ins',checkinHistory:'Historial de check-in',operations:'Operaciones',gps:'GPS en tiempo real',maintenance:'Mantenciones',fuel:'Combustible',
     notifications:'Notificaciones',documents:'Documentos',history:'Historial',alerts:'Alertas',users:'Usuarios',reports:'Reportes',audit:'Auditoría',company:'Empresa',settings:'Configuración'
   };
 
   const navPermission = {
     dashboard:'PANEL_PRINCIPAL',routes:'RUTAS',checkin:'CHECKIN',checkinApprovals:'CHECKIN_APROBACIONES',checkinHistory:'CHECKIN',operations:'OPERACIONES',gps:'GPS',notifications:'NOTIFICACIONES',
-    vehicles:'VEHICULOS',drivers:'CONDUCTORES',maintenance:'MANTENCIONES',documents:'DOCUMENTOS',history:'HISTORIAL',
+    vehicles:'VEHICULOS',drivers:'CONDUCTORES',maintenance:'MANTENCIONES',fuel:'COMBUSTIBLE',documents:'DOCUMENTOS',history:'HISTORIAL',
     alerts:'ALERTAS',users:'USUARIOS',company:'CONFIGURACION',reports:'REPORTES',audit:'BITACORA',settings:'CONFIGURACION'
   };
-  const resourcePermission={vehicles:'VEHICULOS',drivers:'CONDUCTORES',maintenance:'MANTENCIONES',documents:'DOCUMENTOS',alerts:'ALERTAS',users:'USUARIOS'};
+  const resourcePermission={vehicles:'VEHICULOS',drivers:'CONDUCTORES',maintenance:'MANTENCIONES',fuel:'COMBUSTIBLE',documents:'DOCUMENTOS',alerts:'ALERTAS',users:'USUARIOS'};
   const permissionCatalog = Object.freeze([
     ['PANEL_PRINCIPAL','Panel principal'],['USUARIOS','Usuarios'],['VEHICULOS','Vehículos'],['CONDUCTORES','Conductores'],
     ['OPERACIONES','Operaciones'],['CHECKIN','Check-in'],['CHECKIN_APROBACIONES','Aprobar check-ins'],['GPS','Ubicación en tiempo real'],
-    ['HISTORIAL','Historial'],['MANTENCIONES','Mantenciones'],['DOCUMENTOS','Documentos'],['ALERTAS','Alertas'],
+    ['HISTORIAL','Historial'],['MANTENCIONES','Mantenciones'],['COMBUSTIBLE','Combustible'],['DOCUMENTOS','Documentos'],['ALERTAS','Alertas'],
     ['REPORTES','Reportes'],['BITACORA','Auditoría'],['CONFIGURACION','Configuración'],['QR','QR'],['RUTAS','Rutas'],
     ['NOTIFICACIONES','Notificaciones'],['CONEXIONES','Conexiones']
   ]);
@@ -233,6 +243,8 @@
   };
   const fechaInputLocal = value => { if(!value)return ''; const date=new Date(value); if(Number.isNaN(date.getTime()))return ''; const local=new Date(date.getTime()-date.getTimezoneOffset()*60000); return local.toISOString().slice(0,16); };
   const number = value => new Intl.NumberFormat('es-CL').format(Number(value || 0));
+  const clp = value => new Intl.NumberFormat('es-CL',{style:'currency',currency:'CLP',maximumFractionDigits:0}).format(Number(value||0));
+  const decimal = (value,digits=2) => new Intl.NumberFormat('es-CL',{maximumFractionDigits:digits}).format(Number(value||0));
   const initials = name => String(name || 'U').split(/\s+/).slice(0,2).map(part => part[0]).join('').toUpperCase();
   const statusClass = value => {
     const text = String(value || '').toLowerCase();
@@ -296,6 +308,13 @@
       PUNTO_OPERACION_ROL_NO_AUTORIZADO:'Solo un Administrador o Supervisor puede configurar o cambiar el punto base.', CIERRE_EXCEPCIONAL_NO_AUTORIZADO:'Solo un Administrador o Supervisor puede cerrar una operación fuera de la base.',
       CIERRE_EXCEPCIONAL_CONFIRMACION_REQUERIDA:'Active la opción de cierre excepcional para continuar fuera de la base.', CIERRE_EXCEPCIONAL_MOTIVO_REQUERIDO:'Explique el motivo del cierre excepcional con al menos 10 caracteres.',
       KILOMETRAJE_FINAL_INVALIDO:'El kilometraje será guardado para revisión, pero no impedirá finalizar.', SOLO_ADMINISTRADOR:'Solo el Administrador puede editar o eliminar operaciones.', MOTIVO_EDICION_REQUERIDO:'Indique un motivo de al menos 5 caracteres para registrar la edición.', FECHA_OPERACION_INVALIDA:'La fecha indicada no es válida.', RECURSO_IMPORTACION_NO_PERMITIDO:'Este módulo no admite importación masiva.',
+      COMBUSTIBLE_VEHICULO_REQUERIDO:'Seleccione el vehículo de la carga.', COMBUSTIBLE_CONDUCTOR_REQUERIDO:'Seleccione el conductor relacionado.',
+      COMBUSTIBLE_LITROS_INVALIDO:'Ingrese una cantidad de litros mayor que cero.', COMBUSTIBLE_PRECIO_LITRO_INVALIDO:'Ingrese un precio por litro válido.', COMBUSTIBLE_KILOMETRAJE_INVALIDO:'Ingrese un kilometraje válido.',
+      COMBUSTIBLE_FECHA_INVALIDA:'La fecha y hora de la carga no son válidas.', COMBUSTIBLE_OPERACION_NO_COINCIDE:'La operación seleccionada no corresponde al vehículo y conductor.',
+      COMBUSTIBLE_RUTA_NO_COINCIDE:'La ruta seleccionada no corresponde al vehículo y conductor.', COMBUSTIBLE_ASIGNACION_ACTIVA_REQUERIDA:'Debe seleccionar una operación o ruta activa para registrar la carga.', COMBUSTIBLE_ASIGNACION_NO_VIGENTE:'La asignación seleccionada ya no está activa.',
+      COMBUSTIBLE_MOTIVO_ELIMINACION_REQUERIDO:'Indique un motivo suficiente para eliminar el registro.', COMBUSTIBLE_SOLICITUD_YA_EXISTE:'Ya existe una solicitud pendiente o aprobada para esta carga.',
+      COMBUSTIBLE_AUTORIZACION_ADMIN_REQUERIDA:'La eliminación requiere una autorización vigente de un Administrador.', COMBUSTIBLE_DECISION_INVALIDA:'Seleccione aprobar o rechazar la solicitud.',
+      COMBUSTIBLE_SOLICITUD_NO_ENCONTRADA:'La solicitud de eliminación no existe.', COMBUSTIBLE_SOLICITUD_YA_RESUELTA:'La solicitud ya fue resuelta.', SOLO_SUPERVISOR_SOLICITA_ELIMINACION:'Solo el Supervisor puede solicitar esta autorización.',
       IMPORTACION_SIN_FILAS:'La planilla no contiene filas para importar.', IMPORTACION_DEMASIADAS_FILAS:'La planilla supera el máximo de 1.500 filas por carga.', LECTOR_XLSX_NO_DISPONIBLE:'No se cargó el lector de Excel. Recargue la página con Ctrl + F5.', FORMATO_IMPORTACION_INVALIDO:'Use una plantilla XLSX o CSV válida.', PLANILLA_SIN_HOJA_DATOS:'La planilla no contiene la hoja de datos esperada.', ASOCIADO_NO_ENCONTRADO:'No se encontró el vehículo, conductor o empresa indicado en el documento.'
     };
     if (messages[key]) return messages[key];
@@ -410,9 +429,45 @@
     try{await api.request('heartbeat',{data:{DISPOSITIVO_ID:deviceId,SESION_CLIENTE_ID:clientSessionId,SECCION_ACTUAL:currentSection,GPS_ACTIVO:gpsWatchId===null?'NO':'SI',PAGINA_VISIBLE:document.hidden?'NO':'SI',ESTADO:state,PLATAFORMA:navigator.platform||'',NAVEGADOR:navigator.userAgent,TIPO_RED:connectionType(),BATERIA_PORCENTAJE:batteryLevel,IP_PUBLICA:clientPublicIp}});setConnection(navigator.onLine!==false,api.isRemote()?'Servicio conectado':'Modo local activo');}
     catch(error){setConnection(false,'Sin conexión con el servicio');}
   }
+  function alertItemDate(item){return new Date(item.FECHA_ENVIO||item.FECHA_HORA||item.CREADO_EN||0).getTime();}
+  function showIncomingNotice(item,kind){
+    const critical=kind==='alert'&&String(item.NIVEL||'').toLowerCase().includes('cr')||['Urgente','Alta'].includes(item.PRIORIDAD);
+    toast(kind==='alert'?'Nueva alerta':'Nueva notificación',item.TITULO||item.MENSAJE||'Existe un nuevo aviso pendiente.',critical?'error':'success');
+  }
   async function refreshNotificationBadge(){
-    if(!currentUser||!hasPermission('NOTIFICACIONES','LEER'))return;
-    try{const result=await api.request('list',{resource:'notifications'}),count=(result.rows||[]).filter(row=>row.LEIDA!=='SI').length,badge=$('#notificationBadge');badge.textContent=count>99?'99+':String(count);badge.hidden=count===0;}catch(_){}
+    if(!currentUser)return;
+    try{
+      const canNotifications=hasPermission('NOTIFICACIONES','LEER'),canAlerts=hasPermission('ALERTAS','LEER');
+      const [notificationResult,alertResult]=await Promise.all([
+        canNotifications?api.request('list',{resource:'notifications',cache:false}):Promise.resolve({rows:[]}),
+        canAlerts?api.request('list',{resource:'alerts',cache:false}):Promise.resolve({rows:[]})
+      ]);
+      const notifications=(notificationResult.rows||[]).filter(row=>row.LEIDA!=='SI').sort((a,b)=>alertItemDate(b)-alertItemDate(a));
+      const alerts=(alertResult.rows||[]).filter(row=>row.LEIDA!=='SI').sort((a,b)=>alertItemDate(b)-alertItemDate(a));
+      notificationCenterState={notifications,alerts};
+      const newNotifications=notifications.filter(row=>!knownNotificationIds.has(String(row.ID)));
+      const newAlerts=alerts.filter(row=>!knownAlertIds.has(String(row.ID)));
+      if(notificationSnapshotReady){
+        [...newAlerts,...newNotifications].sort((a,b)=>alertItemDate(a)-alertItemDate(b)).slice(-3).forEach(item=>showIncomingNotice(item,alerts.includes(item)?'alert':'notification'));
+        const extra=newAlerts.length+newNotifications.length-3;if(extra>0)toast('Nuevos avisos',`${extra} aviso${extra===1?'':'s'} adicional${extra===1?'':'es'} en el centro de notificaciones.`);
+      }
+      knownNotificationIds=new Set(notifications.map(row=>String(row.ID)));
+      knownAlertIds=new Set(alerts.map(row=>String(row.ID)));
+      notificationSnapshotReady=true;
+      const count=notifications.length+alerts.length,badge=$('#notificationBadge'),button=$('#notificationButton');
+      badge.textContent=count>99?'99+':String(count);badge.hidden=count===0;
+      button?.setAttribute('aria-label',count?`Abrir ${count} avisos pendientes`:'Abrir centro de notificaciones');
+      if(count)document.title=`(${count}) ${document.title.replace(/^\(\d+\)\s*/,'')}`;else document.title=document.title.replace(/^\(\d+\)\s*/,'');
+    }catch(_){}
+  }
+  function openNotificationCenter(){
+    if(!currentUser)return;
+    const notifications=notificationCenterState.notifications||[],alerts=notificationCenterState.alerts||[];
+    const alertRows=alerts.slice(0,8).map(row=>`<article class="notification-card"><header><div><h4>${esc(row.TITULO||'Alerta')}</h4><p>${esc(row.MENSAJE||'')}</p></div>${status(row.NIVEL||'Alerta')}</header><div class="route-meta"><span>${fmtDate(row.FECHA_HORA||row.CREADO_EN,true)}</span><span>${esc(row.MODULO||'Sistema')}</span></div></article>`).join('');
+    const notificationRows=notifications.slice(0,8).map(notificationCard).join('');
+    $('#modalEyebrow').textContent='AVISOS AUTOMÁTICOS';$('#modalTitle').textContent='Centro de notificaciones';
+    $('#modalBody').innerHTML=`<div class="notification-center-summary"><div class="info-item"><span>Notificaciones pendientes</span><b>${notifications.length}</b></div><div class="info-item"><span>Alertas pendientes</span><b>${alerts.length}</b></div></div><div class="notification-dashboard"><article class="card"><div class="card-header"><div><h3>Notificaciones</h3><p>Mensajes dirigidos a su usuario.</p></div></div><div class="notification-list">${notificationRows||empty('✓','Sin notificaciones','No hay mensajes pendientes.')}</div><button class="btn soft full" type="button" data-center-nav="notifications">Abrir notificaciones</button></article><article class="card"><div class="card-header"><div><h3>Alertas</h3><p>Eventos generados automáticamente por el sistema.</p></div></div><div class="notification-list">${alertRows||empty('✓','Sin alertas','No hay alertas pendientes.')}</div><button class="btn soft full" type="button" data-center-nav="alerts">Abrir alertas</button></article></div>`;
+    openModal();$$('[data-center-nav]',$('#modalBody')).forEach(button=>button.addEventListener('click',()=>{closeModal();navigateSection(button.dataset.centerNav);}));$$('[data-read-notification]',$('#modalBody')).forEach(button=>button.addEventListener('click',()=>readNotification(button.dataset.readNotification)));
   }
   function stopRealtimeServices(){
     [heartbeatTimer,notificationTimer,realtimeTimer].forEach(timer=>{if(timer)clearInterval(timer);});
@@ -423,9 +478,9 @@
     api.getClientIp?.().then(ip=>{if(!ip)return;clientPublicIp=ip;api.registerConnectionIp?.({DISPOSITIVO_ID:deviceId,SESION_CLIENTE_ID:clientSessionId}).catch(()=>{});sendHeartbeat();}).catch(()=>{});
     sendHeartbeat();
     heartbeatTimer=setInterval(()=>sendHeartbeat(),config.INTERVALO_CONEXION_MILISEGUNDOS||20000);
-    if(!embeddedMode||['dashboard','notifications'].includes(currentSection)){
+    if(!embeddedMode){
       refreshNotificationBadge();
-      notificationTimer=setInterval(refreshNotificationBadge,config.INTERVALO_NOTIFICACIONES_MILISEGUNDOS||30000);
+      notificationTimer=setInterval(refreshNotificationBadge,config.INTERVALO_NOTIFICACIONES_MILISEGUNDOS||10000);
     }
     resumeTrackingIfAllowed();
   }
@@ -502,14 +557,10 @@
   function showApp() {
     $('#authScreen').classList.add('hidden'); $('#appShell').classList.remove('hidden');
     $('#userName').textContent=currentUser.NOMBRE; $('#userRole').textContent=currentUser.ROL_NOMBRE || currentUser.ROL_ID; $('#userAvatar').textContent=initials(currentUser.NOMBRE);
-    $('#backendName').textContent=api.backendLabel(); $('#backendDetail').textContent=api.isRemote()?'Información sincronizada entre dispositivos':'Información guardada en este dispositivo';
-    setConnection(true, api.isRemote()?'Base de datos conectada':'Base de datos local activa'); buildNav();
-    Promise.allSettled([refreshCompanyBranding(),sincronizarPuntoOperacionDispositivo({forzar:true,silencioso:true})]).finally(()=>{
-      go(initialSection).finally(() => {
-        startRealtimeServices();
-        if(!embeddedMode)precargarModulos();
-      });
-    });
+    $('#backendName').textContent=api.backendLabel(); $('#backendDetail').textContent=api.isRemote()?'Carga manual de módulos · conexión bajo demanda':'Información guardada en este dispositivo';
+    if(currentCompany)applyBranding(currentCompany);
+    setConnection(true, api.isRemote()?'Listo para sincronizar':'Base de datos local activa'); buildNav();
+    go(initialSection).finally(() => startRealtimeServices());
   }
 
   function buildNav() {
@@ -526,7 +577,7 @@
   function consultasPrecarga() {
     const resources = [
       ['routes','RUTAS'], ['operations','OPERACIONES'], ['notifications','NOTIFICACIONES'],
-      ['vehicles','VEHICULOS'], ['drivers','CONDUCTORES'], ['maintenance','MANTENCIONES'],
+      ['vehicles','VEHICULOS'], ['drivers','CONDUCTORES'], ['maintenance','MANTENCIONES'], ['fuel','COMBUSTIBLE'],
       ['documents','DOCUMENTOS'], ['history','HISTORIAL'], ['alerts','ALERTAS'],
       ['users','USUARIOS'], ['audit','BITACORA'], ['companies','CONFIGURACION'],
     ];
@@ -536,6 +587,7 @@
   }
 
   function precargarModulos() {
+    if (cargaManualModulos) return;
     if (embeddedMode || precargaIniciada || !currentUser) return;
     precargaIniciada = true;
     const queries = consultasPrecarga();
@@ -563,15 +615,15 @@
 
   function registrarSincronizacionSeccion(section, source='SERVIDOR') {
     estadoSincronizacionModulos[section] = { time:Date.now(), source };
-    try { localStorage.setItem(claveEstadoSincronizacion, JSON.stringify(estadoSincronizacionModulos)); } catch (_) {}
+    modulosSincronizadosSesion.add(section);
   }
 
   function textoActualizacionSeccion(section) {
     const saved = estadoSincronizacionModulos[section];
-    if (!saved?.time) return 'Memoria local activa · pulse Sincronizar para consultar la base central';
+    if (!saved?.time) return 'Módulo vacío · pulse Sincronizar para consultar la base central';
     const date = new Date(saved.time);
-    if (Number.isNaN(date.getTime())) return 'Memoria local activa';
-    return `Última sincronización: ${new Intl.DateTimeFormat('es-CL',{dateStyle:'short',timeStyle:'short'}).format(date)} · memoria local activa`;
+    if (Number.isNaN(date.getTime())) return 'Módulo listo para sincronizar';
+    return `Última sincronización: ${new Intl.DateTimeFormat('es-CL',{dateStyle:'short',timeStyle:'short'}).format(date)} · datos vigentes en esta sesión`;
   }
 
   function decorarModuloConSincronizacion(html, section) {
@@ -588,6 +640,13 @@
     const span=$('span',node);if(span)span.textContent=text;
   }
 
+  function moduloVacioSinSincronizar(section) {
+    const title=labels[section]||'Módulo';
+    return decorarModuloConSincronizacion(
+      heading('CARGA MANUAL',title,'Este módulo inicia sin datos para que el sistema abra de inmediato.',`<button class="btn primary" type="button" data-sync>↻ Sincronizar ahora</button>`)+
+      `<article class="card manual-load-empty">${empty('↻','Módulo listo para sincronizar','No se ha consultado Google Sheets. Pulse Sincronizar para cargar únicamente la información de este módulo.','<button class="btn primary" type="button" data-sync>Sincronizar datos</button>')}</article>`,section);
+  }
+
   function esqueletoModulo() {
     return '<div class="module-skeleton" aria-label="Preparando módulo"><i></i><div><span></span><span></span><span></span></div><section><b></b><b></b><b></b><b></b></section></div>';
   }
@@ -602,34 +661,45 @@
     }
     if (heartbeatTimer) sendHeartbeat();
     $('#pageTitle').textContent=labels[section]; $('#breadcrumb').textContent=`Sistema / ${labels[section]}`;
+    closeSidebar();
+
+    const cargaAutomaticaPermitida = section === 'gps';
+    if (cargaManualModulos && !cargaAutomaticaPermitida && !options.force && !modulosSincronizadosSesion.has(section)) {
+      $('#content').innerHTML=moduloVacioSinSincronizar(section);
+      bindSection();
+      if(embeddedMode)postParent({tipo:'flotas:modulo-listo',usuario:currentUser,seccion:section,actualizadoEn:0,cargaManual:true});
+      window.scrollTo({top:0,behavior:'auto'});
+      return true;
+    }
+
     const cachedView = section === 'gps' ? null : cacheVistasModulo.get(section);
-    if (cachedView) {
+    if (cachedView && !options.force) {
       $('#content').innerHTML=cachedView;
       bindSection();
       actualizarEstadoSincronizacionVisible(textoActualizacionSeccion(section));
-    } else {
-      $('#content').innerHTML=esqueletoModulo();
+      window.scrollTo({top:0,behavior:'auto'});
+      return true;
     }
-    closeSidebar();
+    $('#content').innerHTML=esqueletoModulo();
     try {
       const html = await renderers[section]();
       if (sequence !== secuenciaNavegacion || section !== currentSection) return;
       const decorated = decorarModuloConSincronizacion(html, section);
       $('#content').innerHTML=decorated;
-      cacheVistasModulo.set(section, decorated);
+      if(section!=='gps')cacheVistasModulo.set(section, decorated);
       if (cacheVistasModulo.size > 18) cacheVistasModulo.delete(cacheVistasModulo.keys().next().value);
+      registrarSincronizacionSeccion(section,'SERVIDOR');
       bindSection();
       if (section==='gps') setTimeout(initMap,80);
-      if (options.force) registrarSincronizacionSeccion(section,'SERVIDOR');
       actualizarEstadoSincronizacionVisible(textoActualizacionSeccion(section));
-      if (options.force && !embeddedMode) precargarModulos();
       if(embeddedMode)postParent({tipo:'flotas:modulo-listo',usuario:currentUser,seccion:section,actualizadoEn:estadoSincronizacionModulos[section]?.time||0});
     } catch (error) {
       if (sequence !== secuenciaNavegacion || section !== currentSection) return;
       if (['AUTENTICACION_REQUERIDA','SESION_INVALIDA','SESION_EXPIRADA'].includes(error.message)) {forceLogout();return false;}
       if (cachedView) {
-        actualizarEstadoSincronizacionVisible('Datos locales disponibles · no fue posible consultar el servidor','error');
-        toast('Modo de memoria local','Se mantuvo la última información disponible del módulo.','warning');
+        $('#content').innerHTML=cachedView;bindSection();
+        actualizarEstadoSincronizacionVisible('Se mantiene la información de esta sesión · no respondió el servidor','error');
+        toast('No se actualizó el módulo','Se conserva la información ya cargada.','warning');
         return true;
       }
       $('#content').innerHTML=`<div class="card">${empty('!','No se pudo cargar el módulo',translateError(error),'<button class="btn primary" data-retry>Reintentar</button>')}</div>`;
@@ -638,6 +708,32 @@
     }
     window.scrollTo({top:0,behavior:'auto'});
     return true;
+  }
+
+  function actualizarSeccionEnSegundoPlano(section) {
+    if(!currentUser||!renderers[section])return Promise.resolve(false);
+    if(actualizacionesModuloPendientes.has(section))return actualizacionesModuloPendientes.get(section);
+    const task=(async()=>{
+      try{
+        invalidarCacheSeccion(section);
+        const html=await renderers[section]();
+        const decorated=decorarModuloConSincronizacion(html,section);
+        cacheVistasModulo.set(section,decorated);
+        registrarSincronizacionSeccion(section,'SEGUNDO_PLANO');
+        if(currentSection===section){
+          $('#content').innerHTML=decorated;bindSection();
+          if(section==='gps')setTimeout(initMap,60);
+          actualizarEstadoSincronizacionVisible(textoActualizacionSeccion(section));
+        }
+        setSave(`${labels[section]||'Módulo'} actualizado`);
+        return true;
+      }catch(error){
+        if(!api.isAuthError?.(error))setSave('Actualización pendiente','error');
+        return false;
+      }finally{actualizacionesModuloPendientes.delete(section);}
+    })();
+    actualizacionesModuloPendientes.set(section,task);
+    return task;
   }
 
   function cleanupSection() {
@@ -660,7 +756,7 @@
       const driverHero=currentUser.ROL_ID==='ROL-CONDUCTOR'&&routes.length?`<div class="driver-home"><article class="card driver-route-hero"><div class="card-header"><div><h3>Próxima ruta asignada</h3><p>Lista para iniciar navegación</p></div>${status(routes[0].ESTADO)}</div>${routeCard(routes[0],true)}</article><article class="card"><div class="card-header"><div><h3>Mi conexión</h3><p>Estado del dispositivo</p></div></div><div class="tracking-notice ${gpsWatchId===null?'inactive':'active'}" data-tracking-notice><i data-tracking-icon>${gpsWatchId===null?'○':'●'}</i><div><b data-tracking-title>${gpsWatchId===null?'Ubicación continua detenida':'Ubicación continua activada'}</b><span data-tracking-detail>${trackingDetail()}</span></div></div><button class="btn ${gpsWatchId===null?'primary':'danger'} full" data-toggle-tracking>${gpsWatchId===null?'Activar ubicación continua':'Detener ubicación continua'}</button></article></div>`:'';
       return heading('RESUMEN OPERACIONAL',`Hola, ${esc(currentUser.NOMBRE.split(' ')[0])}`,'Información actualizada de flota, rutas, dispositivos y avisos según sus permisos.',headingActions)+
         driverHero+
-        `<div class="kpi-grid">${metric('▣','Vehículos',m.vehicles||0,`${m.availableVehicles||0} disponibles`)}${metric('♙','Conductores',m.drivers||0,`${m.availableDrivers||0} disponibles`)}${metric('⇄','Operaciones activas',m.activeOperations||0,'Seguimiento en curso')}${metric('!','Alertas',m.unreadAlerts||0,`${m.expiredDocuments||0} documentos vencidos`)}</div>`+
+        `<div class="kpi-grid">${metric('▣','Vehículos',m.vehicles||0,`${m.availableVehicles||0} disponibles`)}${metric('♙','Conductores',m.drivers||0,`${m.availableDrivers||0} disponibles`)}${metric('⇄','Operaciones activas',m.activeOperations||0,'Seguimiento en curso')}${metric('!','Alertas',m.unreadAlerts||0,`${m.expiredDocuments||0} documentos vencidos`)}${hasPermission('COMBUSTIBLE','LEER')?metric('⛽','Combustible del mes',`${decimal(m.fuelLitersMonth||0,1)} L`,clp(m.fuelCostMonth||0)):''}</div>`+
         `<div class="live-strip">${liveStat('⌖','Sesiones abiertas',realtime.totals?.onlineDevices??m.onlineDevices??0,'online')}${liveStat('🚐','Conduciendo',realtime.totals?.drivingSessions||0,'online')}${liveStat('✓','Check-ins aprobados',m.approvedCheckins||0,'online')}${liveStat('!','Check-ins por atender',(m.pendingCheckins||0)+(m.blockedCheckins||0),((m.pendingCheckins||0)+(m.blockedCheckins||0))?'warning':'')}</div>`+
         `<div class="dashboard-insights"><article class="card"><div class="card-header"><div><h3>Operaciones de los últimos 7 días</h3><p>Actividad diaria visible para su rol</p></div></div>${weeklyBars(data.charts?.operationsByDay||[])}</article><article class="card"><div class="card-header"><div><h3>Estado de la flota</h3><p>Distribución actual de vehículos</p></div></div>${stateDonut(data.charts?.vehicleStates||[])}</article><article class="card"><div class="card-header"><div><h3>Acciones rápidas</h3><p>Accesos según sus permisos</p></div></div>${quickActions()}</article></div>`+
         `${hasPermission('CONEXIONES','LEER')?`<article class="card session-control-card"><div class="card-header"><div><h3>Control de sesiones abiertas</h3><p>Usuario, conductor, módulo abierto, vehículo, operación, ruta y GPS por cada sesión.</p></div><button class="link-button" data-nav="gps">Abrir monitoreo</button></div><div class="device-list dashboard-session-list">${(realtime.devices||[]).slice(0,12).map(deviceCard).join('')||empty('○','Sin sesiones registradas','Las sesiones aparecerán cuando los usuarios ingresen al sistema.')}</div></article>`:''}`+
@@ -670,6 +766,7 @@
     async vehicles(){return renderResourcePage('vehicles','FLOTA','Vehículos','Administre las unidades, patentes, kilometraje y códigos QR.',vehicleRows,['Vehículo','Patente','Año','Kilometraje','Estado','QR','']);},
     async drivers(){return renderResourcePage('drivers','PERSONAL','Conductores','Gestione licencias, disponibilidad y usuarios asociados.',driverRows,['Conductor','RUT','Licencia','Vencimiento','Estado','Usuario','']);},
     async maintenance(){return renderResourcePage('maintenance','PREVENCIÓN','Mantenciones','Programe trabajos preventivos y correctivos.',maintenanceRows,['Trabajo','Vehículo','Tipo','Fecha','Costo','Estado','']);},
+    async fuel(){return renderFuel();},
     async documents(){return renderResourcePage('documents','VENCIMIENTOS','Documentos','Controle permisos, seguros, revisiones y licencias.',documentRows,['Documento','Asociado','Identificación','Vencimiento','Estado','Archivo','']);},
     async alerts(){return renderAlerts();},
     async users(){return renderResourcePage('users','SEGURIDAD','Usuarios','Administre accesos, roles, permisos personalizados y estado de las cuentas sin cerrar sus sesiones.',userRows,['Usuario','Correo','Rol','Permisos','Último acceso','Estado','']);},
@@ -731,6 +828,7 @@
     if(hasPermission('OPERACIONES','CREAR'))actions.push(['operations','⇄','Iniciar operación']);
     if(hasPermission('NOTIFICACIONES','CREAR'))actions.push(['notifications','🔔','Enviar aviso']);
     if(hasPermission('VEHICULOS','CREAR'))actions.push(['vehicles','▣','Registrar vehículo']);
+    if(hasPermission('COMBUSTIBLE','CREAR'))actions.push(['fuel','⛽','Registrar combustible']);
     return `<div class="quick-actions">${actions.map(([section,icon,label])=>`<button data-nav="${section}"><i>${icon}</i><span>${label}</span></button>`).join('')||'<p class="muted">No hay acciones rápidas habilitadas para este rol.</p>'}</div>`;
   }
   function searchAddresses(query){
@@ -785,7 +883,7 @@
   async function readImportFile(file){const extension=String(file.name||'').split('.').pop().toLowerCase();let matrix;if(extension==='csv'||extension==='txt')matrix=parseCsvText(await file.text());else if(extension==='xlsx')matrix=await parseXlsxFile(file);else throw new Error('FORMATO_IMPORTACION_INVALIDO');if(matrix.length<2)throw new Error('IMPORTACION_SIN_FILAS');const headers=(matrix.shift()||[]).map(normalizeImportHeader);return matrix.filter(row=>row.some(value=>String(value??'').trim()!=='')).map(row=>Object.fromEntries(headers.map((header,index)=>[header,row[index]??'']).filter(([header])=>header)));}
   function importPreviewTable(rows,definition){const headers=definition.headers.filter(header=>rows.some(row=>String(row[header]??'').trim()!==''));const visible=headers.slice(0,8);const body=rows.slice(0,8).map((row,index)=>`<tr><td>${index+2}</td>${visible.map(header=>`<td>${esc(row[header]??'')}</td>`).join('')}</tr>`).join('');return `<div class="import-preview"><div class="import-preview-summary"><b>${rows.length} filas listas</b><span>Vista previa de las primeras ${Math.min(8,rows.length)} filas</span></div>${table(['Fila',...visible],body)}</div>`;}
   function importResultMarkup(result){const errors=result.errores||[];return `<div class="import-result"><div class="kpi-grid compact">${metric('＋','Creados',result.creadas||0,'Nuevos registros')}${metric('↻','Actualizados',result.actualizadas||0,'Coincidencias encontradas')}${metric('—','Omitidos',result.omitidas||0,'Sin cambios')}${metric('!','Errores',errors.length,'Filas que requieren revisión')}</div>${errors.length?`<article class="import-errors"><h4>Filas con observaciones</h4>${errors.slice(0,40).map(item=>`<div><b>Fila ${number(item.fila)}</b><span>${esc(translateError({message:item.error}))}</span></div>`).join('')}${errors.length>40?`<p>Se muestran 40 de ${number(errors.length)} errores.</p>`:''}</article>`:'<div class="tracking-notice active"><i>✓</i><div><b>Importación completada sin errores</b><span>Los registros quedaron disponibles en el sistema.</span></div></div>'}<div class="form-actions"><button class="btn primary" type="button" data-cancel-modal>Cerrar</button></div></div>`;}
-  function openBulkImportModal(resource){const definition=bulkImportDefinitions[resource];if(!definition)return;$('#modalEyebrow').textContent='CARGA RÁPIDA';$('#modalTitle').textContent=`Importar ${definition.title.toLowerCase()}`;$('#modalBody').innerHTML=`<form id="bulkImportForm" class="bulk-import-form"><div class="import-steps"><div><i>1</i><span><b>Descargue la plantilla</b><small>No cambie los nombres de las columnas.</small></span></div><div><i>2</i><span><b>Complete hasta 1.500 filas</b><small>Puede utilizar Excel o CSV.</small></span></div><div><i>3</i><span><b>Revise y confirme</b><small>La carga se envía en una sola operación.</small></span></div></div><div class="import-template-card"><div><b>Plantilla oficial de ${esc(definition.title)}</b><span>Incluye ejemplos, formatos y listas permitidas.</span></div><a class="btn soft" href="${esc(definition.template)}" download>⇩ Descargar plantilla</a></div><label class="file-drop"><input name="archivo" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required><i>⇧</i><b>Seleccione o arrastre la planilla</b><span>Formatos permitidos: XLSX y CSV · máximo 1.500 filas</span></label><label class="import-update-option"><input name="actualizarExistentes" type="checkbox" value="SI" checked><span><b>Actualizar coincidencias existentes</b><small>Vehículos por patente, conductores por RUT y documentos por identificación/vencimiento.</small></span></label><div data-import-status class="import-status"><i>○</i><span>Seleccione un archivo para comenzar.</span></div><div data-import-preview></div><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit" disabled>Importar registros</button></div></form>`;openModal();const form=$('#bulkImportForm'),fileInput=form.elements.archivo,submit=$('button[type="submit"]',form),statusNode=$('[data-import-status]',form),preview=$('[data-import-preview]',form);let rows=[];$('[data-cancel-modal]',form).onclick=closeModal;fileInput.addEventListener('change',async()=>{rows=[];submit.disabled=true;preview.innerHTML='';const file=fileInput.files?.[0];if(!file)return;statusNode.className='import-status loading';statusNode.innerHTML='<i></i><span>Leyendo y validando la planilla…</span>';try{rows=await readImportFile(file);const missing=definition.required.filter(field=>!rows.some(row=>String(row[field]??'').trim()!==''));if(missing.length)throw new Error(`COLUMNAS_REQUERIDAS_${missing.join('_')}`);statusNode.className='import-status ready';statusNode.innerHTML=`<i>✓</i><span>${number(rows.length)} filas preparadas para importar.</span>`;preview.innerHTML=importPreviewTable(rows,definition);submit.disabled=false;}catch(error){statusNode.className='import-status error';statusNode.innerHTML=`<i>!</i><span>${esc(translateError(error))}</span>`;}});form.addEventListener('submit',event=>{event.preventDefault();if(!rows.length)return;conCargaBoton(submit,'Importando…',async()=>{try{const result=await api.request('bulkImport',{resource,data:{filas:rows,actualizarExistentes:form.elements.actualizarExistentes.checked?'SI':'NO',IP_PUBLICA:clientPublicIp}});invalidarListasFormulario(resource);cacheVistasModulo.delete(resource);$('#modalEyebrow').textContent='RESULTADO DE IMPORTACIÓN';$('#modalTitle').textContent=`${definition.title} procesados`;$('#modalBody').innerHTML=importResultMarkup(result);$('[data-cancel-modal]',$('#modalBody')).onclick=async()=>{closeModal();await go(resource);};toast('Importación finalizada',`${number(result.creadas||0)} creados · ${number(result.actualizadas||0)} actualizados · ${number((result.errores||[]).length)} errores`,(result.errores||[]).length?'warning':'success');}catch(error){toast('No se pudo importar',translateError(error),'error');}});});}
+  function openBulkImportModal(resource){const definition=bulkImportDefinitions[resource];if(!definition)return;$('#modalEyebrow').textContent='CARGA RÁPIDA';$('#modalTitle').textContent=`Importar ${definition.title.toLowerCase()}`;$('#modalBody').innerHTML=`<form id="bulkImportForm" class="bulk-import-form"><div class="import-steps"><div><i>1</i><span><b>Descargue la plantilla</b><small>No cambie los nombres de las columnas.</small></span></div><div><i>2</i><span><b>Complete hasta 1.500 filas</b><small>Puede utilizar Excel o CSV.</small></span></div><div><i>3</i><span><b>Revise y confirme</b><small>La carga se envía en una sola operación.</small></span></div></div><div class="import-template-card"><div><b>Plantilla oficial de ${esc(definition.title)}</b><span>Incluye ejemplos, formatos y listas permitidas.</span></div><a class="btn soft" href="${esc(definition.template)}" download>⇩ Descargar plantilla</a></div><label class="file-drop"><input name="archivo" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required><i>⇧</i><b>Seleccione o arrastre la planilla</b><span>Formatos permitidos: XLSX y CSV · máximo 1.500 filas</span></label><label class="import-update-option"><input name="actualizarExistentes" type="checkbox" value="SI" checked><span><b>Actualizar coincidencias existentes</b><small>Vehículos por patente, conductores por RUT y documentos por identificación/vencimiento.</small></span></label><div data-import-status class="import-status"><i>○</i><span>Seleccione un archivo para comenzar.</span></div><div data-import-preview></div><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit" disabled>Importar registros</button></div></form>`;openModal();const form=$('#bulkImportForm'),fileInput=form.elements.archivo,submit=$('button[type="submit"]',form),statusNode=$('[data-import-status]',form),preview=$('[data-import-preview]',form);let rows=[];$('[data-cancel-modal]',form).onclick=closeModal;fileInput.addEventListener('change',async()=>{rows=[];submit.disabled=true;preview.innerHTML='';const file=fileInput.files?.[0];if(!file)return;statusNode.className='import-status loading';statusNode.innerHTML='<i></i><span>Leyendo y validando la planilla…</span>';try{rows=await readImportFile(file);const missing=definition.required.filter(field=>!rows.some(row=>String(row[field]??'').trim()!==''));if(missing.length)throw new Error(`COLUMNAS_REQUERIDAS_${missing.join('_')}`);statusNode.className='import-status ready';statusNode.innerHTML=`<i>✓</i><span>${number(rows.length)} filas preparadas para importar.</span>`;preview.innerHTML=importPreviewTable(rows,definition);submit.disabled=false;}catch(error){statusNode.className='import-status error';statusNode.innerHTML=`<i>!</i><span>${esc(translateError(error))}</span>`;}});form.addEventListener('submit',event=>{event.preventDefault();if(!rows.length)return;conCargaBoton(submit,'Importando…',async()=>{try{const result=await api.request('bulkImport',{resource,data:{filas:rows,actualizarExistentes:form.elements.actualizarExistentes.checked?'SI':'NO',IP_PUBLICA:clientPublicIp}});invalidarListasFormulario(resource);cacheVistasModulo.delete(resource);$('#modalEyebrow').textContent='RESULTADO DE IMPORTACIÓN';$('#modalTitle').textContent=`${definition.title} procesados`;$('#modalBody').innerHTML=importResultMarkup(result);$('[data-cancel-modal]',$('#modalBody')).onclick=()=>{closeModal();actualizarSeccionEnSegundoPlano(resource);};toast('Importación finalizada',`${number(result.creadas||0)} creados · ${number(result.actualizadas||0)} actualizados · ${number((result.errores||[]).length)} errores`,(result.errores||[]).length?'warning':'success');}catch(error){toast('No se pudo importar',translateError(error),'error');}});});}
 
   async function renderResourcePage(resource,tag,title,description,rowRenderer,headers) {
     const result=await api.request('list',{resource}); const rows=result.rows||[];
@@ -797,12 +895,12 @@
     return heading(tag,title,description,`<button class="btn soft" data-sync>↻ Sincronizar</button>${importButtons}${createButton}`)+`<article class="card"><div class="toolbar"><label class="search-box"><span>⌕</span><input data-table-search placeholder="Buscar en ${title.toLowerCase()}"></label><button class="btn soft push" data-export="${resource}">Exportar CSV</button></div><div data-filter-table>${table(headers,rowHtml,`No hay ${title.toLowerCase()} registrados.`)}</div></article>`;
   }
 
-  function vehicleRows(v){return `<tr data-search-row="${esc(`${v.PATENTE} ${v.MARCA} ${v.MODELO} ${v.ESTADO}`.toLowerCase())}"><td><div class="entity"><i class="entity-icon">🚐</i><div><strong>${esc(v.MARCA||'Sin marca')} ${esc(v.MODELO||'')}</strong><span class="muted">${esc(v.ID)}</span></div></div></td><td><strong>${esc(v.PATENTE)}</strong></td><td>${esc(v.ANIO||'—')}</td><td>${number(v.KILOMETRAJE)} km</td><td>${status(v.ESTADO)}</td><td>${esc(v.QR_CODIGO||'—')}</td><td>${actions('vehicles',v.ID)}</td></tr>`;}
-  function driverRows(d){const whatsapp=d.TELEFONO?`<button class="btn whatsapp small" data-whatsapp-driver="${esc(d.ID)}" title="Enviar WhatsApp">◉ WhatsApp</button>`:'';return `<tr data-search-row="${esc(`${d.NOMBRE} ${d.RUT} ${d.ESTADO} ${d.TELEFONO||''}`.toLowerCase())}"><td><div class="entity"><span class="avatar">${initials(d.NOMBRE)}</span><div><strong>${esc(d.NOMBRE)}</strong><span class="muted">${esc(d.TELEFONO||'Sin teléfono')}</span></div></div></td><td>${esc(d.RUT)}</td><td>${esc(d.LICENCIA_CLASE||'—')}</td><td>${fmtDate(d.LICENCIA_VENCIMIENTO)}</td><td>${status(d.ESTADO)}</td><td>${esc(d.USUARIO_ID||'Sin asociar')}</td><td><div class="row-button-stack">${whatsapp}${actions('drivers',d.ID)}</div></td></tr>`;}
-  function maintenanceRows(m){return `<tr data-search-row="${esc(`${m.TITULO} ${m.VEHICULO_ID} ${m.ESTADO}`.toLowerCase())}"><td><strong>${esc(m.TITULO)}</strong><span class="muted">${esc(m.DESCRIPCION||'')}</span></td><td>${esc(m.VEHICULO_ID)}</td><td>${esc(m.TIPO)}</td><td>${fmtDate(m.FECHA_PROGRAMADA)}</td><td>$${number(m.COSTO)}</td><td>${status(m.ESTADO)}</td><td>${actions('maintenance',m.ID)}</td></tr>`;}
-  function documentRows(d){return `<tr data-search-row="${esc(`${d.TIPO} ${d.IDENTIFICACION} ${d.ESTADO}`.toLowerCase())}"><td><strong>${esc(d.TIPO)}</strong><span class="muted">${esc(d.ID)}</span></td><td>${esc(d.ASOCIADO_TIPO)}</td><td>${esc(d.IDENTIFICACION)}</td><td>${fmtDate(d.FECHA_VENCIMIENTO)}</td><td>${status(d.ESTADO)}</td><td>${d.DIRECCION_ARCHIVO?`<a class="link-button" href="${esc(d.DIRECCION_ARCHIVO)}" target="_blank" rel="noopener">Abrir</a>`:'—'}</td><td>${actions('documents',d.ID)}</td></tr>`;}
-  function alertRows(a){return `<tr data-search-row="${esc(`${a.NIVEL} ${a.TITULO} ${a.MODULO}`.toLowerCase())}"><td>${status(a.NIVEL)}</td><td><strong>${esc(a.TITULO)}</strong><span class="muted">${esc(a.MENSAJE)}</span></td><td>${esc(a.MODULO||'—')}</td><td>${fmtDate(a.FECHA_HORA||a.CREADO_EN,true)}</td><td>${status(a.LEIDA||'NO')}</td><td>${actions('alerts',a.ID)}</td></tr>`;}
-  function userRows(u){const mode=u.ROL_ID==='ROL-ADMIN'?'Completo':u.MODO_PERMISOS==='PERSONALIZADO'?'Personalizados':'Según rol';const permissionButton=hasPermission('USUARIOS','ACTUALIZAR')?`<button data-user-permissions="${esc(u.ID)}" title="Configurar permisos">⚿</button>`:'';const actionHtml=actions('users',u.ID),baseActions=actionHtml==='—'?(permissionButton?`<div class="row-actions">${permissionButton}</div>`:'—'):actionHtml.replace('</div>',permissionButton+'</div>');return `<tr data-search-row="${esc(`${u.NOMBRE} ${u.CORREO} ${u.ROL_ID} ${mode}`.toLowerCase())}"><td><div class="entity"><span class="avatar">${initials(u.NOMBRE)}</span><strong>${esc(u.NOMBRE)}</strong></div></td><td>${esc(u.CORREO)}</td><td>${esc(u.ROL_NOMBRE||u.ROL_ID)}</td><td>${status(mode)}</td><td>${fmtDate(u.ULTIMO_ACCESO,true)}</td><td>${status(u.ESTADO)}</td><td>${baseActions}</td></tr>`;}
+  function vehicleRows(v){return `<tr data-filter-date="${esc(v.PROXIMA_MANTENCION||v.ACTUALIZADO_EN||v.CREADO_EN||'')}" data-search-row="${esc(`${v.PATENTE} ${v.MARCA} ${v.MODELO} ${v.ESTADO}`.toLowerCase())}"><td><div class="entity"><i class="entity-icon">🚐</i><div><strong>${esc(v.MARCA||'Sin marca')} ${esc(v.MODELO||'')}</strong><span class="muted">${esc(v.ID)}</span></div></div></td><td><strong>${esc(v.PATENTE)}</strong></td><td>${esc(v.ANIO||'—')}</td><td>${number(v.KILOMETRAJE)} km</td><td>${status(v.ESTADO)}</td><td>${esc(v.QR_CODIGO||'—')}</td><td>${actions('vehicles',v.ID)}</td></tr>`;}
+  function driverRows(d){const whatsapp=d.TELEFONO?`<button class="btn whatsapp small" data-whatsapp-driver="${esc(d.ID)}" title="Enviar WhatsApp">◉ WhatsApp</button>`:'';return `<tr data-filter-date="${esc(d.LICENCIA_VENCIMIENTO||d.ACTUALIZADO_EN||d.CREADO_EN||'')}" data-search-row="${esc(`${d.NOMBRE} ${d.RUT} ${d.ESTADO} ${d.TELEFONO||''}`.toLowerCase())}"><td><div class="entity"><span class="avatar">${initials(d.NOMBRE)}</span><div><strong>${esc(d.NOMBRE)}</strong><span class="muted">${esc(d.TELEFONO||'Sin teléfono')}</span></div></div></td><td>${esc(d.RUT)}</td><td>${esc(d.LICENCIA_CLASE||'—')}</td><td>${fmtDate(d.LICENCIA_VENCIMIENTO)}</td><td>${status(d.ESTADO)}</td><td>${esc(d.USUARIO_ID||'Sin asociar')}</td><td><div class="row-button-stack">${whatsapp}${actions('drivers',d.ID)}</div></td></tr>`;}
+  function maintenanceRows(m){return `<tr data-filter-date="${esc(m.FECHA_PROGRAMADA||m.FECHA_REALIZADA||m.CREADO_EN||'')}" data-search-row="${esc(`${m.TITULO} ${m.VEHICULO_ID} ${m.ESTADO}`.toLowerCase())}"><td><strong>${esc(m.TITULO)}</strong><span class="muted">${esc(m.DESCRIPCION||'')}</span></td><td>${esc(m.VEHICULO_ID)}</td><td>${esc(m.TIPO)}</td><td>${fmtDate(m.FECHA_PROGRAMADA)}</td><td>$${number(m.COSTO)}</td><td>${status(m.ESTADO)}</td><td>${actions('maintenance',m.ID)}</td></tr>`;}
+  function documentRows(d){return `<tr data-filter-date="${esc(d.FECHA_VENCIMIENTO||d.FECHA_EMISION||d.CREADO_EN||'')}" data-search-row="${esc(`${d.TIPO} ${d.IDENTIFICACION} ${d.ESTADO}`.toLowerCase())}"><td><strong>${esc(d.TIPO)}</strong><span class="muted">${esc(d.ID)}</span></td><td>${esc(d.ASOCIADO_TIPO)}</td><td>${esc(d.IDENTIFICACION)}</td><td>${fmtDate(d.FECHA_VENCIMIENTO)}</td><td>${status(d.ESTADO)}</td><td>${d.DIRECCION_ARCHIVO?`<a class="link-button" href="${esc(d.DIRECCION_ARCHIVO)}" target="_blank" rel="noopener">Abrir</a>`:'—'}</td><td>${actions('documents',d.ID)}</td></tr>`;}
+  function alertRows(a){return `<tr data-filter-date="${esc(a.FECHA_HORA||a.CREADO_EN||'')}" data-search-row="${esc(`${a.NIVEL} ${a.TITULO} ${a.MODULO}`.toLowerCase())}"><td>${status(a.NIVEL)}</td><td><strong>${esc(a.TITULO)}</strong><span class="muted">${esc(a.MENSAJE)}</span></td><td>${esc(a.MODULO||'—')}</td><td>${fmtDate(a.FECHA_HORA||a.CREADO_EN,true)}</td><td>${status(a.LEIDA||'NO')}</td><td>${actions('alerts',a.ID)}</td></tr>`;}
+  function userRows(u){const mode=u.ROL_ID==='ROL-ADMIN'?'Completo':u.MODO_PERMISOS==='PERSONALIZADO'?'Personalizados':'Según rol';const permissionButton=hasPermission('USUARIOS','ACTUALIZAR')?`<button data-user-permissions="${esc(u.ID)}" title="Configurar permisos">⚿</button>`:'';const actionHtml=actions('users',u.ID),baseActions=actionHtml==='—'?(permissionButton?`<div class="row-actions">${permissionButton}</div>`:'—'):actionHtml.replace('</div>',permissionButton+'</div>');return `<tr data-filter-date="${esc(u.ULTIMO_ACCESO||u.ACTUALIZADO_EN||u.CREADO_EN||'')}" data-search-row="${esc(`${u.NOMBRE} ${u.CORREO} ${u.ROL_ID} ${mode}`.toLowerCase())}"><td><div class="entity"><span class="avatar">${initials(u.NOMBRE)}</span><strong>${esc(u.NOMBRE)}</strong></div></td><td>${esc(u.CORREO)}</td><td>${esc(u.ROL_NOMBRE||u.ROL_ID)}</td><td>${status(mode)}</td><td>${fmtDate(u.ULTIMO_ACCESO,true)}</td><td>${status(u.ESTADO)}</td><td>${baseActions}</td></tr>`;}
   function actions(resource,id){const module=resourcePermission[resource];const buttons=[];if(hasPermission(module,'ACTUALIZAR'))buttons.push(`<button data-edit="${resource}:${id}" title="Editar">✎</button>`);if(hasPermission(module,'ELIMINAR'))buttons.push(`<button data-delete="${resource}:${id}" title="Eliminar">×</button>`);return buttons.length?`<div class="row-actions">${buttons.join('')}</div>`:'—';}
 
   function parseCheckinItems(row) {
@@ -848,7 +946,7 @@
   function checkinRow(row,vehicleMap,driverMap,withReview=false) {
     const vehicle=vehicleMap[row.VEHICULO_ID]?.PATENTE||row.VEHICULO_ID,driver=driverMap[row.CONDUCTOR_ID]?.NOMBRE||row.CONDUCTOR_ID,state=checkinVisualState(row);
     const review=withReview&&row.ESTADO_REVISION==='Pendiente'&&Number(row.FALLAS_CRITICAS||0)===0?`<button class="btn primary small" data-review-checkin="${esc(row.ID)}">Revisar</button>`:'';
-    return `<tr data-search-row="${esc(`${row.ID} ${vehicle} ${driver} ${row.RESULTADO} ${state}`.toLowerCase())}"><td><strong>${esc(row.ID)}</strong><span class="muted">${fmtDate(row.FECHA_HORA,true)}</span></td><td><strong>${esc(vehicle)}</strong></td><td>${esc(driver)}</td><td>${status(row.RESULTADO)}</td><td>${status(state)}</td><td><span class="checkin-count critical">${number(row.FALLAS_CRITICAS||0)} críticas</span><span class="checkin-count">${number(row.FALLAS_LEVES||0)} leves</span></td><td>${fmtDate(row.VIGENTE_HASTA,true)}</td><td><div class="row-button-stack">${review}${checkinDetailAction(row)}</div></td></tr>`;
+    return `<tr data-filter-date="${esc(row.FECHA_HORA||row.CREADO_EN||'')}" data-search-row="${esc(`${row.ID} ${vehicle} ${driver} ${row.RESULTADO} ${state}`.toLowerCase())}"><td><strong>${esc(row.ID)}</strong><span class="muted">${fmtDate(row.FECHA_HORA,true)}</span></td><td><strong>${esc(vehicle)}</strong></td><td>${esc(driver)}</td><td>${status(row.RESULTADO)}</td><td>${status(state)}</td><td><span class="checkin-count critical">${number(row.FALLAS_CRITICAS||0)} críticas</span><span class="checkin-count">${number(row.FALLAS_LEVES||0)} leves</span></td><td>${fmtDate(row.VIGENTE_HASTA,true)}</td><td><div class="row-button-stack">${review}${checkinDetailAction(row)}</div></td></tr>`;
   }
   function checkinInlineItemsMarkup() {
     const groups={};
@@ -1008,25 +1106,48 @@
   function rutasDisponiblesOperacion(form){const vehicle=form.elements.VEHICULO_ID?.value||'',driver=form.elements.CONDUCTOR_ID?.value||'',select=form.elements.RUTA_ID;if(!select)return;const routes=(cacheListasFormulario.get('routes')||[]).filter(route=>['Asignada','En curso'].includes(route.ESTADO)&&(!driver||route.CONDUCTOR_ID===driver)&&(!route.VEHICULO_ID||!vehicle||route.VEHICULO_ID===vehicle)&&!route.OPERACION_ID);const selected=select.value;select.innerHTML=`<option value="">Sin ruta asignada · salida y regreso a base</option>${routes.map(route=>`<option value="${esc(route.ID)}" ${route.ID===selected?'selected':''}>${esc(route.NOMBRE||route.ID)} · ${esc(route.DESTINO||'')}</option>`).join('')}`;actualizarDestinoOperacion(form);}
   function actualizarDestinoOperacion(form){const routeId=form.elements.RUTA_ID?.value||'',route=(cacheListasFormulario.get('routes')||[]).find(item=>item.ID===routeId),base=configuracionPuntoOperacion(),field=form.elements.DESTINO;if(field)field.value=route?.DESTINO||base.direccion;const type=form.querySelector('[data-operation-type]');if(type)type.textContent=route?'Ruta asignada con regreso obligatorio a la base':'Salida y regreso al mismo punto base';}
   async function renderOperations() {
-    await sincronizarPuntoOperacionDispositivo({silencioso:true});
-    const batch=await api.requestBatch([
-      {key:'ops',action:'list',payload:{resource:'operations'}},
-      {key:'vehicles',action:'list',payload:{resource:'vehicles'}},
-      {key:'drivers',action:'list',payload:{resource:'drivers'}},
-      {key:'checkins',action:'list',payload:{resource:'checkins'}},
-      {key:'routes',action:'list',payload:{resource:'routes'}},
-    ]),ops=batch.ops||{},vehicles=batch.vehicles||{},drivers=batch.drivers||{},checkins=batch.checkins||{},routes=batch.routes||{};
-    guardarListaFormulario('operations',ops.rows||[]);guardarListaFormulario('vehicles',vehicles.rows||[]);guardarListaFormulario('drivers',drivers.rows||[]);guardarListaFormulario('checkins',checkins.rows||[]);guardarListaFormulario('routes',routes.rows||[]);
+    const summary=await api.request('operationsSummary',{limit:Number(config.MAXIMO_HISTORIAL_OPERACIONES_RAPIDO||80),cache:false});
+    const operationRows=summary.operations||[],active=summary.activeOperations||operationRows.filter(row=>row.ESTADO==='Activa');
+    const vehicles=summary.vehicles||[],drivers=summary.drivers||[],routes=summary.routes||[];
+
+    if(summary.company||summary.point){
+      const pointData=summary.point?{
+        PUNTO_OPERACION_NOMBRE:summary.point.NOMBRE,
+        PUNTO_OPERACION_DIRECCION:summary.point.DIRECCION,
+        PUNTO_OPERACION_LATITUD:summary.point.LATITUD,
+        PUNTO_OPERACION_LONGITUD:summary.point.LONGITUD,
+        RADIO_INICIO_METROS:summary.point.RADIO_INICIO_METROS,
+        RADIO_FIN_METROS:summary.point.RADIO_FIN_METROS,
+        PRECISION_GPS_MAXIMA_METROS:summary.point.PRECISION_GPS_MAXIMA_METROS,
+        VALIDAR_UBICACION_OPERACION:'SI',
+      }:{};
+      const stored=summary.pointConfigured?guardarPuntoOperacionDispositivo({...summary.company,...pointData,sincronizadoEn:summary.generatedAt},'SERVIDOR'):null;
+      currentCompany={...(currentCompany||{}),...(summary.company||{}),...(stored||{})};
+    }
+
+    guardarListaFormulario('operations',operationRows);
+    guardarListaFormulario('vehicles',vehicles);
+    guardarListaFormulario('drivers',drivers);
+    guardarListaFormulario('routes',routes);
+
     const base=configuracionPuntoOperacion();
-    const active=(ops.rows||[]).filter(o=>o.ESTADO==='Activa'),vehicleMap=Object.fromEntries((vehicles.rows||[]).map(v=>[v.ID,v])),driverMap=Object.fromEntries((drivers.rows||[]).map(d=>[d.ID,d])),routeMap=Object.fromEntries((routes.rows||[]).map(r=>[r.ID,r]));
+    const vehicleMap=Object.fromEntries(vehicles.map(v=>[v.ID,v]));
+    const driverMap=Object.fromEntries(drivers.map(d=>[d.ID,d]));
+    const routeMap=Object.fromEntries(routes.map(r=>[r.ID,r]));
+
     const activeHtml=active.map(op=>`<article class="operation-card"><header><div><h4>${esc(op.ID)} · ${esc(vehicleMap[op.VEHICULO_ID]?.PATENTE||op.VEHICULO_ID)}</h4><small>${esc(driverMap[op.CONDUCTOR_ID]?.NOMBRE||op.CONDUCTOR_ID)}</small></div>${status(op.ESTADO)}</header><div class="operation-route">${esc(op.ORIGEN||op.BASE_DIRECCION||'Base')} → ${esc(op.DESTINO||op.PUNTO_RETORNO||'Base')}</div><div class="operation-meta"><div><span>INICIO</span><b>${fmtDate(op.FECHA_INICIO,true)}</b></div><div><span>KM INICIAL</span><b>${op.KM_INICIO!==''&&op.KM_INICIO!=null?number(op.KM_INICIO):'Opcional'}</b></div><div><span>TIPO</span><b>${esc(op.TIPO_OPERACION||'Regreso a base')}</b></div><div><span>RUTA</span><b>${esc(routeMap[op.RUTA_ID]?.NOMBRE||op.RUTA_ID||'Sin ruta')}</b></div><div><span>INICIO VALIDADO</span><b>${op.VALIDACION_INICIO==='VALIDADA'?`${number(op.DISTANCIA_INICIO_BASE_METROS)} m de base`:'Pendiente'}</b></div><div><span>CHECK-IN</span><b>${esc(op.CHECKIN_ID||'Sin registro')}</b></div><div><span>RETORNO</span><b>${esc(op.PUNTO_RETORNO||op.BASE_DIRECCION||'Base operacional')}</b></div></div><div class="operation-card-actions">${driverMap[op.CONDUCTOR_ID]?.TELEFONO?`<button class="btn whatsapp small" data-whatsapp-driver="${esc(op.CONDUCTOR_ID)}">◉ WhatsApp</button>`:''}${esAdministrador()?`<button class="btn soft small" data-edit-operation-admin="${op.ID}">Editar</button>`:''}${puedeFinalizarOperacion()?`<button class="btn danger small" data-finish-operation="${op.ID}">${currentUser.ROL_ID==='ROL-CONDUCTOR'?'Finalizar en punto base':'Finalizar operación'}</button>`:''}${esAdministrador()?`<button class="btn danger small" data-delete-operation-admin="${op.ID}">Eliminar</button>`:''}</div></article>`).join('');
-    const opRows=(ops.rows||[]).map(op=>`<tr><td><strong>${esc(op.ID)}</strong></td><td>${esc(vehicleMap[op.VEHICULO_ID]?.PATENTE||op.VEHICULO_ID)}</td><td>${esc(driverMap[op.CONDUCTOR_ID]?.NOMBRE||op.CONDUCTOR_ID)}</td><td>${esc(op.TIPO_OPERACION||'—')}</td><td>${esc(routeMap[op.RUTA_ID]?.NOMBRE||op.RUTA_ID||'Sin ruta')}</td><td>${fmtDate(op.FECHA_INICIO,true)}</td><td>${op.KM_INICIO!==''&&op.KM_INICIO!=null?number(op.KM_INICIO):'—'} / ${op.KM_FIN!==''&&op.KM_FIN!=null?number(op.KM_FIN):'—'}</td><td>${op.VALIDACION_INICIO==='VALIDADA'?'✓ Inicio':''}${op.VALIDACION_FIN==='VALIDADA'?' · ✓ Fin':op.VALIDACION_FIN==='VALIDADA_PRECISION_BAJA'?' · ⚠ Fin GPS impreciso':''}</td><td>${status(op.ESTADO)}</td><td>${esAdministrador()?`<div class="row-button-stack"><button class="btn soft small" data-edit-operation-admin="${op.ID}">Editar</button><button class="btn danger small" data-delete-operation-admin="${op.ID}">Eliminar</button></div>`:'—'}</td></tr>`).join('');
+
+    const opRows=operationRows.map(op=>`<tr data-filter-date="${esc(op.FECHA_INICIO||op.CREADO_EN||'')}" data-search-row="${esc(`${op.ID} ${vehicleMap[op.VEHICULO_ID]?.PATENTE||op.VEHICULO_ID} ${driverMap[op.CONDUCTOR_ID]?.NOMBRE||op.CONDUCTOR_ID} ${op.TIPO_OPERACION||''} ${routeMap[op.RUTA_ID]?.NOMBRE||op.RUTA_ID||''} ${op.ESTADO||''}`.toLowerCase())}"><td><strong>${esc(op.ID)}</strong></td><td>${esc(vehicleMap[op.VEHICULO_ID]?.PATENTE||op.VEHICULO_ID)}</td><td>${esc(driverMap[op.CONDUCTOR_ID]?.NOMBRE||op.CONDUCTOR_ID)}</td><td>${esc(op.TIPO_OPERACION||'—')}</td><td>${esc(routeMap[op.RUTA_ID]?.NOMBRE||op.RUTA_ID||'Sin ruta')}</td><td>${fmtDate(op.FECHA_INICIO,true)}</td><td>${op.KM_INICIO!==''&&op.KM_INICIO!=null?number(op.KM_INICIO):'—'} / ${op.KM_FIN!==''&&op.KM_FIN!=null?number(op.KM_FIN):'—'}</td><td>${op.VALIDACION_INICIO==='VALIDADA'?'✓ Inicio':''}${op.VALIDACION_FIN==='VALIDADA'?' · ✓ Fin':op.VALIDACION_FIN==='VALIDADA_PRECISION_BAJA'?' · ⚠ Fin GPS impreciso':''}</td><td>${status(op.ESTADO)}</td><td>${esAdministrador()?`<div class="row-button-stack"><button class="btn soft small" data-edit-operation-admin="${op.ID}">Editar</button><button class="btn danger small" data-delete-operation-admin="${op.ID}">Eliminar</button></div>`:'—'}</td></tr>`).join('');
+
     const enabled=base.configurada,createActions=`<button class="btn soft" data-sync>↻ Sincronizar</button>`+(hasPermission('OPERACIONES','CREAR')&&enabled?(currentUser.ROL_ID==='ROL-CONDUCTOR'?'<button class="btn primary" data-open-qr>▦ Validar QR e iniciar</button>':'<button class="btn soft" data-open-qr>▦ Escanear QR</button><button class="btn primary" data-new-operation>＋ Nueva operación</button>'):'');
+    const availability=`<div class="operation-availability"><span><b>${number(summary.availableVehicles??vehicles.filter(row=>row.ESTADO==='Disponible').length)}</b> vehículos disponibles</span><span><b>${number(summary.availableDrivers??drivers.filter(row=>row.ESTADO==='Disponible').length)}</b> conductores disponibles</span><span><b>${number(summary.availableRoutes??routes.filter(row=>['Asignada','En curso'].includes(row.ESTADO)).length)}</b> rutas vigentes</span><small>Respuesta preparada en ${number(summary.processingMilliseconds||0)} ms</small></div>`;
     const baseBanner=enabled?`<div class="operation-geofence-banner"><i>⌖</i><div><h3>${esc(base.nombre)}</h3><p>${esc(base.direccion)} · Inicio dentro de ${number(base.radioInicio)} m · Finalización dentro de ${number(base.radioFin)} m · Precisión máxima de inicio ±${number(base.precisionMaxima)} m. En el cierre, una señal imprecisa puede aceptarse con tolerancia controlada y registro de auditoría.</p></div>${puedeAdministrarPuntoOperacion()?'<button class="btn soft" data-nav="settings">Configurar punto</button>':''}</div>`:`<div class="operation-geofence-banner blocked"><i>!</i><div><h3>Punto operacional no configurado</h3><p>Nadie podrá iniciar o finalizar operaciones hasta que el Administrador defina la ubicación base en Configuración.</p></div>${puedeAdministrarPuntoOperacion()?'<div class="operation-banner-actions"><button class="btn soft" data-nav="settings">Configuración avanzada</button><button class="btn primary" data-quick-base-setup>⌖ Configurar con mi ubicación</button></div>':''}</div>`;
-    return heading('CONTROL DE VIAJES','Operaciones','El inicio y la finalización se validan por GPS contra el punto parametrizado por el Administrador.',createActions)+baseBanner+
-      `<div class="operation-banner"><i>✓</i><div><h3>Check-in, ruta y ubicación trabajan juntos</h3><p>Sin ruta asignada, la salida y el destino son la misma base. Con ruta asignada, el recorrido usa ese destino, pero la finalización exige regresar al punto base.</p></div>${hasPermission('OPERACIONES','CREAR')&&enabled?'<button class="btn soft" data-open-qr>Usar QR</button>':''}</div>`+
-      `<div class="operation-layout"><article class="card"><div class="card-header"><div><h3>Operaciones activas</h3><p>${active.length} recorridos en curso</p></div></div>${activeHtml||empty('⇄','No hay operaciones activas',enabled?'Cree una operación desde el punto base autorizado.':'Configure primero el punto base operacional.')}</article><article class="card"><div class="card-header"><div><h3>Reglas obligatorias</h3><p>Aplicadas en el servidor</p></div></div><div class="requirement-list"><div><i>1</i><span><b>Check-in aprobado</b><small>Vigente, sin utilizar y correspondiente al vehículo y conductor.</small></span></div><div><i>2</i><span><b>Inicio dentro del perímetro</b><small>El GPS debe estar dentro de ${number(base.radioInicio)} m de la base.</small></span></div><div><i>3</i><span><b>Ruta opcional vinculada</b><small>La ruta define el destino, pero no elimina el regreso obligatorio.</small></span></div><div><i>4</i><span><b>Finalización en la base</b><small>El vehículo debe regresar al perímetro. Si la señal es imprecisa, se aplicará una tolerancia máxima de ${number(config.TOLERANCIA_GPS_IMPRECISA_FIN_METROS||500)} m y quedará registrada.</small></span></div></div></article></div>`+
-      `<article class="card"><div class="card-header"><div><h3>Historial de operaciones</h3><p>Inicio, retorno y ubicación validada</p></div></div>${table(['Operación','Vehículo','Conductor','Tipo','Ruta','Inicio','KM inicio / final','Ubicación','Estado','Acciones'],opRows,'No existen operaciones registradas.')}</article>`;
+    const total=Number(summary.total??operationRows.length),shown=operationRows.length,historyNote=total>shown?`Mostrando ${shown} registros prioritarios de ${number(total)}. Las operaciones activas siempre se incluyen.`:`${shown} registros cargados.`;
+
+    return heading('CONTROL DE VIAJES','Operaciones','Carga rápida: operaciones activas, catálogos disponibles y el historial reciente.',createActions)+baseBanner+availability+
+      `<div class="operation-banner"><i>⚡</i><div><h3>Modo de carga rápida activo</h3><p>${esc(historyNote)} El historial completo permanece guardado en la base y en auditoría.</p></div></div>`+
+      `<div class="operation-layout"><article class="card"><div class="card-header"><div><h3>Operaciones activas</h3><p>${active.length} recorridos en curso</p></div></div>${activeHtml||empty('⇄','No hay operaciones activas',enabled?'Cree una operación desde el punto base autorizado.':'Configure primero el punto base operacional.')}</article><article class="card"><div class="card-header"><div><h3>Reglas obligatorias</h3><p>Aplicadas en el servidor</p></div></div><div class="requirement-list"><div><i>1</i><span><b>Check-in aprobado</b><small>Se consulta solo al abrir el formulario de inicio.</small></span></div><div><i>2</i><span><b>Inicio dentro del perímetro</b><small>El GPS debe estar dentro de ${number(base.radioInicio)} m de la base.</small></span></div><div><i>3</i><span><b>Ruta opcional vinculada</b><small>La ruta define el destino, pero no elimina el regreso obligatorio.</small></span></div><div><i>4</i><span><b>Finalización en la base</b><small>El vehículo debe regresar al perímetro autorizado.</small></span></div></div></article></div>`+
+      `<article class="card"><div class="card-header"><div><h3>Historial reciente de operaciones</h3><p>${esc(historyNote)}</p></div></div><div class="toolbar"><label class="search-box"><span>⌕</span><input data-table-search placeholder="Buscar operación, vehículo, conductor o estado"></label></div>${table(['Operación','Vehículo','Conductor','Tipo','Ruta','Inicio','KM inicio / final','Ubicación','Estado','Acciones'],opRows,'No existen operaciones registradas.')}</article>`;
   }
 
 
@@ -1060,7 +1181,7 @@
     if(!base.configurada)prerequisites.push(`<div class="module-diagnostic warning"><i>⌖</i><div><b>La ruta puede asignarse sin geocerca</b><span>Defina manualmente el origen y el destino. El punto operacional solo será obligatorio cuando se intente iniciar o finalizar una operación.</span></div>${puedeAdministrarPuntoOperacion()?'<button class="btn soft" data-nav="settings">Configurar punto para operaciones</button>':''}</div>`);
     if(hasPermission('RUTAS','CREAR')&&!driversResult.rows.length)prerequisites.push(`<div class="module-diagnostic warning"><i>♙</i><div><b>No existen conductores disponibles</b><span>Registre un conductor antes de crear la primera asignación.</span></div><button class="btn soft" data-nav="drivers">Abrir conductores</button></div>`);
     if(hasPermission('RUTAS','CREAR')&&!vehiclesResult.rows.length)prerequisites.push(`<div class="module-diagnostic warning"><i>▣</i><div><b>No existen vehículos registrados</b><span>Registre una unidad para asociarla a la ruta.</span></div><button class="btn soft" data-nav="vehicles">Abrir vehículos</button></div>`);
-    const routeRows=routes.slice().sort((a,b)=>new Date(b.FECHA_ASIGNACION||0)-new Date(a.FECHA_ASIGNACION||0)).map(route=>`<tr data-search-row="${esc(`${route.ID} ${route.NOMBRE} ${route.CONDUCTOR_NOMBRE} ${route.VEHICULO_PATENTE} ${route.DESTINO} ${route.ESTADO}`.toLowerCase())}"><td><strong>${esc(route.ID)}</strong><span class="muted">${esc(route.NOMBRE||'Ruta')}</span></td><td>${esc(route.CONDUCTOR_NOMBRE||'Sin conductor')}</td><td>${esc(route.VEHICULO_PATENTE||'Sin vehículo')}</td><td>${esc(route.ORIGEN||base.direccion)} → ${esc(route.DESTINO||'Sin destino')}</td><td>${fmtDate(route.FECHA_ASIGNACION,true)}</td><td>${status(route.ESTADO)}</td><td><div class="row-button-stack"><a class="btn soft small" href="${esc(navigationUrl(route))}" target="_blank" rel="noopener">Navegar</a>${driverMap[route.CONDUCTOR_ID]?.TELEFONO?`<button class="btn whatsapp small" data-whatsapp-driver="${esc(route.CONDUCTOR_ID)}">WhatsApp</button>`:''}</div></td></tr>`).join('');
+    const routeRows=routes.slice().sort((a,b)=>new Date(b.FECHA_ASIGNACION||0)-new Date(a.FECHA_ASIGNACION||0)).map(route=>`<tr data-filter-date="${esc(route.FECHA_ASIGNACION||route.CREADO_EN||'')}" data-search-row="${esc(`${route.ID} ${route.NOMBRE} ${route.CONDUCTOR_NOMBRE} ${route.VEHICULO_PATENTE} ${route.DESTINO} ${route.ESTADO}`.toLowerCase())}"><td><strong>${esc(route.ID)}</strong><span class="muted">${esc(route.NOMBRE||'Ruta')}</span></td><td>${esc(route.CONDUCTOR_NOMBRE||'Sin conductor')}</td><td>${esc(route.VEHICULO_PATENTE||'Sin vehículo')}</td><td>${esc(route.ORIGEN||base.direccion)} → ${esc(route.DESTINO||'Sin destino')}</td><td>${fmtDate(route.FECHA_ASIGNACION,true)}</td><td>${status(route.ESTADO)}</td><td><div class="row-button-stack"><a class="btn soft small" href="${esc(navigationUrl(route))}" target="_blank" rel="noopener">Navegar</a>${driverMap[route.CONDUCTOR_ID]?.TELEFONO?`<button class="btn whatsapp small" data-whatsapp-driver="${esc(route.CONDUCTOR_ID)}">WhatsApp</button>`:''}</div></td></tr>`).join('');
     return heading('PLANIFICACIÓN OPERACIONAL','Asignación de rutas','Cree, supervise y cierre rutas vinculadas al conductor, vehículo y punto base.',actions)+
       prerequisites.join('')+
       `<div class="live-strip">${liveStat('➜','Asignadas',assigned.length,assigned.length?'warning':'')}${liveStat('●','En curso',running.length,running.length?'online':'')}${liveStat('✓','Completadas',completed.length,'online')}${liveStat('×','Canceladas',cancelled.length,cancelled.length?'warning':'')}</div>`+
@@ -1080,7 +1201,7 @@
     const unread=notifications.filter(row=>row.LEIDA!=='SI');
     const urgent=unread.filter(row=>['Urgente','Alta'].includes(row.PRIORIDAD));
     const actions=`<button class="btn soft" data-sync>↻ Sincronizar</button><button class="btn soft" data-speak-notifications>🔊 Leer pendientes</button><button class="btn soft" data-voice-command>🎙 Comando de voz</button>${hasPermission('NOTIFICACIONES','CREAR')?'<button class="btn primary" data-new-notification>＋ Nueva notificación</button>':''}`;
-    const rows=notifications.map(item=>{const recipient=driverMap[item.DESTINATARIO_CONDUCTOR_ID]?.NOMBRE||userMap[item.DESTINATARIO_USUARIO_ID]?.NOMBRE||item.DESTINATARIO_CONDUCTOR_ID||item.DESTINATARIO_USUARIO_ID||'Sin destinatario';return `<tr data-search-row="${esc(`${item.TITULO} ${item.MENSAJE} ${recipient} ${item.PRIORIDAD} ${item.TIPO}`.toLowerCase())}"><td>${item.LEIDA==='SI'?'<span class="status">Leída</span>':'<span class="status warning">Pendiente</span>'}</td><td><strong>${esc(item.TITULO)}</strong><span class="muted">${esc(item.MENSAJE)}</span></td><td>${esc(recipient)}</td><td>${status(item.PRIORIDAD||'Normal')}</td><td>${esc(item.TIPO||'Información')}</td><td>${fmtDate(item.FECHA_ENVIO||item.CREADO_EN,true)}</td><td>${item.LEIDA!=='SI'?`<button class="btn soft small" data-read-notification="${item.ID}">Marcar leída</button>`:'—'}</td></tr>`;}).join('');
+    const rows=notifications.map(item=>{const recipient=driverMap[item.DESTINATARIO_CONDUCTOR_ID]?.NOMBRE||userMap[item.DESTINATARIO_USUARIO_ID]?.NOMBRE||item.DESTINATARIO_CONDUCTOR_ID||item.DESTINATARIO_USUARIO_ID||'Sin destinatario';return `<tr data-filter-date="${esc(item.FECHA_ENVIO||item.CREADO_EN||'')}" data-search-row="${esc(`${item.TITULO} ${item.MENSAJE} ${recipient} ${item.PRIORIDAD} ${item.TIPO}`.toLowerCase())}"><td>${item.LEIDA==='SI'?'<span class="status">Leída</span>':'<span class="status warning">Pendiente</span>'}</td><td><strong>${esc(item.TITULO)}</strong><span class="muted">${esc(item.MENSAJE)}</span></td><td>${esc(recipient)}</td><td>${status(item.PRIORIDAD||'Normal')}</td><td>${esc(item.TIPO||'Información')}</td><td>${fmtDate(item.FECHA_ENVIO||item.CREADO_EN,true)}</td><td>${item.LEIDA!=='SI'?`<button class="btn soft small" data-read-notification="${item.ID}">Marcar leída</button>`:'—'}</td></tr>`;}).join('');
     return heading('CENTRO DE COMUNICACIONES','Notificaciones','Mensajes dirigidos, lectura, dictado y comandos de voz desde una sola bandeja.',actions)+
       `<div class="voice-command-panel"><div><span class="eyebrow">CONTROL POR VOZ</span><h3>Comandos disponibles</h3><p id="voiceCommandStatus">Diga “leer notificaciones”, “marcar todas como leídas”, “crear notificación” o “detener lectura”.</p></div><div class="voice-command-actions"><button class="btn primary" data-voice-command>🎙 Escuchar comando</button><button class="btn soft" data-speak-notifications>🔊 Leer</button><button class="btn soft" data-stop-voice>■ Detener</button></div></div>`+
       `<div class="live-strip">${liveStat('🔔','Total',notifications.length)}${liveStat('●','Pendientes',unread.length,unread.length?'warning':'online')}${liveStat('!','Alta o urgente',urgent.length,urgent.length?'warning':'')}${liveStat('✓','Leídas',notifications.length-unread.length,'online')}</div>`+
@@ -1095,7 +1216,7 @@
     guardarListaFormulario('alerts',alerts);
     const unread=alerts.filter(row=>row.LEIDA!=='SI');
     const critical=unread.filter(row=>String(row.NIVEL||'').toLowerCase().includes('cr'));
-    const rows=alerts.map(row=>`<tr data-search-row="${esc(`${row.NIVEL} ${row.TITULO} ${row.MENSAJE} ${row.MODULO}`.toLowerCase())}"><td>${status(row.NIVEL||'Info')}</td><td><strong>${esc(row.TITULO||'Alerta')}</strong><span class="muted">${esc(row.MENSAJE||'')}</span></td><td>${esc(row.MODULO||'Sistema')}</td><td>${esc(row.REGISTRO_ID||'—')}</td><td>${fmtDate(row.FECHA_HORA||row.CREADO_EN,true)}</td><td>${row.LEIDA==='SI'?status('Leída'):`<button class="btn soft small" data-read-alert="${row.ID}">Marcar leída</button>`}</td></tr>`).join('');
+    const rows=alerts.map(row=>`<tr data-filter-date="${esc(row.FECHA_HORA||row.CREADO_EN||'')}" data-search-row="${esc(`${row.NIVEL} ${row.TITULO} ${row.MENSAJE} ${row.MODULO}`.toLowerCase())}"><td>${status(row.NIVEL||'Info')}</td><td><strong>${esc(row.TITULO||'Alerta')}</strong><span class="muted">${esc(row.MENSAJE||'')}</span></td><td>${esc(row.MODULO||'Sistema')}</td><td>${esc(row.REGISTRO_ID||'—')}</td><td>${fmtDate(row.FECHA_HORA||row.CREADO_EN,true)}</td><td>${row.LEIDA==='SI'?status('Leída'):`<button class="btn soft small" data-read-alert="${row.ID}">Marcar leída</button>`}</td></tr>`).join('');
     return heading('CENTRO DE ATENCIÓN','Alertas','Eventos operacionales, fallas críticas y avisos generados por el sistema.',`<button class="btn soft" data-sync>↻ Sincronizar</button>${unread.length?'<button class="btn soft" data-read-all-alerts>✓ Marcar todas</button>':''}${hasPermission('ALERTAS','CREAR')?'<button class="btn primary" data-add="alerts">＋ Crear alerta</button>':''}`)+
       `<div class="live-strip">${liveStat('!','Pendientes',unread.length,unread.length?'warning':'online')}${liveStat('⚠','Críticas',critical.length,critical.length?'warning':'')}${liveStat('✓','Atendidas',alerts.length-unread.length,'online')}${liveStat('▤','Total',alerts.length)}</div>`+
       `<article class="card"><div class="toolbar"><label class="search-box"><span>⌕</span><input data-table-search placeholder="Buscar alerta, módulo o registro"></label><button class="btn soft push" data-export="alerts">Exportar CSV</button></div><div data-filter-table>${table(['Nivel','Alerta','Módulo','Registro','Fecha','Acción'],rows,'No existen alertas registradas.')}</div></article>`;
@@ -1106,12 +1227,15 @@
     return ['ROL-ADMIN','ROL-SUPERVISOR'].includes(currentUser?.ROL_ID);
   }
   function gpsFilterPayload() {
-    if (!canSelectGpsVehicles() || gpsTrackingMode !== 'specific') return { soloGps:'SI', vehiculos:'' };
-    return { soloGps:'SI', vehiculos:gpsSelectedVehicles.size ? [...gpsSelectedVehicles].join(',') : '__NINGUNO__' };
+    const estadoMap={all:'TODOS',online:'EN_LINEA',driving:'CONDUCIENDO',withoutGps:'SIN_GPS',offline:'INACTIVOS'};
+    const payload={soloGps:'SI',vehiculos:'',estadoConexion:estadoMap[gpsConnectionFilter]||'TODOS'};
+    if (canSelectGpsVehicles() && gpsTrackingMode === 'specific') payload.vehiculos=gpsSelectedVehicles.size ? [...gpsSelectedVehicles].join(',') : '__NINGUNO__';
+    return payload;
   }
   function saveGpsFilterPreference() {
     localStorage.setItem(gpsTrackingModeKey,gpsTrackingMode);
     localStorage.setItem(gpsSelectedVehiclesKey,JSON.stringify([...gpsSelectedVehicles]));
+    localStorage.setItem(gpsConnectionFilterKey,gpsConnectionFilter);
   }
   function sameVehicleSelection(first,second) {
     if(first.size!==second.size)return false;
@@ -1119,11 +1243,15 @@
     return true;
   }
   function gpsFilterHasChanges() {
-    return gpsDraftTrackingMode!==gpsTrackingMode||!sameVehicleSelection(gpsDraftSelectedVehicles,gpsSelectedVehicles);
+    return gpsDraftTrackingMode!==gpsTrackingMode||gpsDraftConnectionFilter!==gpsConnectionFilter||!sameVehicleSelection(gpsDraftSelectedVehicles,gpsSelectedVehicles);
   }
   function selectedVehiclesLabel(count=gpsDraftSelectedVehicles.size) { return `${count} ${count===1?'seleccionado':'seleccionados'}`; }
+  function gpsConnectionFilterLabel(value=gpsConnectionFilter) {
+    return ({all:'Todos los estados',online:'En línea',driving:'Conduciendo',withoutGps:'Operación sin GPS',offline:'Inactivos'})[value]||'Todos los estados';
+  }
   function appliedVehiclesLabel() {
-    return gpsTrackingMode==='all'?'Toda la flota':selectedVehiclesLabel(gpsSelectedVehicles.size);
+    const vehicles=gpsTrackingMode==='all'?'Toda la flota':selectedVehiclesLabel(gpsSelectedVehicles.size);
+    return `${vehicles} · ${gpsConnectionFilterLabel()}`;
   }
   function visibleVehiclesLabel(count) { return `${count} ${count===1?'vehículo visible':'vehículos visibles'}`; }
   function gpsVehicleOptions(realtime=ultimoResumenGps) {
@@ -1138,7 +1266,8 @@
     if(!canSelectGpsVehicles())return '';
     const selected=gpsDraftSelectedVehicles.size;
     const dirty=gpsFilterHasChanges();
-    return `<article class="card tracking-filter-card"><div class="tracking-filter-header"><div><p class="tag">CONTROL DE ADMINISTRADOR / SUPERVISOR</p><h3>Filtro de seguimiento en tiempo real</h3><p>Seleccione toda la flota o únicamente los vehículos que desea visualizar en el mapa, posiciones y sesiones.</p></div><span class="tracking-selection-summary" id="trackingSelectionSummary">${gpsDraftTrackingMode==='all'?'Toda la flota':selectedVehiclesLabel(selected)}</span></div><div class="tracking-scope-buttons"><button type="button" class="${gpsDraftTrackingMode==='all'?'active':''}" data-gps-scope="all">Todos los vehículos</button><button type="button" class="${gpsDraftTrackingMode==='specific'?'active':''}" data-gps-scope="specific">Solo vehículos seleccionados</button></div><div class="vehicle-tracking-panel ${gpsDraftTrackingMode==='specific'?'open':''}" id="vehicleTrackingPanel"><div class="vehicle-tracking-actions"><label><span>Buscar vehículo o conductor</span><input type="search" data-gps-vehicle-search placeholder="Patente, marca, modelo o conductor"></label><div><button type="button" class="btn soft small" data-gps-select-all>Seleccionar todos</button><button type="button" class="btn soft small" data-gps-clear>Limpiar</button></div></div><div class="vehicle-tracking-list" id="vehicleTrackingList">${gpsVehicleOptions(realtime)}</div></div><div class="tracking-filter-footer"><div><b id="trackingAppliedSummary">Filtro aplicado: ${appliedVehiclesLabel()}</b><span id="trackingPendingText">${dirty?'Hay cambios pendientes por aplicar.':'El mapa ya está usando este filtro.'}</span></div><div><button type="button" class="btn soft small" data-gps-reset ${dirty?'':'disabled'}>Deshacer cambios</button><button type="button" class="btn primary small" data-gps-apply ${dirty?'':'disabled'}>Aplicar seguimiento</button></div></div></article>`;
+    const statusButtons=[['all','Todos'],['online','En línea'],['driving','Conduciendo'],['withoutGps','Sin GPS'],['offline','Inactivos']].map(([value,label])=>`<button type="button" class="${gpsDraftConnectionFilter===value?'active':''}" data-gps-connection="${value}">${label}</button>`).join('');
+    return `<article class="card tracking-filter-card"><div class="tracking-filter-header"><div><p class="tag">CONTROL DE ADMINISTRADOR / SUPERVISOR</p><h3>Filtros de seguimiento en tiempo real</h3><p>Filtre por vehículo y por estado de conexión sin detener la actualización del mapa.</p></div><span class="tracking-selection-summary" id="trackingSelectionSummary">${gpsDraftTrackingMode==='all'?'Toda la flota':selectedVehiclesLabel(selected)} · ${gpsConnectionFilterLabel(gpsDraftConnectionFilter)}</span></div><div class="tracking-filter-subtitle">Estado de conexión</div><div class="tracking-scope-buttons tracking-status-buttons">${statusButtons}</div><div class="tracking-filter-subtitle">Vehículos</div><div class="tracking-scope-buttons"><button type="button" class="${gpsDraftTrackingMode==='all'?'active':''}" data-gps-scope="all">Todos los vehículos</button><button type="button" class="${gpsDraftTrackingMode==='specific'?'active':''}" data-gps-scope="specific">Solo vehículos seleccionados</button></div><div class="vehicle-tracking-panel ${gpsDraftTrackingMode==='specific'?'open':''}" id="vehicleTrackingPanel"><div class="vehicle-tracking-actions"><label><span>Buscar vehículo o conductor</span><input type="search" data-gps-vehicle-search placeholder="Patente, marca, modelo o conductor"></label><div><button type="button" class="btn soft small" data-gps-select-all>Seleccionar todos</button><button type="button" class="btn soft small" data-gps-clear>Limpiar</button></div></div><div class="vehicle-tracking-list" id="vehicleTrackingList">${gpsVehicleOptions(realtime)}</div></div><div class="tracking-filter-footer"><div><b id="trackingAppliedSummary">Filtro aplicado: ${appliedVehiclesLabel()}</b><span id="trackingPendingText">${dirty?'Hay cambios pendientes por aplicar.':'El mapa ya está usando este filtro.'}</span></div><div><button type="button" class="btn soft small" data-gps-reset ${dirty?'':'disabled'}>Deshacer cambios</button><button type="button" class="btn primary small" data-gps-apply ${dirty?'':'disabled'}>Aplicar seguimiento</button></div></div></article>`;
   }
 
   async function renderGps() {
@@ -1150,7 +1279,7 @@
       `<div class="tracking-notice ${gpsWatchId===null?'inactive':'active'}" data-tracking-notice><i data-tracking-icon>${gpsWatchId===null?'○':'●'}</i><div><b data-tracking-title>${gpsWatchId===null?'Ubicación continua detenida':'Ubicación continua activada'}</b><span data-tracking-detail>${trackingDetail()}</span></div></div>`+
       `<div class="tracking-details"><div><span>Permiso del navegador</span><b data-tracking-permission>${permissionLabel()}</b></div><div><span>Reactivación automática</span><b data-tracking-preference>${trackingPreferenceEnabled()?'Activada':'Desactivada'}</b></div><div><span>Protección de pantalla activa</span><b data-wake-lock>${wakeLockLabel()}</b></div></div>`+
       `<div class="live-strip"><article class="live-stat"><i>⌖</i><div><span>Ubicaciones visibles</span><b id="gpsVisibleCount">${locations.total}</b></div></article><article class="live-stat online"><i>●</i><div><span>Sesiones abiertas</span><b id="gpsOnlineCount">${realtime.totals?.onlineDevices||0}</b></div></article><article class="live-stat online"><i>🚐</i><div><span>Conduciendo</span><b id="gpsDrivingCount">${realtime.totals?.drivingSessions||0}</b></div></article><article class="live-stat ${(realtime.totals?.sessionsWithoutGps||0)?'warning':''}"><i>!</i><div><span>Operación sin GPS</span><b id="gpsWithoutCount">${realtime.totals?.sessionsWithoutGps||0}</b></div></article></div>`+
-      `<div class="gps-layout"><article class="card map-card"><div id="fleetMap" class="fleet-map"></div><div class="map-toolbar"><span class="gps-live"><i></i> Consulta rápida cada ${Math.round(config.INTERVALO_TIEMPO_REAL_MILISEGUNDOS/1000)} segundos</span><span class="map-status-legend"><b class="active"></b> Activo <b class="inactive"></b> Inactivo <b class="geofence"></b> Radio base</span><span class="muted" id="gpsLastSync">Datos iniciales cargados</span><span class="muted push">Mapa © colaboradores de OpenStreetMap</span></div></article><article class="card"><div class="card-header"><div><h3>Últimas posiciones</h3><p id="locationCount">${locations.total} vehículos visibles</p></div></div><div class="driver-location-list" id="driverLocationList">${locationList(locations.rows)}</div><div class="card-header" style="margin-top:18px"><div><h3>Sesiones y conductores</h3><p>Usuario, actividad y sección abierta</p></div></div><div class="device-list" id="deviceList">${(realtime.devices||[]).map(deviceCard).join('')||empty('○','Sin sesiones','Esperando señales de los dispositivos.')}</div></article></div>`;
+      `<div class="gps-layout"><article class="card map-card"><div id="fleetMap" class="fleet-map"></div><div class="map-toolbar"><span class="gps-live"><i></i> Consulta rápida cada ${Math.round(config.INTERVALO_TIEMPO_REAL_MILISEGUNDOS/1000)} segundos</span><span class="map-status-legend"><b class="active"></b> Activo <b class="inactive"></b> Inactivo <b class="geofence"></b> Radio base</span><span class="muted" id="gpsLastSync">Datos iniciales cargados</span><span class="muted push">Mapa © OpenStreetMap, CARTO o Esri</span></div></article><article class="card"><div class="card-header"><div><h3>Últimas posiciones</h3><p id="locationCount">${locations.total} vehículos visibles</p></div></div><div class="driver-location-list" id="driverLocationList">${locationList(locations.rows)}</div><div class="card-header" style="margin-top:18px"><div><h3>Sesiones y conductores</h3><p>Usuario, actividad y sección abierta</p></div></div><div class="device-list" id="deviceList">${(realtime.devices||[]).map(deviceCard).join('')||empty('○','Sin sesiones','Esperando señales de los dispositivos.')}</div></article></div>`;
   }
   function locationList(rows){return rows.length?rows.map(row=>{const active=antiguedadUbicacion(row.FECHA_HORA)<=config.ANTIGUEDAD_UBICACION_ACTIVA_MILISEGUNDOS;return `<button class="driver-location ${active?'active':'inactive'}" data-focus-location="${row.LATITUD},${row.LONGITUD}"><i>●</i><div><b>${esc(row.CONDUCTOR_NOMBRE||row.CONDUCTOR_ID||'Sin conductor')}</b><span>${esc(row.VEHICULO_PATENTE||row.VEHICULO_ID||'Sin vehículo')} · ${Number(row.VELOCIDAD_KMH||0).toFixed(0)} km/h · ${active?'Activo':'Inactivo'}</span><span class="address-line">${esc(row.DIRECCION||`${Number(row.LATITUD).toFixed(5)}, ${Number(row.LONGITUD).toFixed(5)}`)}</span></div><time>${fmtDate(row.FECHA_HORA,true)}</time></button>`;}).join(''):empty('⌖','Sin ubicaciones','Cuando un conductor autorice y envíe su GPS, aparecerá aquí.');}
 
@@ -1166,7 +1295,7 @@
     data.alerts.rows.forEach(row=>events.push({fecha:row.FECHA_HORA||row.CREADO_EN,tipo:'Alerta',referencia:row.ID,evento:row.NIVEL||'Info',detalle:`${row.TITULO||''}: ${row.MENSAJE||''}`,usuario:row.USUARIO_ID||'Sistema'}));
     data.checkins.rows.forEach(row=>events.push({fecha:row.FECHA_REVISION||row.FECHA_HORA||row.CREADO_EN,tipo:'Check-in',referencia:row.ID,evento:row.ESTADO_REVISION||row.RESULTADO||'Registrado',detalle:`Vehículo ${row.VEHICULO_ID||'—'} · Conductor ${row.CONDUCTOR_ID||'—'}`,usuario:row.REVISADO_POR||row.CREADO_POR||'—'}));
     events.sort((a,b)=>new Date(b.fecha||0)-new Date(a.fecha||0));
-    const rows=events.map(item=>`<tr data-search-row="${esc(`${item.tipo} ${item.referencia} ${item.evento} ${item.detalle} ${item.usuario}`.toLowerCase())}"><td>${fmtDate(item.fecha,true)}</td><td>${status(item.tipo)}</td><td><strong>${esc(item.evento)}</strong><span class="muted">${esc(item.detalle)}</span></td><td>${esc(item.referencia||'—')}</td><td>${esc(item.usuario||'—')}</td></tr>`).join('');
+    const rows=events.map(item=>`<tr data-filter-date="${esc(item.fecha||'')}" data-search-row="${esc(`${item.tipo} ${item.referencia} ${item.evento} ${item.detalle} ${item.usuario}`.toLowerCase())}"><td>${fmtDate(item.fecha,true)}</td><td>${status(item.tipo)}</td><td><strong>${esc(item.evento)}</strong><span class="muted">${esc(item.detalle)}</span></td><td>${esc(item.referencia||'—')}</td><td>${esc(item.usuario||'—')}</td></tr>`).join('');
     return heading('TRAZABILIDAD CENTRAL','Historial','Línea de tiempo unificada de operaciones, rutas, check-ins, alertas y notificaciones.',`<button class="btn soft" data-sync>↻ Sincronizar</button><button class="btn soft" data-export="history">Exportar historial operativo</button>`)+
       `<div class="live-strip">${liveStat('⇄','Operaciones',data.history.rows.length)}${liveStat('➜','Rutas',data.routes.rows.length)}${liveStat('✓','Check-ins',data.checkins.rows.length)}${liveStat('!','Alertas',data.alerts.rows.length,data.alerts.rows.some(row=>row.LEIDA!=='SI')?'warning':'')}</div>`+
       `<article class="card"><div class="toolbar"><label class="search-box"><span>⌕</span><input data-table-search placeholder="Buscar evento, referencia o usuario"></label><span class="muted push">${events.length} eventos visibles</span></div><div data-filter-table>${table(['Fecha','Origen','Evento y detalle','Referencia','Usuario'],rows,'Aún no existen eventos en el historial.')}</div></article>`;
@@ -1195,7 +1324,7 @@
     const [operations,drivers,vehicles,checkins,routes]=await Promise.all(['operations','drivers','vehicles','checkins','routes'].map(solicitarListaSegura));if(operations.error)throw operations.error;
     guardarListaFormulario('operations',operations.rows);guardarListaFormulario('drivers',drivers.rows);guardarListaFormulario('vehicles',vehicles.rows);guardarListaFormulario('checkins',checkins.rows);guardarListaFormulario('routes',routes.rows);
     const today=new Date(),start=new Date();start.setDate(today.getDate()-30);
-    return heading('INTELIGENCIA OPERACIONAL','KPIs y reportes','Analice el desempeño por período, conductor y vehículo.',`<button class="btn soft" data-sync>↻ Sincronizar</button>`)+`<article class="card kpi-filter-card"><div class="card-header"><div><h3>Filtros del análisis</h3><p>Los indicadores, rankings y exportación se actualizan al instante.</p></div></div><form id="kpiFilterForm" class="kpi-filter-form"><label class="field"><span>Desde</span><input type="date" name="FECHA_DESDE" value="${fechaInputIso(start)}"></label><label class="field"><span>Hasta</span><input type="date" name="FECHA_HASTA" value="${fechaInputIso(today)}"></label><label class="field"><span>Conductor</span><select name="CONDUCTOR_ID"><option value="">Todos los conductores</option>${drivers.rows.map(row=>`<option value="${esc(row.ID)}">${esc(row.NOMBRE||row.ID)}</option>`).join('')}</select></label><label class="field"><span>Vehículo</span><select name="VEHICULO_ID"><option value="">Todos los vehículos</option>${vehicles.rows.map(row=>`<option value="${esc(row.ID)}">${esc(row.PATENTE||row.ID)} · ${esc(`${row.MARCA||''} ${row.MODELO||''}`.trim())}</option>`).join('')}</select></label><div class="form-actions"><button class="btn soft" type="button" data-kpi-reset>Últimos 30 días</button><button class="btn primary" type="button" data-kpi-apply>Aplicar filtros</button></div></form></article><section id="kpiReportResults" aria-live="polite"></section><article class="card"><div class="card-header"><div><h3>Exportaciones generales</h3><p>Descargue las bases completas en CSV.</p></div></div><div class="kpi-export-grid">${['vehicles','drivers','operations','gps'].map(resource=>`<button class="metric-card" data-export="${resource}"><i class="metric-icon">⇩</i><div><span>Exportar</span><b style="font-size:17px">${labels[resource]||resource}</b><small>Archivo CSV completo</small></div></button>`).join('')}</div></article>`;
+    return heading('INTELIGENCIA OPERACIONAL','KPIs y reportes','Analice el desempeño por período, conductor y vehículo.',`<button class="btn soft" data-sync>↻ Sincronizar</button>`)+`<article class="card kpi-filter-card"><div class="card-header"><div><h3>Filtros del análisis</h3><p>Los indicadores, rankings y exportación se actualizan al instante.</p></div></div><form id="kpiFilterForm" class="kpi-filter-form"><label class="field"><span>Desde</span><input type="date" name="FECHA_DESDE" value="${fechaInputIso(start)}"></label><label class="field"><span>Hasta</span><input type="date" name="FECHA_HASTA" value="${fechaInputIso(today)}"></label><label class="field"><span>Conductor</span><select name="CONDUCTOR_ID"><option value="">Todos los conductores</option>${drivers.rows.map(row=>`<option value="${esc(row.ID)}">${esc(row.NOMBRE||row.ID)}</option>`).join('')}</select></label><label class="field"><span>Vehículo</span><select name="VEHICULO_ID"><option value="">Todos los vehículos</option>${vehicles.rows.map(row=>`<option value="${esc(row.ID)}">${esc(row.PATENTE||row.ID)} · ${esc(`${row.MARCA||''} ${row.MODELO||''}`.trim())}</option>`).join('')}</select></label><div class="form-actions"><button class="btn soft" type="button" data-kpi-reset>Últimos 30 días</button><button class="btn primary" type="button" data-kpi-apply>Aplicar filtros</button></div></form></article><section id="kpiReportResults" aria-live="polite"></section><article class="card"><div class="card-header"><div><h3>Exportaciones generales</h3><p>Descargue las bases completas en CSV.</p></div></div><div class="kpi-export-grid">${['vehicles','drivers','operations','gps',...(hasPermission('COMBUSTIBLE','LEER')?['fuel']:[])].map(resource=>`<button class="metric-card" data-export="${resource}"><i class="metric-icon">⇩</i><div><span>Exportar</span><b style="font-size:17px">${labels[resource]||resource}</b><small>Archivo CSV completo</small></div></button>`).join('')}</div></article>`;
   }
   async function renderAudit(){const result=await api.request('list',{resource:'audit'});guardarListaFormulario('audit',result.rows||[]);const rows=(result.rows||[]).map(a=>`<tr><td>${fmtDate(a.FECHA_HORA||a.CREADO_EN,true)}</td><td>${esc(a.USUARIO_NOMBRE)}</td><td><strong>${esc(a.ACCION)}</strong></td><td>${esc(a.MODULO)}</td><td>${esc(a.IP_CLIENTE||a.IP_PUBLICA||'')}</td><td>${esc(a.DETALLE)}</td></tr>`).join('');return heading('BITÁCORA','Auditoría','Registro de las acciones realizadas en el sistema.',`<button class="btn soft" data-sync>↻ Sincronizar</button><button class="btn soft" data-export="audit">Exportar CSV</button>`)+`<article class="card">${table(['Fecha','Usuario','Acción','Módulo','IP','Detalle'],rows)}</article>`;}
   async function refreshCompanyBranding(){
@@ -1288,7 +1417,7 @@
         const formData=new FormData(form),data=Object.fromEntries(formData.entries());const file=$('#companyLogo')?.files?.[0];
         const payload={data,eliminarLogotipo:$('#removeLogoValue')?.value||'NO'};
         if(file){if(file.size>1572864)throw new Error('LOGOTIPO_DEMASIADO_GRANDE');payload.logotipoBase64=await readImageFile(file);payload.nombreLogotipo=file.name;payload.tipoLogotipo=file.type;}
-        const result=await api.request('saveCompany',payload);currentCompany=result.row||data;invalidarListasFormulario('companies');cacheVistasModulo.delete('company');applyBranding(currentCompany);toast('Empresa guardada','La identidad y la información institucional fueron actualizadas.');setSave('Datos guardados');await go('company');
+        const result=await api.request('saveCompany',payload);currentCompany=result.row||data;invalidarListasFormulario('companies');cacheVistasModulo.delete('company');applyBranding(currentCompany);toast('Empresa guardada','La identidad y la información institucional fueron actualizadas.');setSave('Datos guardados');actualizarSeccionEnSegundoPlano('company');
       }catch(error){setSave('Error al guardar','error');toast('No se pudo guardar la empresa',translateError(error),'error');}
     });
   }
@@ -1366,14 +1495,133 @@
     });
   }
 
+
+  function fuelName(resource,id,fallback='—'){
+    const row=registroFormulario(resource,id)||(listaFormulario(resource)||[]).find(item=>String(item.ID)===String(id));
+    if(!row)return id||fallback;
+    if(resource==='vehicles')return `${row.PATENTE||row.ID}${row.MARCA?` · ${row.MARCA} ${row.MODELO||''}`:''}`;
+    if(resource==='drivers')return row.NOMBRE||row.RUT||row.ID;
+    return row.ID||fallback;
+  }
+
+  function fuelAuthorizationFor(chargeId,authorizations){
+    return (authorizations||[]).filter(row=>String(row.CARGA_ID)===String(chargeId)).sort((a,b)=>new Date(b.FECHA_SOLICITUD||b.CREADO_EN||0)-new Date(a.FECHA_SOLICITUD||a.CREADO_EN||0))[0]||null;
+  }
+
+  function fuelActionMarkup(row,authorization){
+    const actions=[];
+    if(hasPermission('COMBUSTIBLE','ACTUALIZAR')&&currentUser.ROL_ID!=='ROL-CONDUCTOR')actions.push(`<button class="icon-button" type="button" data-edit-fuel="${esc(row.ID)}" title="Editar">✎</button>`);
+    if(currentUser.ROL_ID==='ROL-ADMIN'&&hasPermission('COMBUSTIBLE','ELIMINAR'))actions.push(`<button class="icon-button danger" type="button" data-admin-delete-fuel="${esc(row.ID)}" title="Eliminar con auditoría">⌫</button>`);
+    if(currentUser.ROL_ID==='ROL-SUPERVISOR'&&hasPermission('COMBUSTIBLE','ELIMINAR')){
+      if(authorization?.ESTADO==='APROBADA'&&!authorization.FECHA_EJECUCION)actions.push(`<button class="btn danger small" type="button" data-execute-fuel-delete="${esc(row.ID)}" data-authorization="${esc(authorization.ID)}">Eliminar autorizado</button>`);
+      else if(authorization?.ESTADO==='PENDIENTE')actions.push(status('Autorización pendiente'));
+      else actions.push(`<button class="icon-button danger" type="button" data-request-fuel-delete="${esc(row.ID)}" title="Solicitar autorización para eliminar">⌫</button>`);
+    }
+    return actions.join('')||'<span class="muted">Solo lectura</span>';
+  }
+
+  function filasRespuestaLote(value) {
+    if (Array.isArray(value)) return value;
+    if (value && Array.isArray(value.rows)) return value.rows;
+    return [];
+  }
+
+  async function asegurarContextoCombustible() {
+    const resources=['vehicles','drivers','operations','routes'];
+    const missing=resources.filter(resource=>!cacheListasFormulario.has(resource));
+    if(!missing.length)return;
+    const batch=await api.requestBatch(missing.map(resource=>({key:resource,action:'list',payload:{resource}})));
+    missing.forEach(resource=>guardarListaFormulario(resource,filasRespuestaLote(batch[resource])));
+  }
+
+  async function renderFuel(){
+    const queries=[
+      {key:'loads',action:'list',payload:{resource:'fuel'}},
+      {key:'summary',action:'fuelSummary'},
+      {key:'vehicles',action:'list',payload:{resource:'vehicles'}},
+      {key:'drivers',action:'list',payload:{resource:'drivers'}},
+      {key:'operations',action:'list',payload:{resource:'operations'}},
+      {key:'routes',action:'list',payload:{resource:'routes'}},
+    ];
+    if(currentUser.ROL_ID!=='ROL-CONDUCTOR')queries.push({key:'authorizations',action:'list',payload:{resource:'fuelAuthorizations'}});
+    const batch=await api.requestBatch(queries),loads=guardarListaFormulario('fuel',filasRespuestaLote(batch.loads)),vehicles=guardarListaFormulario('vehicles',filasRespuestaLote(batch.vehicles)),drivers=guardarListaFormulario('drivers',filasRespuestaLote(batch.drivers)),operations=guardarListaFormulario('operations',filasRespuestaLote(batch.operations)),routes=guardarListaFormulario('routes',filasRespuestaLote(batch.routes)),authorizations=guardarListaFormulario('fuelAuthorizations',filasRespuestaLote(batch.authorizations)),summary=batch.summary||{};
+    const ordered=[...loads].sort((a,b)=>new Date(b.FECHA_HORA||b.CREADO_EN||0)-new Date(a.FECHA_HORA||a.CREADO_EN||0));
+    const rows=ordered.map(row=>{
+      const auth=fuelAuthorizationFor(row.ID,authorizations),consumption=Number(row.CONSUMO_KM_L||0)>0?`${decimal(row.CONSUMO_KM_L)} km/L`:'Sin cálculo';
+      return `<tr data-filter-date="${esc(row.FECHA_HORA||row.CREADO_EN||'')}" data-search-row="${esc(`${row.ID} ${fuelName('vehicles',row.VEHICULO_ID)} ${fuelName('drivers',row.CONDUCTOR_ID)} ${row.ESTACION_SERVICIO||''} ${row.NUMERO_DOCUMENTO||''}`.toLowerCase())}"><td><strong>${fmtDate(row.FECHA_HORA,true)}</strong><small>${esc(row.ID)}</small></td><td>${esc(fuelName('vehicles',row.VEHICULO_ID))}</td><td>${esc(fuelName('drivers',row.CONDUCTOR_ID))}</td><td><strong>${decimal(row.LITROS,3)} L</strong><small>${esc(row.TIPO_COMBUSTIBLE||'')}</small></td><td>${clp(row.PRECIO_LITRO)}<small>por litro</small></td><td><strong>${clp(row.COSTO_TOTAL)}</strong></td><td>${number(row.KILOMETRAJE||0)} km<small>${Number(row.DISTANCIA_DESDE_ULTIMA_CARGA_KM||0)>0?`${decimal(row.DISTANCIA_DESDE_ULTIMA_CARGA_KM,1)} km recorridos`:'Primera referencia'}</small></td><td><strong>${consumption}</strong><small>${Number(row.CONSUMO_L_100KM||0)>0?`${decimal(row.CONSUMO_L_100KM)} L/100 km`:''}</small></td><td>${esc(row.ESTACION_SERVICIO||'—')}<small>${esc(row.MEDIO_PAGO||'')}</small></td><td><div class="fuel-actions">${fuelActionMarkup(row,auth)}</div></td></tr>`;
+    }).join('');
+    const pending=authorizations.filter(row=>row.ESTADO==='PENDIENTE');
+    const approvals=currentUser.ROL_ID==='ROL-ADMIN'&&pending.length?`<article class="card"><div class="card-header"><div><span class="eyebrow">AUTORIZACIONES</span><h3>Eliminaciones pendientes</h3><p>El Supervisor no puede eliminar hasta que un Administrador resuelva la solicitud.</p></div>${status(`${pending.length} pendiente${pending.length===1?'':'s'}`)}</div>${table(['Solicitud','Carga','Supervisor','Motivo','Fecha','Decisión'],pending.map(row=>`<tr><td><strong>${esc(row.ID)}</strong></td><td>${esc(row.CARGA_ID)}</td><td>${esc(row.SOLICITANTE_NOMBRE||row.SOLICITADO_POR)}</td><td>${esc(row.MOTIVO)}</td><td>${fmtDate(row.FECHA_SOLICITUD,true)}</td><td><div class="fuel-actions"><button class="btn primary small" type="button" data-approve-fuel-delete="${esc(row.ID)}">Aprobar</button><button class="btn soft small" type="button" data-reject-fuel-delete="${esc(row.ID)}">Rechazar</button></div></td></tr>`).join(''))}</article>`:'';
+    const supervisorRequests=currentUser.ROL_ID==='ROL-SUPERVISOR'&&authorizations.length?`<article class="card"><div class="card-header"><div><h3>Mis solicitudes de eliminación</h3><p>Seguimiento de autorizaciones administrativas.</p></div></div>${table(['Solicitud','Carga','Motivo','Estado','Respuesta','Fecha'],[...authorizations].sort((a,b)=>new Date(b.FECHA_SOLICITUD||0)-new Date(a.FECHA_SOLICITUD||0)).map(row=>`<tr><td><strong>${esc(row.ID)}</strong></td><td>${esc(row.CARGA_ID)}</td><td>${esc(row.MOTIVO)}</td><td>${status(row.ESTADO)}</td><td>${esc(row.COMENTARIO_AUTORIZACION||'—')}<small>${esc(row.AUTORIZADOR_NOMBRE||'')}</small></td><td>${fmtDate(row.FECHA_SOLICITUD,true)}</td></tr>`).join(''))}</article>`:'';
+    const create=hasPermission('COMBUSTIBLE','CREAR')&&currentUser.ROL_ID!=='ROL-CONDUCTOR'?'<button class="btn primary" type="button" data-new-fuel>＋ Registrar carga</button>':'';
+    return heading('CONTROL DE GASTOS','Carga de combustible',currentUser.ROL_ID==='ROL-CONDUCTOR'?'Consulte su historial personal de consumo, costo y rendimiento.':'Registre cargas, mida el rendimiento y mantenga trazabilidad completa por vehículo y conductor.',`<button class="btn soft" data-export="fuel">⇩ Exportar historial</button><button class="btn soft" data-sync>↻ Sincronizar</button>${create}`)+
+      `<div class="kpi-grid">${metric('⛽','Litros acumulados',`${decimal(summary.totalLitros||0,2)} L`,`${number(summary.totalCargas||0)} cargas`)}${metric('$','Gasto acumulado',clp(summary.gastoTotal||0),`Promedio ${clp(summary.precioPromedioLitro||0)}/L`)}${metric('↗','Rendimiento promedio',`${decimal(summary.consumoPromedioKmL||0)} km/L`,`${decimal(summary.consumoPromedioL100Km||0)} L/100 km`)}${metric('▦','Mes actual',clp(summary.mesActual?.gasto||0),`${decimal(summary.mesActual?.litros||0,2)} L · ${number(summary.mesActual?.cargas||0)} cargas`)}</div>`+
+      approvals+supervisorRequests+
+      `<article class="card"><div class="card-header"><div><h3>Historial de cargas</h3><p>${currentUser.ROL_ID==='ROL-CONDUCTOR'?'Solo se muestran registros vinculados a su conductor.':'Creaciones, cambios y eliminaciones quedan registradas en auditoría.'}</p></div><label class="table-search"><span>⌕</span><input data-table-search placeholder="Buscar vehículo, conductor, estación o documento"></label></div>${table(['Fecha','Vehículo','Conductor','Litros','Precio/L','Costo','Kilometraje','Consumo','Estación','Acciones'],rows,'No existen cargas de combustible visibles.')}</article>`;
+  }
+
+  function fuelSelectOptions(rows,selected,labeler){return `<option value="">Seleccione</option>`+(rows||[]).map(row=>`<option value="${esc(row.ID)}" ${String(row.ID)===String(selected||'')?'selected':''}>${esc(labeler(row))}</option>`).join('');}
+
+  function fuelAssignmentOptions(record=null){
+    const vehicles=listaFormulario('vehicles'),drivers=listaFormulario('drivers'),operations=listaFormulario('operations'),routes=listaFormulario('routes');
+    const items=[];
+    operations.filter(row=>(row.ESTADO==='Activa'||String(row.ID)===String(record?.OPERACION_ID||''))&&row.VEHICULO_ID&&row.CONDUCTOR_ID).forEach(row=>items.push({key:`OPE:${row.ID}`,type:'operation',id:row.ID,operationId:row.ID,routeId:row.RUTA_ID||'',vehicleId:row.VEHICULO_ID,driverId:row.CONDUCTOR_ID,label:`Operación ${row.ID} · ${fuelName('vehicles',row.VEHICULO_ID)} · ${fuelName('drivers',row.CONDUCTOR_ID)}`}));
+    routes.filter(row=>(['Asignada','En curso'].includes(row.ESTADO)||String(row.ID)===String(record?.RUTA_ID||''))&&row.VEHICULO_ID&&row.CONDUCTOR_ID).forEach(row=>{if(items.some(item=>item.routeId===row.ID&&item.operationId))return;items.push({key:`RUT:${row.ID}`,type:'route',id:row.ID,operationId:row.OPERACION_ID||'',routeId:row.ID,vehicleId:row.VEHICULO_ID,driverId:row.CONDUCTOR_ID,label:`Ruta ${row.ID} · ${fuelName('vehicles',row.VEHICULO_ID)} · ${fuelName('drivers',row.CONDUCTOR_ID)}`});});
+    return {items,vehicles,drivers};
+  }
+
+  async function openFuelModal(record=null){
+    try {
+      await asegurarContextoCombustible();
+    } catch (error) {
+      toast('No se pudo preparar el formulario',translateError(error),'error');
+      return;
+    }
+    const {items,vehicles,drivers}=fuelAssignmentOptions(record),admin=esAdministrador();
+    const selectedKey=record?.OPERACION_ID?`OPE:${record.OPERACION_ID}`:record?.RUTA_ID?`RUT:${record.RUTA_ID}`:(items.length===1?items[0].key:'');
+    const assignmentOptions=`<option value="">Seleccione una asignación activa</option>${items.map(item=>`<option value="${esc(item.key)}" ${item.key===selectedKey?'selected':''}>${esc(item.label)}</option>`).join('')}${admin?'<option value="ADMIN" '+(!selectedKey&&record?'selected':'')+'>Registro administrativo manual</option>':''}`;
+    const blocked=!admin&&!record&&!items.length;
+    $('#modalEyebrow').textContent='COMBUSTIBLE';$('#modalTitle').textContent=record?'Editar carga':'Registrar carga de combustible';
+    $('#modalBody').innerHTML=`<form id="fuelForm" class="form-grid"><div class="tracking-notice active full"><i>↔</i><div><b>Enlace automático con la asignación</b><span>El vehículo y el conductor se completan juntos desde la operación o ruta vigente.</span></div></div>${blocked?'<div class="module-diagnostic warning full"><i>!</i><div><b>No existe una asignación activa</b><span>Debe iniciar una operación o asignar una ruta antes de registrar combustible.</span></div></div>':''}<label class="field full"><span>Operación o ruta asignada</span><select name="VINCULO_ASIGNACION" ${admin?'':'required'}>${assignmentOptions}</select></label><input type="hidden" name="VEHICULO_ID" value="${esc(record?.VEHICULO_ID||'')}"><input type="hidden" name="CONDUCTOR_ID" value="${esc(record?.CONDUCTOR_ID||'')}"><input type="hidden" name="OPERACION_ID" value="${esc(record?.OPERACION_ID||'')}"><input type="hidden" name="RUTA_ID" value="${esc(record?.RUTA_ID||'')}"><div class="info-item"><span>Vehículo enlazado</span><b data-fuel-linked-vehicle>${esc(fuelName('vehicles',record?.VEHICULO_ID,'Pendiente de selección'))}</b></div><div class="info-item"><span>Conductor enlazado</span><b data-fuel-linked-driver>${esc(fuelName('drivers',record?.CONDUCTOR_ID,'Pendiente de selección'))}</b></div>${admin?`<div class="form-grid full ${selectedKey?'hidden':''}" data-fuel-admin-manual><label class="field"><span>Vehículo administrativo</span><select name="VEHICULO_MANUAL_ID">${fuelSelectOptions(vehicles,record?.VEHICULO_ID,row=>`${row.PATENTE||row.ID} · ${row.MARCA||''} ${row.MODELO||''}`)}</select></label><label class="field"><span>Conductor administrativo</span><select name="CONDUCTOR_MANUAL_ID">${fuelSelectOptions(drivers,record?.CONDUCTOR_ID,row=>row.NOMBRE||row.RUT||row.ID)}</select></label></div>`:''}<label class="field"><span>Fecha y hora</span><input name="FECHA_HORA" type="datetime-local" value="${esc(fechaInputLocal(record?.FECHA_HORA||new Date()))}" required></label><label class="field"><span>Tipo de combustible</span><select name="TIPO_COMBUSTIBLE">${['Diésel','Gasolina 93','Gasolina 95','Gasolina 97','Gas','Otro'].map(value=>`<option ${value===(record?.TIPO_COMBUSTIBLE||'Diésel')?'selected':''}>${value}</option>`).join('')}</select></label><label class="field"><span>Litros cargados</span><input name="LITROS" type="number" min="0.001" step="0.001" value="${esc(record?.LITROS??'')}" required></label><label class="field"><span>Precio por litro</span><input name="PRECIO_LITRO" type="number" min="0" step="0.01" value="${esc(record?.PRECIO_LITRO??'')}" required></label><label class="field"><span>Kilometraje</span><input name="KILOMETRAJE" type="number" min="0" step="0.1" value="${esc(record?.KILOMETRAJE??'')}" required></label><div class="info-item full" data-fuel-total><span>Costo calculado</span><b>${clp(record?.COSTO_TOTAL||0)}</b></div><label class="field"><span>Estación de servicio</span><input name="ESTACION_SERVICIO" value="${esc(record?.ESTACION_SERVICIO||'')}"></label><label class="field"><span>Número de boleta/factura</span><input name="NUMERO_DOCUMENTO" value="${esc(record?.NUMERO_DOCUMENTO||'')}"></label><label class="field"><span>Medio de pago</span><select name="MEDIO_PAGO">${['','Efectivo','Tarjeta empresa','Tarjeta crédito','Tarjeta débito','Transferencia','Convenio'].map(value=>`<option value="${esc(value)}" ${value===(record?.MEDIO_PAGO||'')?'selected':''}>${esc(value||'Seleccione')}</option>`).join('')}</select></label><label class="field"><span>Tanque lleno</span><select name="TANQUE_LLENO"><option value="SI" ${(record?.TANQUE_LLENO||'SI')==='SI'?'selected':''}>Sí</option><option value="NO" ${record?.TANQUE_LLENO==='NO'?'selected':''}>No</option></select></label><label class="field full"><span>URL del comprobante</span><input name="COMPROBANTE_URL" type="url" value="${esc(record?.COMPROBANTE_URL||'')}" placeholder="https://..."></label><label class="field full"><span>Observaciones</span><textarea name="OBSERVACIONES">${esc(record?.OBSERVACIONES||'')}</textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit" ${blocked?'disabled':''}>Guardar carga</button></div></form>`;
+    openModal();const form=$('#fuelForm'),assignment=form.elements.VINCULO_ASIGNACION,manual=$('[data-fuel-admin-manual]',form);
+    const applyLink=()=>{const value=assignment.value,item=items.find(row=>row.key===value);if(item){form.elements.VEHICULO_ID.value=item.vehicleId||'';form.elements.CONDUCTOR_ID.value=item.driverId||'';form.elements.OPERACION_ID.value=item.operationId||'';form.elements.RUTA_ID.value=item.routeId||'';manual?.classList.add('hidden');}else if(value==='ADMIN'&&admin){manual?.classList.remove('hidden');form.elements.OPERACION_ID.value='';form.elements.RUTA_ID.value='';form.elements.VEHICULO_ID.value=form.elements.VEHICULO_MANUAL_ID.value||'';form.elements.CONDUCTOR_ID.value=form.elements.CONDUCTOR_MANUAL_ID.value||'';}else{form.elements.VEHICULO_ID.value='';form.elements.CONDUCTOR_ID.value='';form.elements.OPERACION_ID.value='';form.elements.RUTA_ID.value='';manual?.classList.add('hidden');} $('[data-fuel-linked-vehicle]',form).textContent=fuelName('vehicles',form.elements.VEHICULO_ID.value,'Pendiente de selección');$('[data-fuel-linked-driver]',form).textContent=fuelName('drivers',form.elements.CONDUCTOR_ID.value,'Pendiente de selección');const vehicle=vehicles.find(row=>String(row.ID)===String(form.elements.VEHICULO_ID.value));if(vehicle&&form.elements.KILOMETRAJE&&!form.elements.KILOMETRAJE.value)form.elements.KILOMETRAJE.value=vehicle.KILOMETRAJE||'';};
+    assignment.addEventListener('change',applyLink);if(admin){form.elements.VEHICULO_MANUAL_ID?.addEventListener('change',applyLink);form.elements.CONDUCTOR_MANUAL_ID?.addEventListener('change',applyLink);}applyLink();
+    const paint=()=>{$('[data-fuel-total] b',form).textContent=clp(Number(form.elements.LITROS.value||0)*Number(form.elements.PRECIO_LITRO.value||0));};form.elements.LITROS.addEventListener('input',paint);form.elements.PRECIO_LITRO.addEventListener('input',paint);$('[data-cancel-modal]',form).addEventListener('click',closeModal);form.addEventListener('submit',event=>saveFuel(event,record?.ID||''));
+  }
+
+  async function saveFuel(event,id){
+    event.preventDefault();const form=event.currentTarget,data=Object.fromEntries(new FormData(form).entries()),button=$('button[type="submit"]',form);data.IP_PUBLICA=clientPublicIp;
+    await conCargaBoton(button,'Guardando…',async()=>{try{await api.request(id?'update':'create',{resource:'fuel',id,data});invalidarListasFormulario('fuel','fuelAuthorizations','vehicles');cacheVistasModulo.delete('fuel');cacheVistasModulo.delete('dashboard');closeModal();toast('Carga guardada','El consumo y el gasto fueron recalculados. Actualizando en segundo plano.');actualizarSeccionEnSegundoPlano('fuel');}catch(error){toast('No se pudo guardar',translateError(error),'error');}});
+  }
+
+  function openFuelReasonModal(chargeId,mode='request'){
+    const admin=mode==='admin';$('#modalEyebrow').textContent=admin?'ELIMINACIÓN ADMINISTRATIVA':'SOLICITUD DE AUTORIZACIÓN';$('#modalTitle').textContent=admin?'Eliminar carga de combustible':'Solicitar eliminación';$('#modalBody').innerHTML=`<form id="fuelDeleteReasonForm" class="form-grid"><div class="operation-policy-fixed full"><i>!</i><div><b>${admin?'Esta acción eliminará el registro.':'Un Administrador deberá aprobar antes de que pueda eliminarse.'}</b><span>La identidad, fecha, motivo, IP y resultado quedarán en auditoría.</span></div></div><label class="field full"><span>${admin?'Motivo opcional':'Motivo'}</span><textarea name="MOTIVO" minlength="${admin?0:10}" ${admin?'':'required'} placeholder="Explique claramente por qué debe eliminarse esta carga"></textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn danger" type="submit">${admin?'Eliminar registro':'Enviar solicitud'}</button></div></form>`;openModal();const form=$('#fuelDeleteReasonForm');$('[data-cancel-modal]',form).addEventListener('click',closeModal);form.addEventListener('submit',event=>{event.preventDefault();const button=$('button[type="submit"]',form),MOTIVO=form.elements.MOTIVO.value.trim();conCargaBoton(button,admin?'Eliminando…':'Enviando…',async()=>{try{await api.request(admin?'deleteFuel':'requestFuelDeletion',{data:{CARGA_ID:chargeId,MOTIVO,IP_PUBLICA:clientPublicIp}});invalidarListasFormulario('fuel','fuelAuthorizations','vehicles');cacheVistasModulo.delete('fuel');cacheVistasModulo.delete('dashboard');closeModal();toast(admin?'Carga eliminada':'Solicitud enviada',admin?'La eliminación quedó registrada en auditoría.':'El Administrador ya puede revisarla.');actualizarSeccionEnSegundoPlano('fuel');}catch(error){toast('No se completó la acción',translateError(error),'error');}});});
+  }
+
+  function openFuelDecisionModal(requestId,decision){
+    const approve=decision==='APROBAR';$('#modalEyebrow').textContent='AUTORIZACIÓN ADMINISTRATIVA';$('#modalTitle').textContent=approve?'Aprobar eliminación':'Rechazar eliminación';$('#modalBody').innerHTML=`<form id="fuelDecisionForm" class="form-grid"><p class="helper full">${approve?'La aprobación permitirá al Supervisor solicitante ejecutar la eliminación.':'El registro de combustible se conservará.'}</p><label class="field full"><span>Comentario</span><textarea name="COMENTARIO" placeholder="Detalle de la decisión"></textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn ${approve?'primary':'danger'}" type="submit">Confirmar ${approve?'aprobación':'rechazo'}</button></div></form>`;openModal();const form=$('#fuelDecisionForm');$('[data-cancel-modal]',form).addEventListener('click',closeModal);form.addEventListener('submit',event=>{event.preventDefault();const button=$('button[type="submit"]',form);conCargaBoton(button,'Resolviendo…',async()=>{try{await api.request('resolveFuelDeletion',{data:{SOLICITUD_ID:requestId,DECISION,COMENTARIO:form.elements.COMENTARIO.value.trim(),IP_PUBLICA:clientPublicIp}});invalidarListasFormulario('fuelAuthorizations');cacheVistasModulo.delete('fuel');closeModal();toast('Solicitud resuelta',approve?'El Supervisor ya puede ejecutar la eliminación.':'La eliminación fue rechazada.');actualizarSeccionEnSegundoPlano('fuel');}catch(error){toast('No se pudo resolver',translateError(error),'error');}});});
+  }
+
+  async function executeAuthorizedFuelDelete(chargeId,authorizationId,button){
+    if(!confirm('¿Ejecutar la eliminación autorizada? El proceso quedará registrado en auditoría.'))return;
+    await conCargaBoton(button,'Eliminando…',async()=>{try{await api.request('deleteFuel',{data:{CARGA_ID:chargeId,SOLICITUD_ID:authorizationId,IP_PUBLICA:clientPublicIp}});invalidarListasFormulario('fuel','fuelAuthorizations','vehicles');cacheVistasModulo.delete('fuel');cacheVistasModulo.delete('dashboard');toast('Carga eliminada','Se utilizó la autorización administrativa aprobada.');actualizarSeccionEnSegundoPlano('fuel');}catch(error){toast('No se pudo eliminar',translateError(error),'error');}});
+  }
+
   function bindSection() {
     $$('[data-nav]').forEach(btn=>btn.addEventListener('click',()=>navigateSection(btn.dataset.nav)));
+    $('[data-new-fuel]')?.addEventListener('click',event=>conCargaBoton(event.currentTarget,'Preparando…',()=>openFuelModal()));
+    $$('[data-edit-fuel]').forEach(btn=>btn.addEventListener('click',event=>conCargaBoton(event.currentTarget,'Preparando…',()=>openFuelModal(registroFormulario('fuel',btn.dataset.editFuel)))));
+    $$('[data-request-fuel-delete]').forEach(btn=>btn.addEventListener('click',()=>openFuelReasonModal(btn.dataset.requestFuelDelete,'request')));
+    $$('[data-admin-delete-fuel]').forEach(btn=>btn.addEventListener('click',()=>openFuelReasonModal(btn.dataset.adminDeleteFuel,'admin')));
+    $$('[data-execute-fuel-delete]').forEach(btn=>btn.addEventListener('click',()=>executeAuthorizedFuelDelete(btn.dataset.executeFuelDelete,btn.dataset.authorization,btn)));
+    $$('[data-approve-fuel-delete]').forEach(btn=>btn.addEventListener('click',()=>openFuelDecisionModal(btn.dataset.approveFuelDelete,'APROBAR')));
+    $$('[data-reject-fuel-delete]').forEach(btn=>btn.addEventListener('click',()=>openFuelDecisionModal(btn.dataset.rejectFuelDelete,'RECHAZAR')));
     $$('[data-add]').forEach(btn=>btn.addEventListener('click',()=>openResourceModal(btn.dataset.add)));
     $$('[data-bulk-import]').forEach(btn=>btn.addEventListener('click',()=>openBulkImportModal(btn.dataset.bulkImport)));
     $$('[data-edit]').forEach(btn=>btn.addEventListener('click',()=>{const [resource,id]=btn.dataset.edit.split(':');openResourceModal(resource,registroFormulario(resource,id),id);}));
     $$('[data-delete]').forEach(btn=>btn.addEventListener('click',()=>deleteRecord(btn.dataset.delete,btn)));
     $$('[data-export]').forEach(btn=>btn.addEventListener('click',()=>conCargaBoton(btn,'Exportando…',()=>exportResource(btn.dataset.export))));
-    $$('[data-table-search]').forEach(input=>input.addEventListener('input',()=>filterTable(input)));
+    configurarFiltrosAvanzados();
     $$('[data-sync],[data-refresh],[data-retry]').forEach(btn=>btn.addEventListener('click',()=>sincronizarSistema(btn)));
     $$('[data-new-operation]').forEach(btn=>btn.addEventListener('click',()=>openOperationModal()));
     $$('[data-quick-base-setup]').forEach(btn=>btn.addEventListener('click',()=>configurarPuntoOperacionRapido(btn)));
@@ -1404,6 +1652,7 @@
     $$('[data-capture-gps]').forEach(btn=>btn.addEventListener('click',()=>conCargaBoton(btn,'Obteniendo GPS…',captureGps)));
     $$('[data-toggle-tracking]').forEach(btn=>btn.addEventListener('click',()=>conCargaBoton(btn,gpsWatchId===null?'Activando…':'Deteniendo…',toggleTracking).then(updateTrackingUi)));
     $$('[data-gps-scope]').forEach(btn=>btn.addEventListener('click',()=>changeGpsTrackingScope(btn.dataset.gpsScope)));
+    $$('[data-gps-connection]').forEach(btn=>btn.addEventListener('click',()=>changeGpsConnectionFilter(btn.dataset.gpsConnection)));
     $$('[data-gps-vehicle]').forEach(input=>input.addEventListener('change',()=>toggleGpsVehicle(input.dataset.gpsVehicle,input.checked)));
     $('[data-gps-select-all]')?.addEventListener('click',selectAllGpsVehicles);
     $('[data-gps-clear]')?.addEventListener('click',clearGpsVehicles);
@@ -1415,7 +1664,7 @@
     const operationLocationForm=$('#operationLocationForm');if(operationLocationForm){
       bindAddressAutocomplete(operationLocationForm);
       $('[data-capture-base-location]',operationLocationForm)?.addEventListener('click',event=>conCargaBoton(event.currentTarget,'Obteniendo GPS…',async()=>{try{const location=await obtenerUbicacionNavegador();operationLocationForm.elements.PUNTO_OPERACION_LATITUD.value=location.latitud;operationLocationForm.elements.PUNTO_OPERACION_LONGITUD.value=location.longitud;const node=$('[data-settings-location-status]',operationLocationForm);if(node){node.className='operation-location-status valid';node.innerHTML=`<i>✓</i><div><b>Coordenadas capturadas</b><span>${location.latitud.toFixed(6)}, ${location.longitud.toFixed(6)} · precisión ±${Math.round(location.precision)} m</span></div>`;}toast('Ubicación capturada','Revise la dirección y guarde la configuración.');}catch(error){toast('No se obtuvo la ubicación',translateError(error),'error');}}));
-      operationLocationForm.addEventListener('submit',event=>{event.preventDefault();const button=$('button[type="submit"]',operationLocationForm);conCargaBoton(button,'Guardando punto…',async()=>{try{const data=Object.fromEntries(new FormData(operationLocationForm).entries());data.VALIDAR_UBICACION_OPERACION='SI';data.IP_PUBLICA=clientPublicIp;const result=await api.request('saveOperationalPoint',{data});const devicePoint=guardarPuntoOperacionDispositivo({...result,row:result.row||data},'SERVIDOR');currentCompany={...(currentCompany||{}),...(result.row||data),...(devicePoint||{})};const savedBase=configuracionPuntoOperacion(currentCompany);if(!savedBase.configurada)throw new Error('PUNTO_OPERACION_NO_CONFIRMADO');invalidarListasFormulario('companies');['settings','operations','routes','gps'].forEach(section=>cacheVistasModulo.delete(section));toast('Punto operacional confirmado',`${savedBase.nombre} · ${savedBase.latitud.toFixed(6)}, ${savedBase.longitud.toFixed(6)} · radio de inicio ${savedBase.radioInicio} m.`);await go('settings');}catch(error){toast('No se guardó el punto',translateError(error),'error');}});});
+      operationLocationForm.addEventListener('submit',event=>{event.preventDefault();const button=$('button[type="submit"]',operationLocationForm);conCargaBoton(button,'Guardando punto…',async()=>{try{const data=Object.fromEntries(new FormData(operationLocationForm).entries());data.VALIDAR_UBICACION_OPERACION='SI';data.IP_PUBLICA=clientPublicIp;const result=await api.request('saveOperationalPoint',{data});const devicePoint=guardarPuntoOperacionDispositivo({...result,row:result.row||data},'SERVIDOR');currentCompany={...(currentCompany||{}),...(result.row||data),...(devicePoint||{})};const savedBase=configuracionPuntoOperacion(currentCompany);if(!savedBase.configurada)throw new Error('PUNTO_OPERACION_NO_CONFIRMADO');invalidarListasFormulario('companies');['settings','operations','routes','gps'].forEach(section=>cacheVistasModulo.delete(section));toast('Punto operacional confirmado',`${savedBase.nombre} · ${savedBase.latitud.toFixed(6)}, ${savedBase.longitud.toFixed(6)} · radio de inicio ${savedBase.radioInicio} m.`);actualizarSeccionEnSegundoPlano('settings');}catch(error){toast('No se guardó el punto',translateError(error),'error');}});});
     }
     $('[data-clear-data]')?.addEventListener('click',event=>clearData(event.currentTarget));
     $('#darkSwitch')?.addEventListener('change',event=>setTheme(event.target.checked));
@@ -1545,7 +1794,7 @@
     await conCargaBoton(button,'Guardando…',async()=>{
       try{
         setSave('Guardando…','saving');await api.request(id?'update':'create',{resource,id,data});
-        invalidarListasFormulario(resource);cacheVistasModulo.delete(currentSection);closeModal();toast('Registro guardado','La información quedó almacenada.');setSave('Datos guardados');await go(currentSection);
+        invalidarListasFormulario(resource);cacheVistasModulo.delete(currentSection);closeModal();toast('Registro guardado','La información quedó almacenada.');setSave('Datos guardados');actualizarSeccionEnSegundoPlano(currentSection);
       }catch(error){setSave('Error al guardar','error');toast('No se pudo guardar',translateError(error),'error');}
     });
   }
@@ -1553,11 +1802,74 @@
   async function deleteRecord(value,button){
     const [resource,id]=value.split(':');if(!confirm('¿Eliminar este registro? Quedará desactivado en la base de datos.'))return;
     await conCargaBoton(button,'Eliminando…',async()=>{
-      try{await api.request('delete',{resource,id});invalidarListasFormulario(resource);cacheVistasModulo.delete(currentSection);toast('Registro eliminado');await go(currentSection);}
+      try{await api.request('delete',{resource,id});invalidarListasFormulario(resource);cacheVistasModulo.delete(currentSection);toast('Registro eliminado');actualizarSeccionEnSegundoPlano(currentSection);}
       catch(error){toast('No se pudo eliminar',translateError(error),'error');}
     });
   }
-  function filterTable(input){const q=input.value.trim().toLowerCase();$$('[data-search-row]').forEach(row=>row.style.display=row.dataset.searchRow.includes(q)?'':'none');}
+  function textoCeldaFiltro(cell){return String(cell?.textContent||'').replace(/\s+/g,' ').trim().toLowerCase();}
+  function fechaFiltroTexto(value){
+    const text=String(value||'').trim();if(!text)return NaN;
+    const direct=new Date(text).getTime();if(Number.isFinite(direct))return direct;
+    const match=text.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:[^\d]+(\d{1,2}):(\d{2}))?/);
+    if(!match)return NaN;
+    return new Date(Number(match[3]),Number(match[2])-1,Number(match[1]),Number(match[4]||0),Number(match[5]||0)).getTime();
+  }
+  function tablaRelacionadaFiltro(node){
+    const card=node.closest('.card')||node.closest('section')||$('#content');
+    return card?.querySelector('table')||null;
+  }
+  function aplicarFiltrosTabla(table){
+    if(!table)return;
+    const wrap=table.closest('.table-wrap'),panel=wrap?.previousElementSibling?.matches?.('[data-advanced-filter-panel]')?wrap.previousElementSibling:null;
+    const card=table.closest('.card')||$('#content');
+    const general=card?.querySelector('[data-table-search]')?.value.trim().toLowerCase()||'';
+    const fieldIndex=Number(panel?.querySelector('[data-filter-column]')?.value??-1);
+    const fieldValue=panel?.querySelector('[data-filter-value]')?.value.trim().toLowerCase()||'';
+    const dateIndex=Number(panel?.querySelector('[data-filter-date-column]')?.value??-1);
+    const fromValue=panel?.querySelector('[data-filter-from]')?.value||'';
+    const toValue=panel?.querySelector('[data-filter-to]')?.value||'';
+    const from=fromValue?new Date(fromValue+'T00:00:00').getTime():NaN;
+    const to=toValue?new Date(toValue+'T23:59:59.999').getTime():NaN;
+    const rows=[...table.querySelectorAll('tbody tr')].filter(row=>row.querySelectorAll('td').length>1||row.dataset.searchRow);
+    let visible=0;
+    rows.forEach(row=>{
+      const cells=[...row.children];
+      const searchable=(row.dataset.searchRow||textoCeldaFiltro(row));
+      const matchGeneral=!general||searchable.includes(general);
+      const matchField=!fieldValue||fieldIndex<0||textoCeldaFiltro(cells[fieldIndex]).includes(fieldValue);
+      let rowDate=fechaFiltroTexto(row.dataset.filterDate);
+      if(!Number.isFinite(rowDate)&&dateIndex>=0)rowDate=fechaFiltroTexto(cells[dateIndex]?.textContent);
+      if(!Number.isFinite(rowDate)){
+        for(const cell of cells){rowDate=fechaFiltroTexto(cell.textContent);if(Number.isFinite(rowDate))break;}
+      }
+      const matchFrom=!Number.isFinite(from)||(Number.isFinite(rowDate)&&rowDate>=from);
+      const matchTo=!Number.isFinite(to)||(Number.isFinite(rowDate)&&rowDate<=to);
+      const show=matchGeneral&&matchField&&matchFrom&&matchTo;
+      row.hidden=!show;row.style.display=show?'':'none';if(show)visible++;
+    });
+    const count=panel?.querySelector('[data-filter-count]');if(count)count.textContent=`${visible} de ${rows.length} registros`;
+  }
+  function limpiarFiltrosTabla(table){
+    if(!table)return;const wrap=table.closest('.table-wrap'),panel=wrap?.previousElementSibling;
+    const card=table.closest('.card')||$('#content');const general=card?.querySelector('[data-table-search]');if(general)general.value='';
+    panel?.querySelectorAll('input').forEach(input=>input.value='');panel?.querySelectorAll('select').forEach(select=>select.selectedIndex=0);aplicarFiltrosTabla(table);
+  }
+  function configurarFiltrosAvanzados(){
+    $$('.table-wrap table',$('#content')).forEach(table=>{
+      const wrap=table.closest('.table-wrap');if(!wrap||wrap.dataset.filtersReady==='1')return;wrap.dataset.filtersReady='1';
+      const headers=[...table.querySelectorAll('thead th')].map(th=>String(th.textContent||'').replace(/\s+/g,' ').trim());
+      const usable=headers.map((label,index)=>({label,index})).filter(item=>item.label&&!/acciones?|decisión|navegación/i.test(item.label));
+      const dateColumns=usable.filter(item=>/fecha|inicio|fin|asignaci|vencimiento|vigente|último acceso|emisión|programada|realizada/i.test(item.label));
+      const panel=document.createElement('div');panel.className='advanced-filter-panel';panel.dataset.advancedFilterPanel='1';
+      panel.innerHTML=`<label><span>Campo específico</span><select data-filter-column><option value="-1">Todos los campos</option>${usable.map(item=>`<option value="${item.index}">${esc(item.label)}</option>`).join('')}</select></label><label><span>Valor a buscar</span><input data-filter-value placeholder="Escriba el valor del campo"></label><label><span>Campo de fecha</span><select data-filter-date-column><option value="-1">Fecha asociada</option>${dateColumns.map(item=>`<option value="${item.index}">${esc(item.label)}</option>`).join('')}</select></label><label><span>Fecha desde</span><input data-filter-from type="date"></label><label><span>Fecha hasta</span><input data-filter-to type="date"></label><button class="btn soft small" type="button" data-clear-table-filters>Limpiar filtros</button><small data-filter-count></small>`;
+      wrap.before(panel);
+      panel.querySelectorAll('input,select').forEach(control=>control.addEventListener(control.tagName==='SELECT'?'change':'input',()=>aplicarFiltrosTabla(table)));
+      panel.querySelector('[data-clear-table-filters]').addEventListener('click',()=>limpiarFiltrosTabla(table));
+      const card=table.closest('.card')||$('#content'),search=card?.querySelector('[data-table-search]');if(search&&!search.dataset.advancedBound){search.dataset.advancedBound='1';search.addEventListener('input',()=>aplicarFiltrosTabla(table));}
+      aplicarFiltrosTabla(table);
+    });
+  }
+  function filterTable(input){aplicarFiltrosTabla(tablaRelacionadaFiltro(input));}
 
   function permissionMatrixMarkup(user){
     const custom=new Set(Array.isArray(user.PERMISOS_PERSONALIZADOS)?user.PERMISOS_PERSONALIZADOS:[]),admin=user.ROL_ID==='ROL-ADMIN';
@@ -1570,7 +1882,7 @@
     $('#modalEyebrow').textContent='CONTROL DE ACCESO';$('#modalTitle').textContent='Permisos del usuario';$('#modalBody').innerHTML=permissionMatrixMarkup(user);openModal();
     const form=$('#userPermissionsForm'),matrix=$('[data-permission-matrix]',form);$('[data-cancel-modal]',form).onclick=closeModal;
     $$('input[name="MODO_PERMISOS"]',form).forEach(radio=>radio.addEventListener('change',()=>matrix.classList.toggle('enabled',radio.value==='PERSONALIZADO'&&radio.checked)));
-    form.onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',form),mode=form.elements.MODO_PERMISOS.value,permissions=[...form.querySelectorAll('input[name="PERMISOS"]:checked')].map(input=>input.value);await conCargaBoton(button,'Guardando…',async()=>{try{const result=await api.request('saveUserPermissions',{data:{USUARIO_ID:userId,MODO_PERMISOS:mode,PERMISOS:permissions}});guardarRegistro('users',result.row);invalidarListasFormulario('users');cacheVistasModulo.delete('users');if(currentUser.ID===userId){currentUser=result.row;const auth=api.getAuth();api.setAuth({...auth,user:result.row});postParent({tipo:'flotas:modulo-listo',usuario:result.row,seccion:currentSection});}closeModal();toast('Permisos actualizados','La sesión se mantuvo abierta y los nuevos permisos se aplicarán al cambiar de módulo.');await go('users');}catch(error){toast('No se pudieron actualizar los permisos',translateError(error),'error');}});};
+    form.onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',form),mode=form.elements.MODO_PERMISOS.value,permissions=[...form.querySelectorAll('input[name="PERMISOS"]:checked')].map(input=>input.value);await conCargaBoton(button,'Guardando…',async()=>{try{const result=await api.request('saveUserPermissions',{data:{USUARIO_ID:userId,MODO_PERMISOS:mode,PERMISOS:permissions}});guardarRegistro('users',result.row);invalidarListasFormulario('users');cacheVistasModulo.delete('users');if(currentUser.ID===userId){currentUser=result.row;const auth=api.getAuth();api.setAuth({...auth,user:result.row});postParent({tipo:'flotas:modulo-listo',usuario:result.row,seccion:currentSection});}closeModal();toast('Permisos actualizados','La sesión se mantuvo abierta y los nuevos permisos se aplicarán al cambiar de módulo.');actualizarSeccionEnSegundoPlano('users');}catch(error){toast('No se pudieron actualizar los permisos',translateError(error),'error');}});};
   }
 
   function reconocimientoDisponible(){return window.SpeechRecognition||window.webkitSpeechRecognition||null;}
@@ -1579,7 +1891,7 @@
   function detenerVoz(){try{reconocimientoVoz?.stop();}catch(_){ }if('speechSynthesis'in window)window.speechSynthesis.cancel();vozEscuchando=false;actualizarEstadoVoz('Control de voz detenido.');}
   function notificacionesActuales(){return (cacheListasFormulario.get('notifications')||[]).slice().sort((a,b)=>new Date(b.FECHA_ENVIO||0)-new Date(a.FECHA_ENVIO||0));}
   function leerNotificacionesVoz(){const unread=notificacionesActuales().filter(item=>item.LEIDA!=='SI');if(!unread.length){hablar('No tiene notificaciones pendientes.');actualizarEstadoVoz('No hay notificaciones pendientes.');return;}const limit=unread.slice(0,10),text=`Tiene ${unread.length} notificaciones pendientes. `+limit.map((item,index)=>`Notificación ${index+1}. ${item.TITULO}. ${item.MENSAJE}`).join('. ');hablar(text);actualizarEstadoVoz(`Leyendo ${limit.length} de ${unread.length} notificaciones pendientes.`);}
-  async function marcarTodasNotificacionesLeidas(){const unread=notificacionesActuales().filter(item=>item.LEIDA!=='SI');if(!unread.length){hablar('No hay notificaciones pendientes.');return;}actualizarEstadoVoz('Marcando notificaciones como leídas…');for(const item of unread){await api.request('readNotification',{id:item.ID});}invalidarListasFormulario('notifications');cacheVistasModulo.delete('notifications');hablar(`${unread.length} notificaciones fueron marcadas como leídas.`);toast('Notificaciones actualizadas',`${unread.length} mensajes marcados como leídos.`);await go('notifications');}
+  async function marcarTodasNotificacionesLeidas(){const unread=notificacionesActuales().filter(item=>item.LEIDA!=='SI');if(!unread.length){hablar('No hay notificaciones pendientes.');return;}actualizarEstadoVoz('Marcando notificaciones como leídas…');for(const item of unread){await api.request('readNotification',{id:item.ID});}invalidarListasFormulario('notifications');cacheVistasModulo.delete('notifications');hablar(`${unread.length} notificaciones fueron marcadas como leídas.`);toast('Notificaciones actualizadas',`${unread.length} mensajes marcados como leídos.`);actualizarSeccionEnSegundoPlano('notifications');}
   async function ejecutarComandoVoz(transcript){const command=String(transcript||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();actualizarEstadoVoz(`Comando detectado: “${transcript}”`);if(/detener|parar|silencio/.test(command)){detenerVoz();return;}if(/leer.*(notificacion|pendiente)|notificacion.*leer/.test(command)){leerNotificacionesVoz();return;}if(/marcar.*todas.*leida/.test(command)){await marcarTodasNotificacionesLeidas();return;}if(/crear|nueva|enviar/.test(command)&&/notificacion|mensaje/.test(command)){openNotificationModal();hablar('Formulario de notificación abierto. Puede usar los micrófonos para dictar el título y el mensaje.');return;}hablar('Comando no reconocido. Diga leer notificaciones, marcar todas como leídas, crear notificación o detener lectura.');actualizarEstadoVoz('Comando no reconocido. Revise los ejemplos disponibles.');}
   function iniciarComandoVoz(){const Recognition=reconocimientoDisponible();if(!Recognition){toast('Reconocimiento de voz no disponible','Use Chrome o un navegador compatible. La lectura en voz alta seguirá disponible.','error');actualizarEstadoVoz('Este navegador no admite reconocimiento de voz.');return;}detenerVoz();reconocimientoVoz=new Recognition();reconocimientoVoz.lang='es-CL';reconocimientoVoz.interimResults=false;reconocimientoVoz.continuous=false;reconocimientoVoz.maxAlternatives=1;reconocimientoVoz.onstart=()=>{vozEscuchando=true;actualizarEstadoVoz('Escuchando… diga un comando.');};reconocimientoVoz.onresult=event=>ejecutarComandoVoz(event.results?.[0]?.[0]?.transcript||'');reconocimientoVoz.onerror=event=>{vozEscuchando=false;const message=event.error==='not-allowed'?'Permiso de micrófono bloqueado.':'No se pudo reconocer el comando.';actualizarEstadoVoz(message);toast('Comando de voz',message,'error');};reconocimientoVoz.onend=()=>{vozEscuchando=false;};try{reconocimientoVoz.start();}catch(error){toast('Comando de voz','No se pudo activar el micrófono.','error');}}
   function dictarEnCampo(campo,boton){const Recognition=reconocimientoDisponible();if(!Recognition){toast('Dictado no disponible','Este navegador no admite reconocimiento de voz.','error');return;}const recognition=new Recognition();recognition.lang='es-CL';recognition.interimResults=false;recognition.continuous=false;const original=boton.textContent;boton.textContent='●';boton.classList.add('listening');recognition.onresult=event=>{const text=event.results?.[0]?.[0]?.transcript||'';campo.value=(campo.value?campo.value.trim()+' ':'')+text;campo.dispatchEvent(new Event('input',{bubbles:true}));};recognition.onerror=()=>toast('Dictado','No se pudo reconocer la voz.','error');recognition.onend=()=>{boton.textContent=original;boton.classList.remove('listening');};try{recognition.start();}catch(_){boton.textContent=original;boton.classList.remove('listening');}}
@@ -1592,10 +1904,10 @@
     const originLng=base.configurada?base.longitud:'';
     $('#modalBody').innerHTML=`<form class="form-grid" id="routeForm"><div class="operation-base-summary full"><i>➜</i><div><b>Asignación independiente del GPS</b><span>Puede crear la ruta desde cualquier lugar. La geocerca se validará únicamente cuando el conductor inicie o finalice una operación.</span></div></div><label class="field"><span>Conductor</span>${selectorDinamico('drivers','routeDrivers','CONDUCTOR_ID','',true)}</label><label class="field"><span>Vehículo</span>${selectorDinamico('vehicles','routeVehicles','VEHICULO_ID')}</label><label class="field"><span>Nombre de la ruta</span><input name="NOMBRE" placeholder="Ej. Entrega sector norte"></label><label class="field"><span>Aplicación de navegación</span><select name="PROVEEDOR_NAVEGACION"><option>Google Maps</option><option>Waze</option></select></label><label class="field full"><span>Origen planificado</span><input name="ORIGEN" value="${esc(originDefault)}" required data-address-autocomplete data-lat-target="ORIGEN_LATITUD" data-lng-target="ORIGEN_LONGITUD" placeholder="Dirección de salida planificada"><small>${base.configurada?'Se completó con la base operacional, pero puede modificarlo para esta ruta.':'Ingrese el origen de esta asignación. Esto no configura la geocerca operacional.'}</small></label><label class="field"><span>Latitud origen</span><input name="ORIGEN_LATITUD" type="number" step="any" value="${esc(originLat)}" readonly placeholder="Opcional"></label><label class="field"><span>Longitud origen</span><input name="ORIGEN_LONGITUD" type="number" step="any" value="${esc(originLng)}" readonly placeholder="Opcional"></label><label class="field full"><span>Destino de la ruta</span><input name="DESTINO" required data-address-autocomplete data-lat-target="DESTINO_LATITUD" data-lng-target="DESTINO_LONGITUD" placeholder="Comience a escribir el destino"></label><label class="field"><span>Latitud destino</span><input name="DESTINO_LATITUD" type="number" step="any" readonly placeholder="Opcional"></label><label class="field"><span>Longitud destino</span><input name="DESTINO_LONGITUD" type="number" step="any" readonly placeholder="Opcional"></label><label class="field"><span>Prioridad</span><select name="PRIORIDAD"><option>Normal</option><option selected>Alta</option><option>Urgente</option></select></label><label class="field full"><span>Instrucciones al conductor</span><textarea name="INSTRUCCIONES" placeholder="Indicaciones, horarios, contacto o restricciones"></textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Asignar y notificar</button></div></form>`;
     const token=openModal();bindAddressAutocomplete($('#routeForm'));$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;
-    $('#routeForm').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());await conCargaBoton(button,'Asignando…',async()=>{try{await api.request('assignRoute',{data});invalidarListasFormulario('routes','notifications');cacheVistasModulo.delete('routes');cacheVistasModulo.delete('dashboard');closeModal();toast('Ruta asignada','La ruta fue creada sin exigir validación GPS. La geocerca se comprobará al iniciar la operación.');await go('routes');}catch(error){toast('No se pudo asignar',translateError(error),'error');}});};
+    $('#routeForm').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());await conCargaBoton(button,'Asignando…',async()=>{try{await api.request('assignRoute',{data});invalidarListasFormulario('routes','notifications');cacheVistasModulo.delete('routes');cacheVistasModulo.delete('dashboard');closeModal();toast('Ruta asignada','La ruta fue creada sin exigir validación GPS. La geocerca se comprobará al iniciar la operación.');actualizarSeccionEnSegundoPlano('routes');}catch(error){toast('No se pudo asignar',translateError(error),'error');}});};
     prepararListasModal(token,['drivers','vehicles']);
   }
-  async function changeRouteState(value){const split=value.indexOf(':'),id=value.slice(0,split),state=value.slice(split+1);try{await api.request('updateRouteStatus',{id,ESTADO:state});invalidarListasFormulario('routes','notifications');cacheVistasModulo.delete(currentSection);cacheVistasModulo.delete('dashboard');toast('Ruta actualizada',`Nuevo estado: ${state}.`);await go(currentSection);}catch(error){toast('No se pudo actualizar',translateError(error),'error');}}
+  async function changeRouteState(value){const split=value.indexOf(':'),id=value.slice(0,split),state=value.slice(split+1);try{await api.request('updateRouteStatus',{id,ESTADO:state});invalidarListasFormulario('routes','notifications');cacheVistasModulo.delete(currentSection);cacheVistasModulo.delete('dashboard');toast('Ruta actualizada',`Nuevo estado: ${state}.`);actualizarSeccionEnSegundoPlano(currentSection);}catch(error){toast('No se pudo actualizar',translateError(error),'error');}}
   function normalizarTelefonoWhatsApp(value=''){
     let digits=String(value||'').replace(/\D/g,'');
     if(digits.startsWith('00'))digits=digits.slice(2);
@@ -1621,12 +1933,12 @@
     $('#modalEyebrow').textContent='COMUNICACIONES';$('#modalTitle').textContent='Enviar notificación';
     $('#modalBody').innerHTML=`<form class="form-grid" id="notificationForm"><label class="field full"><span>Conductor destinatario</span>${selectorDinamico('drivers','notificationDrivers','DESTINATARIO_CONDUCTOR_ID','',true)}</label><label class="field"><span>Tipo</span><select name="TIPO"><option>Información</option><option>Ruta</option><option>Operación</option><option>Seguridad</option><option>Documento</option></select></label><label class="field"><span>Prioridad</span><select name="PRIORIDAD"><option>Baja</option><option selected>Normal</option><option>Alta</option><option>Urgente</option></select></label><label class="field full"><span>Título</span><div class="voice-field"><input name="TITULO" required><button type="button" class="voice-field-button" data-dictate-field="TITULO" title="Dictar título">🎙</button></div></label><label class="field full"><span>Mensaje</span><div class="voice-field"><textarea name="MENSAJE" required></textarea><button type="button" class="voice-field-button" data-dictate-field="MENSAJE" title="Dictar mensaje">🎙</button></div></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Enviar notificación</button></div></form>`;
     const token=openModal();$$('[data-dictate-field]',$('#modalBody')).forEach(button=>button.addEventListener('click',()=>dictarEnCampo($('#notificationForm').elements[button.dataset.dictateField],button)));$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;
-    $('#notificationForm').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());await conCargaBoton(button,'Enviando…',async()=>{try{await api.request('sendNotification',{data});invalidarListasFormulario('notifications');cacheVistasModulo.delete('notifications');cacheVistasModulo.delete('dashboard');closeModal();toast('Notificación enviada','El mensaje aparecerá en la cuenta del conductor.');await go('notifications');}catch(error){toast('No se pudo enviar',translateError(error),'error');}});};
+    $('#notificationForm').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());await conCargaBoton(button,'Enviando…',async()=>{try{await api.request('sendNotification',{data});invalidarListasFormulario('notifications');cacheVistasModulo.delete('notifications');cacheVistasModulo.delete('dashboard');closeModal();toast('Notificación enviada','El mensaje aparecerá en la cuenta del conductor.');actualizarSeccionEnSegundoPlano('notifications');}catch(error){toast('No se pudo enviar',translateError(error),'error');}});};
     prepararListasModal(token,['drivers']);
   }
-  async function readNotification(id){try{await api.request('readNotification',{id});invalidarListasFormulario('notifications');cacheVistasModulo.delete(currentSection);await refreshNotificationBadge();if(currentSection==='notifications'||currentSection==='dashboard')await go(currentSection,{force:true});}catch(error){toast('No se pudo actualizar',translateError(error),'error');}}
-  async function readAlert(id){try{await api.request('update',{resource:'alerts',id,data:{LEIDA:'SI'}});invalidarListasFormulario('alerts');cacheVistasModulo.delete('alerts');toast('Alerta atendida','El evento quedó marcado como leído.');await go('alerts',{force:true});}catch(error){toast('No se pudo actualizar la alerta',translateError(error),'error');}}
-  async function markAllAlertsRead(){const rows=(cacheListasFormulario.get('alerts')||[]).filter(row=>row.LEIDA!=='SI');for(const row of rows)await api.request('update',{resource:'alerts',id:row.ID,data:{LEIDA:'SI'}});invalidarListasFormulario('alerts');cacheVistasModulo.delete('alerts');toast('Alertas actualizadas',`${rows.length} alertas marcadas como leídas.`);await go('alerts',{force:true});}
+  async function readNotification(id){try{await api.request('readNotification',{id});invalidarListasFormulario('notifications');cacheVistasModulo.delete(currentSection);await refreshNotificationBadge();if(currentSection==='notifications'||currentSection==='dashboard')actualizarSeccionEnSegundoPlano(currentSection);}catch(error){toast('No se pudo actualizar',translateError(error),'error');}}
+  async function readAlert(id){try{await api.request('update',{resource:'alerts',id,data:{LEIDA:'SI'}});invalidarListasFormulario('alerts');cacheVistasModulo.delete('alerts');toast('Alerta atendida','El evento quedó marcado como leído.');actualizarSeccionEnSegundoPlano('alerts');}catch(error){toast('No se pudo actualizar la alerta',translateError(error),'error');}}
+  async function markAllAlertsRead(){const rows=(cacheListasFormulario.get('alerts')||[]).filter(row=>row.LEIDA!=='SI');for(const row of rows)await api.request('update',{resource:'alerts',id:row.ID,data:{LEIDA:'SI'}});invalidarListasFormulario('alerts');cacheVistasModulo.delete('alerts');toast('Alertas actualizadas',`${rows.length} alertas marcadas como leídas.`);actualizarSeccionEnSegundoPlano('alerts');}
   function systemDiagnosticMarkup(data){const modules=data?.modules||{};const entries=Object.entries(modules);const issues=entries.filter(([,item])=>item.estado!=='OK');return `<div class="system-health-summary ${issues.length?'warning':'ok'}"><i>${issues.length?'!':'✓'}</i><div><b>${issues.length?`${issues.length} elementos requieren atención`:'Estructura lista para operar'}</b><span>Versión ${esc(data?.version||'—')} · ${fmtDate(data?.fecha||new Date(),true)}</span></div></div><div class="system-health-grid">${entries.map(([key,item])=>`<article class="${item.estado==='OK'?'ok':'warning'}"><span>${esc(item.nombre||key)}</span><b>${esc(item.estado||'REVISAR')}</b><small>${esc(item.detalle||'')}</small></article>`).join('')}</div>`;}
   async function runSystemDiagnostic(){try{const result=await api.request('diagnoseSystem',{cache:false,force:true});const node=$('#systemHealthResult'),statusNode=$('#systemHealthStatus');if(node)node.innerHTML=systemDiagnosticMarkup(result);if(statusNode){const issues=Object.values(result.modules||{}).filter(item=>item.estado!=='OK').length;statusNode.textContent=issues?'Requiere atención':'Sistema correcto';statusNode.className=`status ${issues?'warning':'ok'}`;}toast('Diagnóstico completado',result.correcto?'Los módulos críticos están listos.':'Se encontraron elementos que pueden repararse desde esta pantalla.',result.correcto?'success':'error');return result;}catch(error){toast('No se pudo diagnosticar',translateError(error),'error');throw error;}}
   async function repairSystem(){try{const result=await api.request('repairSystem',{});api.invalidate();invalidarListasFormulario();cacheVistasModulo.clear();const node=$('#systemHealthResult'),statusNode=$('#systemHealthStatus');if(node)node.innerHTML=systemDiagnosticMarkup(result.diagnostico||result);if(statusNode){statusNode.textContent='Estructura reparada';statusNode.className='status ok';}toast('Sistema reparado','Se verificaron hojas, columnas, permisos y catálogos sin borrar información.');return result;}catch(error){toast('No se pudo reparar',translateError(error),'error');throw error;}}
@@ -1662,7 +1974,7 @@
       const state=result.row.ESTADO_REVISION||'Registrado',isCentral=persistencia==='CENTRAL_CONFIRMADA';
       toast(state==='Bloqueado'?'Salida bloqueada':'Check-in guardado',`${isCentral?'Base central confirmada':'Almacenamiento local'} · ${result.row.ID}. ${state==='Aprobado'?'La inspección quedó aprobada y vigente por 12 horas.':state==='Pendiente'?'Un supervisor debe revisar las observaciones antes de iniciar.':'Se detectaron fallas críticas.'}`,state==='Bloqueado'?'error':'success');
       form.dataset.solicitudClienteId='';
-      await go('checkin',{force:true});
+      actualizarSeccionEnSegundoPlano('checkin');
     }catch(error){
       const code=String(error?.message||error||'');
       const detail=code.includes('HOJA_NO_ENCONTRADA_CHECKINS')?'La hoja CHECKINS no existe. Actualice Google Apps Script y ejecute actualizarSistema().':code.includes('CHECKIN_NO_CONFIRMADO')?'El servidor respondió, pero no confirmó el registro en la hoja CHECKINS.':translateError(error);
@@ -1686,7 +1998,7 @@
     $('#modalEyebrow').textContent='SEGURIDAD PREOPERACIONAL';$('#modalTitle').textContent='Realizar check-in vehicular';
     $('#modalBody').innerHTML=`<form class="form-grid checkin-form" id="checkinForm"><div class="tracking-notice active full"><i>✓</i><div><b>Inspección obligatoria antes de la operación</b><span>Complete los 16 controles. Las fallas críticas bloquean el inicio.</span></div></div><label class="field"><span>Vehículo</span>${selectorDinamico('vehicles','checkinVehicles','VEHICULO_ID','',true)}</label><label class="field"><span>Conductor</span>${selectorDinamico('drivers','checkinDrivers','CONDUCTOR_ID',currentUser.CONDUCTOR_ID||'',true)}</label><label class="field"><span>Kilometraje actual</span><input name="KILOMETRAJE" type="number" min="0" required inputmode="numeric"></label><label class="field"><span>Nivel de combustible/carga</span><select name="NIVEL_COMBUSTIBLE" required><option value="">Seleccione</option><option>Vacío / crítico</option><option>1/4</option><option>1/2</option><option>3/4</option><option>Lleno</option><option>No aplica</option></select></label>${checkinItemsMarkup()}<label class="field full"><span>Observaciones generales</span><textarea name="OBSERVACIONES" placeholder="Indique ruidos, daños, testigos del tablero u otras condiciones"></textarea></label><label class="field full"><span>Nombre o firma del conductor</span><input name="FIRMA_CONDUCTOR" value="${esc(currentUser.NOMBRE||'')}" required></label><label class="checkin-confirm full"><input type="checkbox" name="CONFIRMACION_CONDUCTOR" value="SI" required><span>Confirmo que realicé personalmente esta inspección y que la información es correcta.</span></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Guardar y evaluar check-in</button></div></form>`;
     const token=openModal();$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;prepararListasModal(token,['vehicles','drivers']);
-    $('#checkinForm').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());const list=checkinCatalog.map(item=>({id:item.id,respuesta:$(`[data-checkin-item="${item.id}"]`,form)?.value||'',observacion:$(`[data-checkin-note="${item.id}"]`,form)?.value||''}));data.LISTA_CODIFICADA=JSON.stringify(list);await conCargaBoton(button,'Evaluando…',async()=>{try{const result=await api.request('createVehicleCheckin',{data});invalidarListasFormulario('checkins');cacheVistasModulo.delete('checkin');cacheVistasModulo.delete('checkinApprovals');cacheVistasModulo.delete('checkinHistory');cacheVistasModulo.delete('operations');closeModal();const state=result.row?.ESTADO_REVISION||'Registrado';toast(state==='Bloqueado'?'Salida bloqueada':'Check-in guardado',state==='Aprobado'?'La inspección quedó aprobada y vigente por 12 horas.':state==='Pendiente'?'Un supervisor debe revisar las observaciones antes de iniciar.':'Se detectaron fallas críticas. Corríjalas y realice un nuevo check-in.',state==='Bloqueado'?'error':'success');await go('checkin');}catch(error){toast('No se pudo guardar el check-in',translateError(error),'error');}});};
+    $('#checkinForm').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());const list=checkinCatalog.map(item=>({id:item.id,respuesta:$(`[data-checkin-item="${item.id}"]`,form)?.value||'',observacion:$(`[data-checkin-note="${item.id}"]`,form)?.value||''}));data.LISTA_CODIFICADA=JSON.stringify(list);await conCargaBoton(button,'Evaluando…',async()=>{try{const result=await api.request('createVehicleCheckin',{data});invalidarListasFormulario('checkins');cacheVistasModulo.delete('checkin');cacheVistasModulo.delete('checkinApprovals');cacheVistasModulo.delete('checkinHistory');cacheVistasModulo.delete('operations');closeModal();const state=result.row?.ESTADO_REVISION||'Registrado';toast(state==='Bloqueado'?'Salida bloqueada':'Check-in guardado',state==='Aprobado'?'La inspección quedó aprobada y vigente por 12 horas.':state==='Pendiente'?'Un supervisor debe revisar las observaciones antes de iniciar.':'Se detectaron fallas críticas. Corríjalas y realice un nuevo check-in.',state==='Bloqueado'?'error':'success');actualizarSeccionEnSegundoPlano('checkin');}catch(error){toast('No se pudo guardar el check-in',translateError(error),'error');}});};
   }
   function checkinDetailMarkup(row) {
     const vehicle=registroFormulario('vehicles',row.VEHICULO_ID),driver=registroFormulario('drivers',row.CONDUCTOR_ID),items=parseCheckinItems(row);
@@ -1702,7 +2014,7 @@
     const row=registroFormulario('checkins',id);if(!row){openCheckinDetailModal(id);return;}
     $('#modalEyebrow').textContent='APROBACIÓN DE SEGURIDAD';$('#modalTitle').textContent=`Revisar ${id}`;
     $('#modalBody').innerHTML=`<div class="checkin-review">${checkinDetailMarkup(row).replace(/<div class="form-actions">[\s\S]*?<\/div><\/div>$/,'')}</div><label class="field"><span>Comentario del supervisor</span><textarea id="checkinReviewComment" required placeholder="Indique la decisión y las medidas necesarias"></textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn danger" type="button" data-checkin-decision="RECHAZAR">Rechazar</button>${Number(row.FALLAS_CRITICAS||0)===0?'<button class="btn primary" type="button" data-checkin-decision="APROBAR">Aprobar check-in</button>':''}</div></div>`;
-    openModal();$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;$$('[data-checkin-decision]',$('#modalBody')).forEach(button=>button.onclick=()=>conCargaBoton(button,button.dataset.checkinDecision==='APROBAR'?'Aprobando…':'Rechazando…',async()=>{const comment=$('#checkinReviewComment').value.trim();if(!comment){toast('Comentario requerido','Explique la decisión tomada.','error');return;}try{await api.request('reviewVehicleCheckin',{id,data:{CHECKIN_ID:id,DECISION:button.dataset.checkinDecision,COMENTARIO_REVISION:comment}});invalidarListasFormulario('checkins','notifications');['checkin','checkinApprovals','checkinHistory','operations','dashboard'].forEach(section=>cacheVistasModulo.delete(section));closeModal();toast('Check-in revisado',button.dataset.checkinDecision==='APROBAR'?'La operación puede iniciarse mientras la inspección esté vigente.':'El conductor deberá corregir y realizar un check-in nuevo.');await go(currentSection);}catch(error){toast('No se pudo revisar',translateError(error),'error');}}));
+    openModal();$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;$$('[data-checkin-decision]',$('#modalBody')).forEach(button=>button.onclick=()=>conCargaBoton(button,button.dataset.checkinDecision==='APROBAR'?'Aprobando…':'Rechazando…',async()=>{const comment=$('#checkinReviewComment').value.trim();if(!comment){toast('Comentario requerido','Explique la decisión tomada.','error');return;}try{await api.request('reviewVehicleCheckin',{id,data:{CHECKIN_ID:id,DECISION:button.dataset.checkinDecision,COMENTARIO_REVISION:comment}});invalidarListasFormulario('checkins','notifications');['checkin','checkinApprovals','checkinHistory','operations','dashboard'].forEach(section=>cacheVistasModulo.delete(section));closeModal();toast('Check-in revisado',button.dataset.checkinDecision==='APROBAR'?'La operación puede iniciarse mientras la inspección esté vigente.':'El conductor deberá corregir y realizar un check-in nuevo.');actualizarSeccionEnSegundoPlano(currentSection);}catch(error){toast('No se pudo revisar',translateError(error),'error');}}));
   }
   async function refreshOperationCheckins(form) {
     const vehicle=form.elements.VEHICULO_ID?.value||'',driver=form.elements.CONDUCTOR_ID?.value||'',select=form.elements.CHECKIN_ID;if(!select)return;
@@ -1730,7 +2042,7 @@
       const base=configuracionPuntoOperacion(currentCompany);if(!result.confirmado||!base.configurada)throw new Error('PUNTO_OPERACION_NO_CONFIRMADO');
       invalidarListasFormulario('companies');['settings','operations','routes','gps','dashboard'].forEach(section=>cacheVistasModulo.delete(section));
       toast('Punto operacional listo',`${base.nombre} fue confirmado en la base central. Ya puede iniciar operaciones.`);
-      if(reabrirOperacion){closeModal();setTimeout(()=>openOperationModal(prefillVehicle),50);}else await go('operations');
+      if(reabrirOperacion){closeModal();setTimeout(()=>openOperationModal(prefillVehicle),50);}else actualizarSeccionEnSegundoPlano('operations');
       return result;
     };
     return button?conCargaBoton(button,'Configurando base…',execute):execute();
@@ -1745,8 +2057,10 @@
     const token=openModal(),form=$('#operationForm');$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;$('[data-nav-checkin]',form).onclick=()=>{closeModal();navigateSection('checkin');};
     const updateDependencies=()=>{refreshOperationCheckins(form);rutasDisponiblesOperacion(form);};['VEHICULO_ID','CONDUCTOR_ID'].forEach(name=>form.elements[name]?.addEventListener('change',updateDependencies));form.elements.RUTA_ID?.addEventListener('change',()=>actualizarDestinoOperacion(form));
     $('[data-capture-operation-location]',form).onclick=event=>conCargaBoton(event.currentTarget,'Validando GPS…',async()=>{try{await capturarUbicacionFormularioOperacion(form,'INICIO');}catch(error){toast('No se validó la ubicación',translateError(error),'error');}});
-    form.onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',form);await conCargaBoton(button,'Validando e iniciando…',async()=>{try{let locationResult=null;if(!form.elements.INICIO_LATITUD.value)locationResult=await capturarUbicacionFormularioOperacion(form,'INICIO');else locationResult=resumenValidacionLocalUbicacion({latitud:Number(form.elements.INICIO_LATITUD.value),longitud:Number(form.elements.INICIO_LONGITUD.value),precision:Number(form.elements.INICIO_PRECISION.value)},base,'INICIO');if(!locationResult.valida)throw new Error(locationResult.precisionValida?'FUERA_DEL_PUNTO_DE_INICIO':'UBICACION_GPS_IMPRECISA');const data=Object.fromEntries(new FormData(form).entries()),result=await api.request('startOperation',{data});invalidarListasFormulario('operations','vehicles','drivers','history','checkins','routes');['operations','dashboard','checkin','checkinHistory','routes'].forEach(section=>cacheVistasModulo.delete(section));closeModal();toast('Operación iniciada',`Ubicación confirmada a ${Math.round(result.locationValidation?.DISTANCIA_METROS??locationResult.distancia)} m de la base.`);await go('operations');}catch(error){toast('No se pudo iniciar',translateError(error),'error');}});};
-    prepararListasModal(token,['vehicles','drivers','routes']);Promise.all(['vehicles','drivers','routes'].map(cargarListaFormulario)).then(()=>{if(token!==secuenciaModal)return;actualizarSelectoresModal(token);updateDependencies();}).catch(()=>{});
+    form.onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',form);await conCargaBoton(button,'Validando e iniciando…',async()=>{try{let locationResult=null;if(!form.elements.INICIO_LATITUD.value)locationResult=await capturarUbicacionFormularioOperacion(form,'INICIO');else locationResult=resumenValidacionLocalUbicacion({latitud:Number(form.elements.INICIO_LATITUD.value),longitud:Number(form.elements.INICIO_LONGITUD.value),precision:Number(form.elements.INICIO_PRECISION.value)},base,'INICIO');if(!locationResult.valida)throw new Error(locationResult.precisionValida?'FUERA_DEL_PUNTO_DE_INICIO':'UBICACION_GPS_IMPRECISA');const data=Object.fromEntries(new FormData(form).entries()),result=await api.request('startOperation',{data});invalidarListasFormulario('operations','vehicles','drivers','history','checkins','routes');['operations','dashboard','checkin','checkinHistory','routes'].forEach(section=>cacheVistasModulo.delete(section));closeModal();toast('Operación iniciada',`Ubicación confirmada a ${Math.round(result.locationValidation?.DISTANCIA_METROS??locationResult.distancia)} m de la base. Actualizando en segundo plano.`);actualizarSeccionEnSegundoPlano('operations');}catch(error){toast('No se pudo iniciar',translateError(error),'error');}});};
+    prepararListasModal(token,['vehicles','drivers','routes']);
+    actualizarSelectoresModal(token);
+    updateDependencies();
   }
   function openAdminEditOperationModal(id){
     if(!esAdministrador())return toast('Acceso restringido','Solo el Administrador puede editar operaciones.','error');
@@ -1756,12 +2070,12 @@
     const driverOptions=drivers.map(row=>`<option value="${esc(row.ID)}" ${row.ID===operation.CONDUCTOR_ID?'selected':''}>${esc(row.NOMBRE||row.ID)} · ${esc(row.RUT||'')}</option>`).join('');
     const routeOptions=`<option value="">Sin ruta</option>${routes.map(row=>`<option value="${esc(row.ID)}" ${row.ID===operation.RUTA_ID?'selected':''}>${esc(row.NOMBRE||row.ID)} · ${esc(row.ESTADO||'')}</option>`).join('')}`;
     $('#modalEyebrow').textContent='ADMINISTRACIÓN';$('#modalTitle').textContent=`Editar operación ${esc(operation.ID)}`;
-    $('#modalBody').innerHTML=`<form class="form-grid" id="adminEditOperationForm"><div class="module-diagnostic warning full"><i>✎</i><div><b>Edición con trazabilidad completa</b><span>La ubicación GPS, validaciones y evidencias originales no se eliminan. Cada cambio queda en Historial y Auditoría.</span></div></div><label class="field"><span>Vehículo</span><select name="VEHICULO_ID" required>${vehicleOptions}</select></label><label class="field"><span>Conductor</span><select name="CONDUCTOR_ID" required>${driverOptions}</select></label><label class="field full"><span>Ruta vinculada</span><select name="RUTA_ID">${routeOptions}</select></label><label class="field"><span>Origen</span><input name="ORIGEN" value="${esc(operation.ORIGEN||'')}"></label><label class="field"><span>Destino</span><input name="DESTINO" value="${esc(operation.DESTINO||'')}"></label><label class="field"><span>Fecha y hora de inicio</span><input name="FECHA_INICIO" type="datetime-local" value="${esc(fechaInputLocal(operation.FECHA_INICIO))}"></label><label class="field"><span>Fecha y hora de finalización</span><input name="FECHA_FIN" type="datetime-local" value="${esc(fechaInputLocal(operation.FECHA_FIN))}" ${operation.ESTADO==='Activa'?'disabled':''}></label><label class="field"><span>KM inicial <small>(opcional)</small></span><input name="KM_INICIO" type="number" min="0" step="0.1" value="${operation.KM_INICIO!==''&&operation.KM_INICIO!=null?esc(operation.KM_INICIO):''}"></label><label class="field"><span>KM final <small>(opcional)</small></span><input name="KM_FIN" type="number" min="0" step="0.1" value="${operation.KM_FIN!==''&&operation.KM_FIN!=null?esc(operation.KM_FIN):''}"></label><label class="field full"><span>Observaciones</span><textarea name="OBSERVACIONES">${esc(operation.OBSERVACIONES||'')}</textarea></label><label class="field full"><span>Motivo de la edición</span><textarea name="MOTIVO_EDICION" minlength="5" required placeholder="Explique brevemente la corrección realizada"></textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Guardar cambios y auditar</button></div></form>`;
-    openModal();const form=$('#adminEditOperationForm');$('[data-cancel-modal]',form).onclick=closeModal;form.onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',form);await conCargaBoton(button,'Guardando…',async()=>{try{const data=Object.fromEntries(new FormData(form).entries());data.IP_PUBLICA=clientPublicIp||await api.getClientIp?.().catch(()=> '')||'';await api.request('editOperationAdmin',{id,data});invalidarListasFormulario('operations','vehicles','drivers','routes','history','audit');['operations','dashboard','routes','history','audit'].forEach(section=>cacheVistasModulo.delete(section));closeModal();toast('Operación actualizada','Los cambios y valores anteriores quedaron registrados en auditoría.');await go('operations',{force:true});}catch(error){toast('No se pudo editar',translateError(error),'error');}});};
+    $('#modalBody').innerHTML=`<form class="form-grid" id="adminEditOperationForm"><div class="module-diagnostic warning full"><i>✎</i><div><b>Edición con trazabilidad completa</b><span>La ubicación GPS, validaciones y evidencias originales no se eliminan. Cada cambio queda en Historial y Auditoría.</span></div></div><label class="field"><span>Vehículo</span><select name="VEHICULO_ID" required>${vehicleOptions}</select></label><label class="field"><span>Conductor</span><select name="CONDUCTOR_ID" required>${driverOptions}</select></label><label class="field full"><span>Ruta vinculada</span><select name="RUTA_ID">${routeOptions}</select></label><label class="field"><span>Origen</span><input name="ORIGEN" value="${esc(operation.ORIGEN||'')}"></label><label class="field"><span>Destino</span><input name="DESTINO" value="${esc(operation.DESTINO||'')}"></label><label class="field"><span>Fecha y hora de inicio</span><input name="FECHA_INICIO" type="datetime-local" value="${esc(fechaInputLocal(operation.FECHA_INICIO))}"></label><label class="field"><span>Fecha y hora de finalización</span><input name="FECHA_FIN" type="datetime-local" value="${esc(fechaInputLocal(operation.FECHA_FIN))}" ${operation.ESTADO==='Activa'?'disabled':''}></label><label class="field"><span>KM inicial <small>(opcional)</small></span><input name="KM_INICIO" type="number" min="0" step="0.1" value="${operation.KM_INICIO!==''&&operation.KM_INICIO!=null?esc(operation.KM_INICIO):''}"></label><label class="field"><span>KM final <small>(opcional)</small></span><input name="KM_FIN" type="number" min="0" step="0.1" value="${operation.KM_FIN!==''&&operation.KM_FIN!=null?esc(operation.KM_FIN):''}"></label><label class="field full"><span>Observaciones</span><textarea name="OBSERVACIONES">${esc(operation.OBSERVACIONES||'')}</textarea></label><label class="field full"><span>Motivo de la edición <small>(opcional)</small></span><textarea name="MOTIVO_EDICION" placeholder="Puede indicar una corrección; si queda vacío se registrará como actualización administrativa"></textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Guardar cambios y auditar</button></div></form>`;
+    openModal();const form=$('#adminEditOperationForm');$('[data-cancel-modal]',form).onclick=closeModal;form.onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',form);await conCargaBoton(button,'Guardando…',async()=>{try{const data=Object.fromEntries(new FormData(form).entries());data.IP_PUBLICA=clientPublicIp||await api.getClientIp?.().catch(()=> '')||'';await api.request('editOperationAdmin',{id,data});invalidarListasFormulario('operations','vehicles','drivers','routes','history','audit');['operations','dashboard','routes','history','audit'].forEach(section=>cacheVistasModulo.delete(section));closeModal();toast('Operación actualizada','Los cambios y valores anteriores quedaron registrados en auditoría.');actualizarSeccionEnSegundoPlano('operations');}catch(error){toast('No se pudo editar',translateError(error),'error');}});};
   }
   function openAdminDeleteOperationModal(id){
     if(!esAdministrador())return toast('Acceso restringido','Solo el Administrador puede eliminar operaciones.','error');const operation=registroFormulario('operations',id)||(cacheListasFormulario.get('operations')||[]).find(row=>String(row.ID)===String(id));if(!operation)return toast('Operación no encontrada','Sincronice e intente nuevamente.','error');
-    $('#modalEyebrow').textContent='ELIMINACIÓN ADMINISTRATIVA';$('#modalTitle').textContent=`Eliminar operación ${esc(operation.ID)}`;$('#modalBody').innerHTML=`<form class="form-grid" id="adminDeleteOperationForm"><div class="modal-error full"><b>La operación se ocultará del sistema operativo</b><p>No se borrarán la bitácora, el historial ni las evidencias GPS. Si está activa, el vehículo y conductor serán liberados.</p></div><label class="field full"><span>Motivo de eliminación</span><textarea name="MOTIVO_ELIMINACION" placeholder="Motivo administrativo o corrección de registro"></textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn danger" type="submit">Eliminar y registrar auditoría</button></div></form>`;openModal();const form=$('#adminDeleteOperationForm');$('[data-cancel-modal]',form).onclick=closeModal;form.onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',form);await conCargaBoton(button,'Eliminando…',async()=>{try{const data=Object.fromEntries(new FormData(form).entries());data.IP_PUBLICA=clientPublicIp||await api.getClientIp?.().catch(()=> '')||'';await api.request('deleteOperationAdmin',{id,data});invalidarListasFormulario('operations','vehicles','drivers','routes','history','audit');['operations','dashboard','routes','history','audit'].forEach(section=>cacheVistasModulo.delete(section));closeModal();toast('Operación eliminada','El registro quedó eliminado lógicamente y respaldado en auditoría.','warning');await go('operations',{force:true});}catch(error){toast('No se pudo eliminar',translateError(error),'error');}});};
+    $('#modalEyebrow').textContent='ELIMINACIÓN ADMINISTRATIVA';$('#modalTitle').textContent=`Eliminar operación ${esc(operation.ID)}`;$('#modalBody').innerHTML=`<form class="form-grid" id="adminDeleteOperationForm"><div class="modal-error full"><b>La operación se ocultará del sistema operativo</b><p>No se borrarán la bitácora, el historial ni las evidencias GPS. Si está activa, el vehículo y conductor serán liberados.</p></div><label class="field full"><span>Motivo de eliminación</span><textarea name="MOTIVO_ELIMINACION" placeholder="Motivo administrativo o corrección de registro"></textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn danger" type="submit">Eliminar y registrar auditoría</button></div></form>`;openModal();const form=$('#adminDeleteOperationForm');$('[data-cancel-modal]',form).onclick=closeModal;form.onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',form);await conCargaBoton(button,'Eliminando…',async()=>{try{const data=Object.fromEntries(new FormData(form).entries());data.IP_PUBLICA=clientPublicIp||await api.getClientIp?.().catch(()=> '')||'';await api.request('deleteOperationAdmin',{id,data});invalidarListasFormulario('operations','vehicles','drivers','routes','history','audit');['operations','dashboard','routes','history','audit'].forEach(section=>cacheVistasModulo.delete(section));closeModal();toast('Operación eliminada','El registro quedó eliminado lógicamente y respaldado en auditoría.','warning');actualizarSeccionEnSegundoPlano('operations');}catch(error){toast('No se pudo eliminar',translateError(error),'error');}});};
   }
 
   function openFinishOperationModal(id,button){
@@ -1805,7 +2119,8 @@
       closeModal();
       if(result.cierreExcepcional)toast('Cierre excepcional registrado',`Autorizado fuera de la base a ${Math.round(result.locationValidation?.DISTANCIA_METROS??locationResult.distancia)} m. La auditoría fue generada.`,'warning');
       else toast(result.locationValidation?.PRECISION_BAJA?'Operación finalizada con GPS impreciso':'Operación finalizada',`Retorno confirmado a ${Math.round(result.locationValidation?.DISTANCIA_METROS??locationResult.distancia)} m de la base${result.locationValidation?.PRECISION_BAJA?' · la precisión baja quedó registrada':''}.`,result.locationValidation?.PRECISION_BAJA?'warning':'success');
-      await go('operations');
+      actualizarSeccionEnSegundoPlano('operations');
+      refreshNotificationBadge();
     }catch(error){toast('No se pudo finalizar',translateError(error),'error');}});};
   }
   async function finishOperation(id,button){openFinishOperationModal(id,button);}
@@ -1826,8 +2141,9 @@
 
   function updateGpsFilterUi() {
     $$('[data-gps-scope]').forEach(button=>button.classList.toggle('active',button.dataset.gpsScope===gpsDraftTrackingMode));
+    $$('[data-gps-connection]').forEach(button=>button.classList.toggle('active',button.dataset.gpsConnection===gpsDraftConnectionFilter));
     $('#vehicleTrackingPanel')?.classList.toggle('open',gpsDraftTrackingMode==='specific');
-    const summary=$('#trackingSelectionSummary');if(summary)summary.textContent=gpsDraftTrackingMode==='all'?'Toda la flota':selectedVehiclesLabel();
+    const summary=$('#trackingSelectionSummary');if(summary)summary.textContent=`${gpsDraftTrackingMode==='all'?'Toda la flota':selectedVehiclesLabel()} · ${gpsConnectionFilterLabel(gpsDraftConnectionFilter)}`;
     $$('[data-gps-vehicle]').forEach(input=>{input.checked=gpsDraftSelectedVehicles.has(String(input.dataset.gpsVehicle));});
     const dirty=gpsFilterHasChanges();
     const pending=$('#trackingPendingText');if(pending)pending.textContent=dirty?'Hay cambios pendientes por aplicar.':'El mapa ya está usando este filtro.';
@@ -1837,6 +2153,9 @@
   }
   function changeGpsTrackingScope(scope) {
     gpsDraftTrackingMode=scope==='specific'?'specific':'all';updateGpsFilterUi();
+  }
+  function changeGpsConnectionFilter(value) {
+    gpsDraftConnectionFilter=estadosConexionGpsPermitidos.has(value)?value:'all';updateGpsFilterUi();
   }
   function toggleGpsVehicle(id,checked) {
     if(checked)gpsDraftSelectedVehicles.add(String(id));else gpsDraftSelectedVehicles.delete(String(id));
@@ -1850,15 +2169,16 @@
     gpsDraftSelectedVehicles.clear();gpsDraftTrackingMode='specific';updateGpsFilterUi();
   }
   function resetGpsVehicleFilterDraft() {
-    gpsDraftTrackingMode=gpsTrackingMode;gpsDraftSelectedVehicles=new Set(gpsSelectedVehicles);updateGpsFilterUi();
+    gpsDraftTrackingMode=gpsTrackingMode;gpsDraftSelectedVehicles=new Set(gpsSelectedVehicles);gpsDraftConnectionFilter=gpsConnectionFilter;updateGpsFilterUi();
   }
   async function applyGpsVehicleFilter() {
     if(!canSelectGpsVehicles())return;
     gpsTrackingMode=gpsDraftTrackingMode;
     gpsSelectedVehicles=new Set(gpsDraftSelectedVehicles);
+    gpsConnectionFilter=gpsDraftConnectionFilter;
     saveGpsFilterPreference();updateGpsFilterUi();
     const result=await refreshLocations(false,true);
-    if(result)toast('Filtro de seguimiento aplicado',gpsTrackingMode==='all'?'Se muestran todos los vehículos.':`${gpsSelectedVehicles.size} vehículos seleccionados.`);
+    if(result)toast('Filtro de seguimiento aplicado',`${gpsTrackingMode==='all'?'Toda la flota':`${gpsSelectedVehicles.size} vehículos seleccionados`} · ${gpsConnectionFilterLabel()}.`);
   }
   function filterGpsVehicleOptions(value='') {
     const term=String(value).trim().toLowerCase();$$('[data-vehicle-filter-text]').forEach(node=>{node.hidden=Boolean(term)&&!node.dataset.vehicleFilterText.includes(term);});
@@ -1895,8 +2215,18 @@
     gpsRefreshTimer=setTimeout(()=>refreshLocations(false,false),Math.max(250,delay));
   }
   async function initMap() {
-    const contenedor=$('#fleetMap');if(!contenedor||!window.MapaFlotas){toast('Mapa no disponible','No se pudo iniciar el componente del mapa.','error');return;}
-    mapaFlota=new MapaFlotas(contenedor,{centro:config.CENTRO_MAPA,nivel:config.NIVEL_ACERCAMIENTO_MAPA});paintGpsData(ultimoResumenGps,true);scheduleGpsRefresh(500);
+    const contenedor=$('#fleetMap');
+    if(!contenedor||!window.MapaFlotas){toast('Mapa no disponible','No se pudo iniciar el componente del mapa.','error');return;}
+    try{
+      mapaFlota?.eliminar?.();
+      mapaFlota=new MapaFlotas(contenedor,{centro:config.CENTRO_MAPA,nivel:config.NIVEL_ACERCAMIENTO_MAPA});
+      requestAnimationFrame(()=>{mapaFlota?.redibujar?.();paintGpsData(ultimoResumenGps,true);});
+      setTimeout(()=>mapaFlota?.redibujar?.(),300);
+      scheduleGpsRefresh(500);
+    }catch(error){
+      contenedor.innerHTML='<div class="mapa-error"><b>No se pudo mostrar el mapa</b><span>Pulse Sincronizar para volver a intentarlo.</span></div>';
+      toast('Mapa no disponible',translateError(error),'error');
+    }
   }
   async function refreshLocations(showToast=true,ajustar=false) {
     if(gpsRefreshPending){gpsRefreshQueued=true;return gpsRefreshPending;}
@@ -2048,7 +2378,7 @@
 
   async function exportResource(resource){try{const result=await api.request('list',{resource});const rows=result.rows||[];if(!rows.length)return toast('Sin datos','No hay registros para exportar.','error');const headers=[...new Set(rows.flatMap(Object.keys))];const csv=[headers,...rows.map(row=>headers.map(h=>row[h]??''))].map(line=>line.map(value=>`"${String(value).replaceAll('"','""')}"`).join(';')).join('\n');const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=`${resource}_${new Date().toISOString().slice(0,10)}.csv`;link.click();URL.revokeObjectURL(url);toast('CSV generado',`${rows.length} registros exportados.`);}catch(error){toast('No se pudo exportar',translateError(error),'error');}}
 
-  async function clearData(button){const confirmation=prompt('Escriba exactamente LIMPIAR DATOS para continuar:','');if(confirmation===null)return;await conCargaBoton(button,'Limpiando…',async()=>{try{await api.request('clearOperationalData',{confirmacion:confirmation});invalidarListasFormulario();cacheVistasModulo.clear();toast('Datos operativos eliminados','Se conservaron los usuarios, roles y la configuración de empresa.');await go('settings');}catch(error){toast('No se pudo limpiar',translateError(error),'error');}});}
+  async function clearData(button){const confirmation=prompt('Escriba exactamente LIMPIAR DATOS para continuar:','');if(confirmation===null)return;await conCargaBoton(button,'Limpiando…',async()=>{try{await api.request('clearOperationalData',{confirmacion:confirmation});invalidarListasFormulario();cacheVistasModulo.clear();toast('Datos operativos eliminados','Se conservaron los usuarios, roles y la configuración de empresa.');actualizarSeccionEnSegundoPlano('settings');}catch(error){toast('No se pudo limpiar',translateError(error),'error');}});}
   function setTheme(dark){document.body.classList.toggle('dark',dark);localStorage.setItem('flotas_tema',dark?'dark':'light');window.TemaFlotas?.aplicarGuardado?.();}
 
   function openModal(){const token=++secuenciaModal;$('#modalBackdrop').classList.add('open');document.body.classList.add('modal-open');return token;}
@@ -2066,7 +2396,7 @@
   async function processQr(code){try{const result=await api.request('validateVehicleQr',{codigo:String(code||'').trim()});const vehicle=result.row;if(!vehicle)throw new Error('QR_NO_RECONOCIDO');vehicle.AUTORIZACION_QR=result.autorizacionQr||'';closeQr();toast('Vehículo validado',`${vehicle.PATENTE} quedó listo para asociarlo a la operación.`);openOperationModal(vehicle);}catch(error){toast('No se pudo validar el QR',translateError(error),'error');}}
 
   async function logout(){try{await api.request('logout',{data:{SESION_CLIENTE_ID:clientSessionId}});}catch(_){}forceLogout();}
-  function forceLogout(){cleanupSection();stopRealtimeServices();stopCamera();stopTracking({remember:false,silent:true});currentUser=null;precargaIniciada=false;cacheVistasModulo.clear();invalidarListasFormulario();api.setAuth({});postParent({tipo:'flotas:sesion-cerrada'});$('#appShell').classList.add('hidden');if(embeddedMode)return;$('#authScreen').classList.remove('hidden');checkSystem();}
+  function forceLogout(){cleanupSection();stopRealtimeServices();stopCamera();stopTracking({remember:false,silent:true});currentUser=null;notificationSnapshotReady=false;knownNotificationIds=new Set();knownAlertIds=new Set();notificationCenterState={notifications:[],alerts:[]};precargaIniciada=false;modulosSincronizadosSesion.clear();actualizacionesModuloPendientes.clear();cacheVistasModulo.clear();invalidarListasFormulario();api.setAuth({});postParent({tipo:'flotas:sesion-cerrada'});$('#appShell').classList.add('hidden');if(embeddedMode)return;$('#authScreen').classList.remove('hidden');checkSystem();}
   function showProfile(){openInfoModal('Mi perfil',[['Nombre',currentUser.NOMBRE],['Correo',currentUser.CORREO],['Rol',currentUser.ROL_NOMBRE],['Estado',currentUser.ESTADO],['Último acceso',fmtDate(currentUser.ULTIMO_ACCESO,true)]]);}
   function openInfoModal(title,items){$('#modalEyebrow').textContent='INFORMACIÓN';$('#modalTitle').textContent=title;$('#modalBody').innerHTML=`<div class="info-grid">${items.map(([a,b])=>`<div class="info-item"><span>${a}</span><b>${esc(b||'—')}</b></div>`).join('')}</div>`;openModal();}
   function openPasswordModal(){$('#modalEyebrow').textContent='SEGURIDAD';$('#modalTitle').textContent='Cambiar contraseña';$('#modalBody').innerHTML=`<form class="form-grid" id="passwordForm"><label class="field full"><span>Contraseña actual</span><input name="contrasenaActual" type="password" required></label><label class="field full"><span>Nueva contraseña</span><input name="nuevaContrasena" type="password" required placeholder="Letras, números o símbolos"></label><p class="helper full">Puede elegir cualquier combinación. La contraseña distingue mayúsculas y minúsculas.</p><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Cambiar contraseña</button></div></form>`;openModal();$('[data-cancel-modal]').onclick=closeModal;$('#passwordForm').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form);await conCargaBoton(button,'Actualizando…',async()=>{try{await api.request('changePassword',Object.fromEntries(new FormData(form).entries()));invalidarListasFormulario('users');closeModal();toast('Contraseña actualizada');}catch(error){toast('No se pudo cambiar',translateError(error),'error');}});};}
@@ -2076,17 +2406,17 @@
     $('#retryConnection').addEventListener('click',event=>conCargaBoton(event.currentTarget,'Conectando…',checkSystem));$('#recheckConnection').addEventListener('click',event=>conCargaBoton(event.currentTarget,'Conectando…',checkSystem));$('#useLocalMode').addEventListener('click',()=>{sessionStorage.setItem('flotas_forzar_local','1');location.reload();});
     $('#openSidebar').addEventListener('click',openSidebar);$('#closeSidebar').addEventListener('click',closeSidebar);$('#overlay').addEventListener('click',closeSidebar);$('#logoutButton').addEventListener('click',event=>conCargaBoton(event.currentTarget,'Cerrando…',logout));
     $('#syncButton').addEventListener('click',event=>sincronizarSistema(event.currentTarget));$('#sidebarSyncButton').addEventListener('click',event=>sincronizarSistema(event.currentTarget));
-    $('#notificationButton').addEventListener('click',()=>{if(currentUser&&hasPermission('NOTIFICACIONES','LEER'))navigateSection('notifications');});
+    $('#notificationButton').addEventListener('click',()=>{if(currentUser&&(hasPermission('NOTIFICACIONES','LEER')||hasPermission('ALERTAS','LEER')))openNotificationCenter();});
     $('#themeButton').addEventListener('click',()=>setTheme(!document.body.classList.contains('dark')));$('#profileButton').addEventListener('click',()=>$('#profileMenu').classList.toggle('open'));
     $('#profileMenu').addEventListener('click',event=>{const action=event.target.dataset.profileAction;if(action==='profile')showProfile();if(action==='password')openPasswordModal();if(action==='logout')conCargaBoton(event.target,'Cerrando…',logout);$('#profileMenu').classList.remove('open');});
     $('#closeModal').addEventListener('click',closeModal);$('#modalBackdrop').addEventListener('click',event=>{if(event.target===$('#modalBackdrop'))closeModal();});
     $('#closeQr').addEventListener('click',closeQr);$('#qrBackdrop').addEventListener('click',event=>{if(event.target===$('#qrBackdrop'))closeQr();});$('#startCamera').addEventListener('click',event=>conCargaBoton(event.currentTarget,'Activando…',()=>startCamera($('#cameraSelect').value)));$('#cameraSelect').addEventListener('change',event=>startCamera(event.target.value));$('#switchCamera').addEventListener('click',event=>conCargaBoton(event.currentTarget,'Cambiando…',()=>{facingMode=facingMode==='environment'?'user':'environment';return startCamera();}));$('#validateQr').addEventListener('click',event=>conCargaBoton(event.currentTarget,'Validando…',()=>processQr($('#manualQr').value)));
-    window.addEventListener('flotas:guardado-local',()=>{setSave('Datos guardados');});
+    window.addEventListener('flotas:guardado-local',()=>{setSave('Datos guardados');refreshNotificationBadge();});
     window.addEventListener('flotas:cache-actualizada',event=>{
       const detail=event.detail||{};
       const dependency=dependenciaSeccion(currentSection);
       if((detail.resource&&dependency.resources.includes(detail.resource))||dependency.actions.includes(detail.action)){
-        if(!estadoSincronizacionModulos[currentSection]?.time)registrarSincronizacionSeccion(currentSection,'SERVIDOR');
+        if(modulosSincronizadosSesion.has(currentSection)&&!estadoSincronizacionModulos[currentSection]?.time)registrarSincronizacionSeccion(currentSection,'SERVIDOR');
         actualizarEstadoSincronizacionVisible(textoActualizacionSeccion(currentSection));
       }
     });

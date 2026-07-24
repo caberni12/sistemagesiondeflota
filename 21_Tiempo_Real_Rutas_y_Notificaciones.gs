@@ -73,7 +73,23 @@ function actualizarEstadoRuta_(request, session) {
   if (state === 'Completada' || state === 'Cancelada') changes.FECHA_FIN = new Date();
   const updated = actualizarRegistro_('RUTAS', route.ID, changes);
   registrarBitacora_(session.user, 'CAMBIAR_ESTADO', 'RUTAS', route.ID, 'Estado: ' + state);
-  return ok_({ row: limpiarSalidaRecurso_('RUTAS', updated) });
+  if (state === 'Completada' && String(route.ESTADO || '') !== 'Completada') {
+    const driver = obtenerRegistro_('CONDUCTORES', route.CONDUCTOR_ID) || {};
+    const vehicle = route.VEHICULO_ID ? (obtenerRegistro_('VEHICULOS', route.VEHICULO_ID) || {}) : {};
+    encolarTrabajoSegundoPlano_('CIERRE_RUTA', {
+      rutaId:route.ID,
+      operacionId:route.OPERACION_ID || '',
+      nombreRuta:route.NOMBRE || route.ID,
+      origen:route.ORIGEN || '',
+      destino:route.DESTINO || '',
+      fechaHora:fechaIso_(),
+      usuario:resumenUsuarioSegundoPlano_(session.user),
+      conductor:{ id:route.CONDUCTOR_ID || '', nombre:driver.NOMBRE || route.CONDUCTOR_ID || '' },
+      vehiculo:{ id:route.VEHICULO_ID || '', patente:vehicle.PATENTE || route.VEHICULO_ID || '' },
+      finalizadaPorConductor:String(session.user.ROL_ID || '') === 'ROL-CONDUCTOR'
+    });
+  }
+  return ok_({ row: limpiarSalidaRecurso_('RUTAS', updated), notificacionAdministradores:state === 'Completada' });
 }
 
 function enviarNotificacion_(request, session) {
@@ -112,6 +128,24 @@ function crearNotificacionInterna_(data) {
     CREADO_POR: data.CREADO_POR || '',
     ELIMINADO: 'NO',
   }, 'NOT');
+}
+
+function notificarUsuarioInterno_(userId, data) {
+  const id = String(userId || '').trim();
+  if (!id) return null;
+  return crearNotificacionInterna_(Object.assign({}, data || {}, { DESTINATARIO_USUARIO_ID:id }));
+}
+
+function notificarRolesInterno_(roleIds, data) {
+  const roles = Array.isArray(roleIds) ? roleIds : [roleIds];
+  const sent = [];
+  listarRegistros_('USUARIOS', {}).filter(function(user) {
+    return roles.indexOf(user.ROL_ID) >= 0 && user.ESTADO !== 'Inactivo';
+  }).forEach(function(user) {
+    const row = notificarUsuarioInterno_(user.ID, data);
+    if (row) sent.push(row);
+  });
+  return sent;
 }
 
 function marcarNotificacionLeida_(request, session) {
@@ -195,10 +229,25 @@ function actualizarConexion_(request, session) {
   return ok_({ row: limpiarSalidaRecurso_('CONEXIONES', row), serverTime: fechaIso_() });
 }
 
+function filtroEstadoConexionTiempoReal_(request) {
+  const value = String(request.estadoConexion || request.ESTADO_CONEXION || 'TODOS').toUpperCase();
+  return ['TODOS','EN_LINEA','CONDUCIENDO','SIN_GPS','INACTIVOS'].indexOf(value) >= 0 ? value : 'TODOS';
+}
+
+function coincideEstadoConexionTiempoReal_(row, filter) {
+  if (filter === 'TODOS') return true;
+  if (filter === 'EN_LINEA') return Boolean(row.EN_LINEA);
+  if (filter === 'CONDUCIENDO') return Boolean(row.EN_LINEA) && row.ACTIVIDAD === 'Conduciendo';
+  if (filter === 'SIN_GPS') return Boolean(row.EN_LINEA) && row.ACTIVIDAD === 'Operación activa sin GPS';
+  if (filter === 'INACTIVOS') return !row.EN_LINEA;
+  return true;
+}
+
 function resumenTiempoReal_(request, session) {
   exigirPermiso_(session.user, 'PANEL_PRINCIPAL', 'LEER');
   const onlyGps = String(request.soloGps || request.SOLO_GPS || '') === 'SI';
   const vehicleFilter = filtroVehiculosTiempoReal_(request, session.user);
+  const connectionFilter = filtroEstadoConexionTiempoReal_(request);
   const locations = tienePermiso_(session.user, 'GPS', 'LEER')
     ? ultimasUbicaciones_(request, session).data : { rows:[], total:0, trackingVehicles:[] };
   let connections = tienePermiso_(session.user, 'CONEXIONES', 'LEER')
@@ -258,6 +307,11 @@ function resumenTiempoReal_(request, session) {
     });
   });
   if (vehicleFilter.activo) devices = devices.filter(function(row) { return Boolean(vehicleFilter.ids[row.VEHICULO_ID]); });
+  devices = devices.filter(function(row) { return coincideEstadoConexionTiempoReal_(row, connectionFilter); });
+  const visibleVehicleIds = {};
+  devices.forEach(function(row) { if (row.VEHICULO_ID) visibleVehicleIds[row.VEHICULO_ID] = true; });
+  let visibleLocations = locations.rows || [];
+  if (connectionFilter !== 'TODOS') visibleLocations = visibleLocations.filter(function(row) { return Boolean(visibleVehicleIds[row.VEHICULO_ID]); });
   devices.sort(function(a, b) {
     if (a.EN_LINEA !== b.EN_LINEA) return a.EN_LINEA ? -1 : 1;
     return new Date(b.ULTIMA_CONEXION).getTime() - new Date(a.ULTIMA_CONEXION).getTime();
@@ -274,13 +328,13 @@ function resumenTiempoReal_(request, session) {
       .filter(function(row) { return row.LEIDA !== 'SI'; });
   }
   return ok_({
-    locations: locations.rows || [],
+    locations: visibleLocations,
     trackingVehicles: locations.trackingVehicles || [],
     devices: devices.slice(0, 100),
     routes: routes,
     notifications: notifications.slice(-50).reverse(),
     totals: {
-      locations: locations.total || 0,
+      locations: visibleLocations.length,
       onlineDevices: devices.filter(function(row) { return row.EN_LINEA; }).length,
       drivingSessions: devices.filter(function(row) { return row.EN_LINEA && row.ACTIVIDAD === 'Conduciendo'; }).length,
       sessionsWithoutGps: devices.filter(function(row) { return row.EN_LINEA && row.ACTIVIDAD === 'Operación activa sin GPS'; }).length,

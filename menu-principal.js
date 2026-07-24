@@ -2,7 +2,7 @@
   'use strict';
   const $=(selector,root=document)=>root.querySelector(selector);
   const api=window.ConexionFlotas;
-  const VERSION='3.5.0';
+  const VERSION='3.9.1';
   const grupos=[
     ['GENERAL',[
       ['dashboard','⌂','Panel principal','panel-principal.html','PANEL_PRINCIPAL'],
@@ -18,6 +18,7 @@
       ['checkinApprovals','☑','Aprobar check-ins','checkin-aprobaciones.html','CHECKIN_APROBACIONES'],
       ['checkinHistory','▤','Historial de check-in','checkin-historial.html','CHECKIN'],
       ['maintenance','⚙','Mantenciones','mantenciones.html','MANTENCIONES'],
+      ['fuel','⛽','Combustible','combustible.html','COMBUSTIBLE'],
       ['documents','▤','Documentos','documentos.html','DOCUMENTOS'],
       ['history','↻','Historial','historial.html','HISTORIAL'],
       ['alerts','!','Alertas','alertas.html','ALERTAS']
@@ -42,6 +43,11 @@
   let marcoListo=false;
   let moduloIframeActual='';
   let secuenciaCambioModulo=0;
+  let temporizadorAvisos=null;
+  let avisosInicializados=false;
+  let idsNotificacionesConocidas=new Set();
+  let idsAlertasConocidas=new Set();
+  let estadoAvisos={notifications:[],alerts:[]};
 
   function iniciales(nombre='Usuario'){
     return String(nombre).trim().split(/\s+/).slice(0,2).map(parte=>parte[0]||'').join('').toUpperCase()||'US';
@@ -126,6 +132,17 @@
     $('#avatarMenu').textContent=iniciales(usuario.NOMBRE);
     construirMenu();
   }
+  function escapar(texto){return String(texto??'').replace(/[&<>'"]/g,caracter=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[caracter]));}
+  function fechaAviso(item){const fecha=new Date(item.FECHA_ENVIO||item.FECHA_HORA||item.CREADO_EN||0);return Number.isNaN(fecha.getTime())?'Sin fecha':new Intl.DateTimeFormat('es-CL',{dateStyle:'short',timeStyle:'short'}).format(fecha);}
+  function puedeAvisos(modulo){if(!usuario)return false;const permisos=Array.isArray(usuario.PERMISOS)?usuario.PERMISOS:[];return usuario.ROL_ID==='ROL-ADMIN'||permisos.includes('*:*')||permisos.includes(`${modulo}:LEER`);}
+  function fechaOrdenAviso(item){return new Date(item.FECHA_ENVIO||item.FECHA_HORA||item.CREADO_EN||0).getTime();}
+  function mostrarToastAviso(item,tipo){const contenedor=$('#toastAvisosMenu'),nodo=document.createElement('article');nodo.className=`toast-aviso-menu ${tipo}`;nodo.innerHTML=`<i>${tipo==='alerta'?'!':'🔔'}</i><div><b>${escapar(tipo==='alerta'?'Nueva alerta':'Nueva notificación')}</b><small>${escapar(item.TITULO||item.MENSAJE||'Existe un nuevo aviso pendiente.')}</small></div><button type="button" aria-label="Cerrar">×</button>`;contenedor.append(nodo);nodo.querySelector('button').addEventListener('click',()=>nodo.remove());setTimeout(()=>nodo.remove(),5200);}
+  function renderizarAvisos(){const notifications=estadoAvisos.notifications||[],alerts=estadoAvisos.alerts||[],mezclados=[...alerts.map(item=>({item,tipo:'alerta'})),...notifications.map(item=>({item,tipo:'notificacion'}))].sort((a,b)=>fechaOrdenAviso(b.item)-fechaOrdenAviso(a.item)).slice(0,14);$('#totalNotificacionesMenu').textContent=notifications.length;$('#totalAlertasMenu').textContent=alerts.length;$('#listaAvisosMenu').innerHTML=mezclados.length?mezclados.map(({item,tipo})=>`<article class="aviso-menu-item ${tipo}" data-modulo-aviso="${tipo==='alerta'?'alerts':'notifications'}"><i>${tipo==='alerta'?'!':'🔔'}</i><div><b>${escapar(item.TITULO|| (tipo==='alerta'?'Alerta':'Notificación'))}</b><span>${escapar(item.MENSAJE||'')}</span><small>${escapar(fechaAviso(item))}</small></div></article>`).join(''):'<p class="sin-avisos-menu">No existen avisos pendientes.</p>';document.querySelectorAll('[data-modulo-aviso]').forEach(item=>item.addEventListener('click',()=>{cerrarPanelAvisos();abrirModulo(item.dataset.moduloAviso);}));}
+  async function actualizarAvisos(){if(!usuario)return;try{const [notificaciones,alertas]=await Promise.all([puedeAvisos('NOTIFICACIONES')?api.request('list',{resource:'notifications',cache:false}):Promise.resolve({rows:[]}),puedeAvisos('ALERTAS')?api.request('list',{resource:'alerts',cache:false}):Promise.resolve({rows:[]})]);const notifications=(notificaciones.rows||[]).filter(item=>item.LEIDA!=='SI'),alerts=(alertas.rows||[]).filter(item=>item.LEIDA!=='SI');const nuevasNotificaciones=notifications.filter(item=>!idsNotificacionesConocidas.has(String(item.ID))),nuevasAlertas=alerts.filter(item=>!idsAlertasConocidas.has(String(item.ID)));if(avisosInicializados){[...nuevasAlertas.map(item=>({item,tipo:'alerta'})),...nuevasNotificaciones.map(item=>({item,tipo:'notificacion'}))].sort((a,b)=>fechaOrdenAviso(a.item)-fechaOrdenAviso(b.item)).slice(-3).forEach(({item,tipo})=>mostrarToastAviso(item,tipo));}idsNotificacionesConocidas=new Set(notifications.map(item=>String(item.ID)));idsAlertasConocidas=new Set(alerts.map(item=>String(item.ID)));estadoAvisos={notifications,alerts};avisosInicializados=true;const total=notifications.length+alerts.length,contador=$('#contadorAvisosMenu');contador.textContent=total>99?'99+':String(total);contador.hidden=total===0;$('#notificacionesMenu').setAttribute('aria-label',total?`Abrir ${total} avisos pendientes`:'Abrir centro de notificaciones');renderizarAvisos();}catch(_){}}
+  function iniciarAvisos(){if(temporizadorAvisos)return;actualizarAvisos();temporizadorAvisos=setInterval(actualizarAvisos,window.CONFIGURACION_FLOTAS.INTERVALO_NOTIFICACIONES_MILISEGUNDOS||10000);}
+  function abrirPanelAvisos(){$('#panelAvisosMenu').classList.add('abierto');$('#panelAvisosMenu').setAttribute('aria-hidden','false');actualizarAvisos();}
+  function cerrarPanelAvisos(){$('#panelAvisosMenu').classList.remove('abierto');$('#panelAvisosMenu').setAttribute('aria-hidden','true');}
+  function alternarPanelAvisos(){if($('#panelAvisosMenu').classList.contains('abierto'))cerrarPanelAvisos();else abrirPanelAvisos();}
   function iniciarPanel(nuevoUsuario){
     aplicarUsuario(nuevoUsuario);
     document.body.classList.remove('verificando-sesion');
@@ -136,6 +153,7 @@
     const modulo=modulos.get(seccionActual);
     if(!modulo||!permitido(modulo[4]))seccionActual='dashboard';
     abrirModulo(seccionActual,{forzar:true});
+    iniciarAvisos();
   }
   function enviar(mensaje){
     try{marco.contentWindow?.postMessage(mensaje,'*');}catch(_){ }
@@ -149,6 +167,7 @@
   async function cerrarSesion(){
     if(cerrandoSesion)return;
     cerrandoSesion=true;
+    if(temporizadorAvisos)clearInterval(temporizadorAvisos);
     const boton=$('#cerrarSesionMenu');
     boton.disabled=true;
     boton.textContent='Cerrando sesión…';
@@ -244,8 +263,12 @@
   $('#capaMenu').addEventListener('click',cerrarMenu);
   $('#sincronizarModulo').addEventListener('click',()=>{cambiarEstado('Sincronizando');enviar({tipo:'flotas:sincronizar'});});
   $('#cerrarSesionMenu').addEventListener('click',cerrarSesion);
+  $('#notificacionesMenu').addEventListener('click',alternarPanelAvisos);
+  $('#cerrarAvisosMenu').addEventListener('click',cerrarPanelAvisos);
+  document.querySelectorAll('[data-abrir-avisos]').forEach(button=>button.addEventListener('click',()=>{cerrarPanelAvisos();abrirModulo(button.dataset.abrirAvisos);}));
   $('#cambiarTemaMenu').addEventListener('click',()=>{oscuro=!oscuro;localStorage.setItem('flotas_tema',oscuro?'dark':'light');aplicarTema();});
-  document.addEventListener('keydown',event=>{if(event.key==='Escape')cerrarMenu();});
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'){cerrarMenu();cerrarPanelAvisos();}});
+  document.addEventListener('click',event=>{if(!$('#panelAvisosMenu').contains(event.target)&&!$('#notificacionesMenu').contains(event.target))cerrarPanelAvisos();});
   window.addEventListener('storage',event=>{
     if(event.key===window.CONFIGURACION_FLOTAS.CLAVE_SESION_LOCAL&&!event.newValue)irAcceso('cerrada');
   });

@@ -103,6 +103,108 @@ function obtenerRutaParaOperacion_(data, vehicle, driver, session) {
   return route;
 }
 
+
+/**
+ * Lectura liviana del módulo Operaciones.
+ * Solo consulta las columnas necesarias para listar, editar, iniciar y cerrar,
+ * evitando recorrer todas las evidencias GPS de cada operación histórica.
+ */
+function listarOperacionesCompactas_() {
+  const sheet = obtenerHoja_('OPERACIONES');
+  const allHeaders = ESQUEMAS_APLICACION.OPERACIONES;
+  const compactColumnCount = Math.min(27, allHeaders.length);
+  const headers = allHeaders.slice(0, compactColumnCount);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  const values = sheet.getRange(2, 1, lastRow - 1, compactColumnCount).getValues();
+  return values.filter(function(row) {
+    return row.some(function(value) { return value !== '' && value !== null; });
+  }).map(function(row) {
+    const object = {};
+    headers.forEach(function(header, index) { object[header] = serializarValor_(row[index]); });
+    return object;
+  }).filter(function(row) {
+    return String(row.ELIMINADO || 'NO') !== 'SI';
+  });
+}
+
+/**
+ * Carga compacta del módulo Operaciones.
+ * Devuelve todas las operaciones activas y solo el historial reciente.
+ * Incluye además los vehículos y conductores disponibles y las rutas vigentes,
+ * para que el formulario pueda iniciar una operación sin consultas adicionales.
+ */
+function resumenOperacionesRapido_(request, session) {
+  exigirPermiso_(session.user, 'OPERACIONES', 'LEER');
+  const startedAt = Date.now();
+  const requested = Number((request && (request.limite || request.limit)) || CONFIGURACION_APLICACION.MAXIMO_HISTORIAL_OPERACIONES_RAPIDO || 80);
+  const historyLimit = Math.min(300, Math.max(20, Math.round(isFinite(requested) ? requested : 80)));
+
+  const visibleOperations = filtrarPorUsuario_('OPERACIONES', listarOperacionesCompactas_(), session.user);
+  const operationTime = function(row) {
+    const value = row.FECHA_INICIO || row.CREADO_EN || row.ACTUALIZADO_EN || 0;
+    const time = new Date(value).getTime();
+    return isNaN(time) ? 0 : time;
+  };
+  const ordered = visibleOperations.slice().sort(function(a, b) { return operationTime(b) - operationTime(a); });
+  const active = ordered.filter(function(row) { return String(row.ESTADO || '') === 'Activa'; });
+  const recentClosed = ordered.filter(function(row) { return String(row.ESTADO || '') !== 'Activa'; }).slice(0, historyLimit);
+
+  const selectedMap = {};
+  active.concat(recentClosed).forEach(function(row) { selectedMap[String(row.ID)] = row; });
+  const selected = Object.keys(selectedMap).map(function(id) { return selectedMap[id]; }).sort(function(a, b) {
+    if (String(a.ESTADO || '') === 'Activa' && String(b.ESTADO || '') !== 'Activa') return -1;
+    if (String(a.ESTADO || '') !== 'Activa' && String(b.ESTADO || '') === 'Activa') return 1;
+    return operationTime(b) - operationTime(a);
+  });
+
+  const vehicleIds = {};
+  const driverIds = {};
+  const routeIds = {};
+  selected.forEach(function(row) {
+    if (row.VEHICULO_ID) vehicleIds[String(row.VEHICULO_ID)] = true;
+    if (row.CONDUCTOR_ID) driverIds[String(row.CONDUCTOR_ID)] = true;
+    if (row.RUTA_ID) routeIds[String(row.RUTA_ID)] = true;
+  });
+
+  const visibleVehicles = filtrarPorUsuario_('VEHICULOS', listarRegistros_('VEHICULOS', {}), session.user);
+  const visibleDrivers = filtrarPorUsuario_('CONDUCTORES', listarRegistros_('CONDUCTORES', {}), session.user);
+  const visibleRoutes = filtrarPorUsuario_('RUTAS', listarRegistros_('RUTAS', {}), session.user);
+
+  const vehicles = visibleVehicles.filter(function(row) {
+    return String(row.ESTADO || '') === 'Disponible' || Boolean(vehicleIds[String(row.ID)]);
+  });
+  const drivers = visibleDrivers.filter(function(row) {
+    return String(row.ESTADO || '') === 'Disponible' || Boolean(driverIds[String(row.ID)]);
+  });
+  const routes = visibleRoutes.filter(function(row) {
+    return ['Asignada','En curso'].indexOf(String(row.ESTADO || '')) >= 0 || Boolean(routeIds[String(row.ID)]);
+  });
+
+  const company = obtenerEmpresaPrincipal_();
+  const point = puntoOperacionDesdeEmpresa_(company) || obtenerRespaldoPuntoOperacion_();
+
+  return ok_({
+    operations: selected.map(function(row) { return limpiarSalidaRecurso_('OPERACIONES', row); }),
+    activeOperations: active.map(function(row) { return limpiarSalidaRecurso_('OPERACIONES', row); }),
+    vehicles: vehicles.map(function(row) { return limpiarSalidaRecurso_('VEHICULOS', row); }),
+    drivers: drivers.map(function(row) { return limpiarSalidaRecurso_('CONDUCTORES', row); }),
+    routes: routes.map(function(row) { return limpiarSalidaRecurso_('RUTAS', row); }),
+    total: visibleOperations.length,
+    totalActive: active.length,
+    availableVehicles: vehicles.filter(function(row) { return String(row.ESTADO || '') === 'Disponible'; }).length,
+    availableDrivers: drivers.filter(function(row) { return String(row.ESTADO || '') === 'Disponible'; }).length,
+    availableRoutes: routes.filter(function(row) { return ['Asignada','En curso'].indexOf(String(row.ESTADO || '')) >= 0; }).length,
+    historyShown: recentClosed.length,
+    historyLimit: historyLimit,
+    pointConfigured: Boolean(point),
+    point: point || null,
+    company: company ? limpiarSalidaRecurso_('EMPRESAS', company) : null,
+    generatedAt: fechaIso_(),
+    processingMilliseconds: Date.now() - startedAt
+  });
+}
+
 function iniciarOperacion_(request, session) {
   exigirPermiso_(session.user, 'OPERACIONES', 'CREAR');
   const data = request.datos || request;
@@ -174,16 +276,15 @@ function iniciarOperacion_(request, session) {
       FECHA_INICIO: route.FECHA_INICIO || new Date()
     });
   }
-  insertarRegistro_('HISTORIAL', {
-    OPERACION_ID: operation.ID,
-    EVENTO:'INICIO',
-    DETALLE:'Operación iniciada en punto autorizado a ' + startLocation.DISTANCIA_METROS + ' m de la base',
-    FECHA_HORA:new Date(),
-    USUARIO_ID:session.user.ID,
-    ELIMINADO:'NO'
-  }, 'HIS');
-  registrarBitacora_(session.user, 'INICIAR', 'OPERACIONES', operation.ID, vehicle.PATENTE + ' / ' + driver.NOMBRE + ' / ubicación validada');
-  return ok_({ row: limpiarSalidaRecurso_('OPERACIONES', operation), locationValidation:startLocation, base:point });
+  encolarTrabajoSegundoPlano_('INICIO_OPERACION', {
+    operacionId:operation.ID,
+    detalle:'Operación iniciada en punto autorizado a ' + startLocation.DISTANCIA_METROS + ' m de la base',
+    usuario:resumenUsuarioSegundoPlano_(session.user),
+    patente:vehicle.PATENTE || vehicle.ID,
+    conductor:driver.NOMBRE || driver.ID,
+    ip:normalizarIpPublica_(session.session.IP_PUBLICA || '')
+  });
+  return ok_({ row: limpiarSalidaRecurso_('OPERACIONES', operation), locationValidation:startLocation, base:point, procesamientoSegundoPlano:true });
 }
 
 function finalizarOperacion_(request, session) {
@@ -271,38 +372,38 @@ function finalizarOperacion_(request, session) {
     : (finishLocation.PRECISION_BAJA
       ? 'Operación finalizada en base con señal GPS imprecisa. Distancia calculada: ' + finishLocation.DISTANCIA_METROS + ' m; precisión ±' + finishLocation.PRECISION + ' m; tolerancia aplicada ' + finishLocation.TOLERANCIA_PRECISION_METROS + ' m.'
       : 'Operación finalizada en punto autorizado a ' + finishLocation.DISTANCIA_METROS + ' m de la base') + (kilometrajeAdvertencia ? ' ' + kilometrajeAdvertencia : '');
-  insertarRegistro_('HISTORIAL', {
-    OPERACION_ID: operation.ID,
-    EVENTO: exceptional ? 'FIN_EXCEPCIONAL' : (finishLocation.PRECISION_BAJA ? 'FIN_GPS_IMPRECISO' : 'FIN'),
-    DETALLE: historyDetail,
-    FECHA_HORA:now,
-    USUARIO_ID:session.user.ID,
-    ELIMINADO:'NO'
-  }, 'HIS');
-  registrarBitacora_(session.user, exceptional ? 'FINALIZAR_EXCEPCIONAL' : (finishLocation.PRECISION_BAJA ? 'FINALIZAR_GPS_IMPRECISO' : 'FINALIZAR'), 'OPERACIONES', operation.ID, historyDetail, ipCliente);
-  if (exceptional) {
-    try {
-      insertarRegistro_('ALERTAS', {
-        TIPO:'Cierre excepcional', NIVEL:'Advertencia', TITULO:'Operación finalizada fuera de la base',
-        MENSAJE:operation.ID + ' fue cerrada por ' + session.user.NOMBRE + ' a ' + finishLocation.DISTANCIA_METROS + ' m de la base. Motivo: ' + reason,
-        MODULO:'OPERACIONES', REGISTRO_ID:operation.ID, LEIDA:'NO', USUARIO_ID:'', FECHA_HORA:now, ELIMINADO:'NO'
-      }, 'ALT');
-    } catch (alertError) { console.error(alertError); }
-  }
-  if (!exceptional && finishLocation.PRECISION_BAJA) {
-    try {
-      insertarRegistro_('ALERTAS', {
-        TIPO:'GPS impreciso', NIVEL:'Advertencia', TITULO:'Cierre aceptado con baja precisión GPS',
-        MENSAJE:operation.ID + ' finalizó dentro de la tolerancia de base con precisión ±' + finishLocation.PRECISION + ' m. Distancia calculada: ' + finishLocation.DISTANCIA_METROS + ' m.',
-        MODULO:'OPERACIONES', REGISTRO_ID:operation.ID, LEIDA:'NO', USUARIO_ID:'', FECHA_HORA:now, ELIMINADO:'NO'
-      }, 'ALT');
-    } catch (precisionAlertError) { console.error(precisionAlertError); }
-  }
+  const vehicleForNotification = obtenerRegistro_('VEHICULOS', operation.VEHICULO_ID) || vehicleClose || {};
+  const driverForNotification = obtenerRegistro_('CONDUCTORES', operation.CONDUCTOR_ID) || {};
+  const routeForNotification = operation.RUTA_ID ? obtenerRegistro_('RUTAS', operation.RUTA_ID) : null;
+  encolarTrabajoSegundoPlano_('CIERRE_OPERACION', {
+    operacionId:operation.ID,
+    rutaId:operation.RUTA_ID || '',
+    evento:exceptional ? 'FIN_EXCEPCIONAL' : (finishLocation.PRECISION_BAJA ? 'FIN_GPS_IMPRECISO' : 'FIN'),
+    accionAuditoria:exceptional ? 'FINALIZAR_EXCEPCIONAL' : (finishLocation.PRECISION_BAJA ? 'FINALIZAR_GPS_IMPRECISO' : 'FINALIZAR'),
+    detalle:historyDetail,
+    usuario:resumenUsuarioSegundoPlano_(session.user),
+    ip:ipCliente,
+    excepcional:exceptional,
+    precisionBaja:Boolean(finishLocation.PRECISION_BAJA),
+    cierreTipo:updated.CIERRE_TIPO,
+    validacion:updated.VALIDACION_FIN,
+    distanciaMetros:finishLocation.DISTANCIA_METROS,
+    precisionMetros:finishLocation.PRECISION,
+    motivo:reason,
+    observaciones:updated.OBSERVACIONES || '',
+    fechaHora:fechaIso_(),
+    base:{ nombre:point.NOMBRE, direccion:point.DIRECCION, latitud:point.LATITUD, longitud:point.LONGITUD },
+    vehiculo:{ id:operation.VEHICULO_ID, patente:vehicleForNotification.PATENTE || operation.VEHICULO_ID },
+    conductor:{ id:operation.CONDUCTOR_ID, nombre:driverForNotification.NOMBRE || operation.CONDUCTOR_ID },
+    ruta:{ id:operation.RUTA_ID || '', nombre:routeForNotification ? (routeForNotification.NOMBRE || routeForNotification.ID) : '' }
+  });
   return ok_({
     row: limpiarSalidaRecurso_('OPERACIONES', updated),
     locationValidation:finishLocation,
     base:point,
     cierreExcepcional:exceptional,
+    procesamientoSegundoPlano:true,
+    notificacionAdministradores:true,
     autorizadoPor:{ ID:session.user.ID, NOMBRE:session.user.NOMBRE, ROL_ID:role }
   });
 }
@@ -314,8 +415,7 @@ function editarOperacionAdministrativa_(request, session) {
   const operation = obtenerRegistro_('OPERACIONES', operationId);
   if (!operation) throw new Error('REGISTRO_NO_ENCONTRADO');
   const before = resumenOperacionAuditoria_(operation);
-  const reason = String(data.MOTIVO_EDICION || '').trim();
-  if (reason.length < 5) throw new Error('MOTIVO_EDICION_REQUERIDO');
+  const reason = String(data.MOTIVO_EDICION || '').trim() || 'Actualización administrativa sin motivo adicional.';
 
   const newVehicleId = String(data.VEHICULO_ID || operation.VEHICULO_ID || '').trim();
   const newDriverId = String(data.CONDUCTOR_ID || operation.CONDUCTOR_ID || '').trim();

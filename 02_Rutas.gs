@@ -18,6 +18,7 @@ function enrutarSolicitud_(request, event) {
     case 'miSesion': return ok_({ user: usuarioPublico_(session.user) });
     case 'cargaRapida': return cargaRapida_(request, session);
     case 'panelPrincipal': return panelPrincipal_(session);
+    case 'resumenOperaciones': return resumenOperacionesRapido_(request, session);
     case 'listar': return servicioListar_(request, session);
     case 'obtener': return servicioObtener_(request, session);
     case 'crear': return servicioCrear_(request, session);
@@ -39,6 +40,10 @@ function enrutarSolicitud_(request, event) {
     case 'marcarNotificacionLeida': return marcarNotificacionLeida_(request, session);
     case 'actualizarConexion': return actualizarConexion_(request, session);
     case 'resumenTiempoReal': return resumenTiempoReal_(request, session);
+    case 'resumenCombustible': return resumenCombustible_(request, session);
+    case 'solicitarEliminacionCombustible': return solicitarEliminacionCombustible_(request, session);
+    case 'resolverSolicitudEliminacionCombustible': return resolverSolicitudEliminacionCombustible_(request, session);
+    case 'eliminarCargaCombustible': return eliminarCargaCombustible_(request, session);
     case 'diagnosticoSistema': return diagnosticoSistema_(request, session);
     case 'repararSistema': return repararSistema_(request, session);
     case 'cambiarContrasena': return cambiarPassword_(request, session);
@@ -71,6 +76,10 @@ function cargaRapida_(request, session) {
       respuesta = panelPrincipal_(session);
     } else if (accion === 'resumenTiempoReal') {
       respuesta = resumenTiempoReal_(consulta, session);
+    } else if (accion === 'resumenCombustible') {
+      respuesta = resumenCombustible_(consulta, session);
+    } else if (accion === 'resumenOperaciones') {
+      respuesta = resumenOperacionesRapido_(consulta, session);
     } else if (accion === 'obtenerPuntoOperacion') {
       respuesta = obtenerPuntoOperacionServicio_(consulta, session);
     } else if (accion === 'listar') {
@@ -112,6 +121,8 @@ function servicioCrear_(request, session) {
   exigirPermiso_(session.user, resource.module, 'CREAR');
   if (resource.sheet === 'USUARIOS') return crearUsuarioServicio_(request.datos || {}, session);
   if (resource.sheet === 'CHECKINS') return crearCheckinVehicular_({ datos:request.datos || {} }, session);
+  if (resource.sheet === 'CARGAS_COMBUSTIBLE') return crearCargaCombustible_(request, session);
+  if (resource.sheet === 'AUTORIZACIONES_ELIMINACION_COMBUSTIBLE') throw new Error('ACCION_ESPECIAL_REQUERIDA');
   if (session.user.ROL_ID === 'ROL-CONDUCTOR') {
     if (resource.sheet === 'OPERACIONES') return iniciarOperacion_({ datos:request.datos || {} }, session);
     if (resource.sheet === 'GPS') return guardarUbicacion_({ datos:request.datos || {} }, session);
@@ -119,7 +130,7 @@ function servicioCrear_(request, session) {
   }
   const data = normalizarEntradaRecurso_(resource.sheet, request.datos || {}, session.user);
   const row = insertarRegistro_(resource.sheet, data, resource.prefix);
-  registrarBitacora_(session.user, 'CREAR', resource.module, row.ID, 'Registro creado');
+  registrarBitacora_(session.user, 'CREAR', resource.module, row.ID, 'Registro creado. Datos: ' + respaldoAuditoria_(row));
   return ok_({ row: limpiarSalidaRecurso_(resource.sheet, row) });
 }
 
@@ -129,7 +140,8 @@ function servicioActualizar_(request, session) {
   const existing = obtenerRegistro_(resource.sheet, request.identificador);
   if (!existing) throw new Error('REGISTRO_NO_ENCONTRADO');
   if (!filtrarPorUsuario_(resource.sheet, [existing], session.user).length) throw new Error('PERMISO_DENEGADO');
-  if (resource.sheet === 'CHECKINS') throw new Error('ACCION_ESPECIAL_REQUERIDA');
+  if (resource.sheet === 'CHECKINS' || resource.sheet === 'AUTORIZACIONES_ELIMINACION_COMBUSTIBLE') throw new Error('ACCION_ESPECIAL_REQUERIDA');
+  if (resource.sheet === 'CARGAS_COMBUSTIBLE') return actualizarCargaCombustible_(request, session);
   if (session.user.ROL_ID === 'ROL-CONDUCTOR') {
     const driverData = request.datos || {};
     if (resource.sheet === 'RUTAS') {
@@ -148,7 +160,8 @@ function servicioActualizar_(request, session) {
   if (resource.sheet === 'USUARIOS') return actualizarUsuarioServicio_(request.identificador, request.datos || {}, session);
   const data = normalizarEntradaRecurso_(resource.sheet, request.datos || {}, session.user);
   const row = actualizarRegistro_(resource.sheet, request.identificador, data);
-  registrarBitacora_(session.user, 'ACTUALIZAR', resource.module, request.identificador, 'Registro actualizado');
+  registrarBitacora_(session.user, 'ACTUALIZAR', resource.module, request.identificador,
+    'Respaldo anterior: ' + respaldoAuditoria_(existing) + '. Datos posteriores: ' + respaldoAuditoria_(row));
   return ok_({ row: limpiarSalidaRecurso_(resource.sheet, row) });
 }
 
@@ -158,7 +171,10 @@ function servicioEliminar_(request, session) {
   const existing = obtenerRegistro_(resource.sheet, request.identificador);
   if (!existing) throw new Error('REGISTRO_NO_ENCONTRADO');
   if (!filtrarPorUsuario_(resource.sheet, [existing], session.user).length) throw new Error('PERMISO_DENEGADO');
+  if (resource.sheet === 'CARGAS_COMBUSTIBLE') return eliminarCargaCombustible_(request, session);
+  if (resource.sheet === 'AUTORIZACIONES_ELIMINACION_COMBUSTIBLE') throw new Error('ACCION_ESPECIAL_REQUERIDA');
   eliminarRegistro_(resource.sheet, request.identificador);
-  registrarBitacora_(session.user, 'ELIMINAR', resource.module, request.identificador, 'Registro eliminado lógicamente');
+  registrarBitacora_(session.user, 'ELIMINAR', resource.module, request.identificador,
+    'Registro eliminado lógicamente. Respaldo íntegro previo: ' + respaldoAuditoria_(existing));
   return ok_({ id: request.identificador });
 }

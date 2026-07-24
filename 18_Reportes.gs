@@ -10,6 +10,9 @@ function panelPrincipal_(session) {
   const drivers = visibleRows('CONDUCTORES', 'CONDUCTORES');
   const operations = visibleRows('OPERACIONES', 'OPERACIONES');
   const maintenance = visibleRows('MANTENCIONES', 'MANTENCIONES');
+  const fuelLoads = visibleRows('CARGAS_COMBUSTIBLE', 'COMBUSTIBLE');
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
+  const fuelMonth = fuelLoads.filter(function(row) { return new Date(row.FECHA_HORA || row.CREADO_EN).getTime() >= monthStart; });
   const documents = visibleRows('DOCUMENTOS', 'DOCUMENTOS');
   const alerts = visibleRows('ALERTAS', 'ALERTAS').filter(function(row) { return row.LEIDA !== 'SI'; });
   const routes = visibleRows('RUTAS', 'RUTAS');
@@ -29,6 +32,9 @@ function panelPrincipal_(session) {
       availableDrivers: drivers.filter(function(row) { return row.ESTADO === 'Disponible'; }).length,
       activeOperations: operations.filter(function(row) { return row.ESTADO === 'Activa'; }).length,
       openMaintenance: maintenance.filter(function(row) { return ['Programada','En proceso','Atrasada'].indexOf(row.ESTADO) >= 0; }).length,
+      fuelLoadsMonth: fuelMonth.length,
+      fuelLitersMonth: fuelMonth.reduce(function(total, row) { return total + Number(row.LITROS || 0); }, 0),
+      fuelCostMonth: fuelMonth.reduce(function(total, row) { return total + Number(row.COSTO_TOTAL || 0); }, 0),
       expiredDocuments: documents.filter(function(row) { return row.ESTADO === 'Vencido'; }).length,
       unreadAlerts: alerts.length,
       assignedRoutes: routes.filter(function(row) { return row.ESTADO === 'Asignada' || row.ESTADO === 'En curso'; }).length,

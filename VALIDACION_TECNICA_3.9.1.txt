@@ -1,0 +1,24 @@
+VALIDACIÓN TÉCNICA — SISTEMA DE GESTIÓN DE FLOTAS 3.9.1
+
+INCIDENCIA CORREGIDA
+El módulo Combustible recibía las listas de Google Apps Script con la estructura
+{ rows: [...], total: N }, pero guardaba el objeto completo como si fuera un arreglo.
+La función de caché descartaba ese valor y terminaba registrando listas vacías.
+
+CORRECCIÓN
+- Se agregó una normalización de respuestas por lote que acepta arreglos directos o la propiedad rows.
+- Se corrigieron los catálogos fuel, vehicles, drivers, operations, routes y fuelAuthorizations.
+- El formulario de combustible valida y recupera bajo demanda los catálogos faltantes.
+- Se actualizó la versión de archivos estáticos a 3.9.1 para evitar caché del navegador.
+- Se conserva la carga manual inicial del sistema.
+
+PRUEBAS EJECUTADAS
+- Sintaxis de todos los archivos JavaScript: APROBADA.
+- Sintaxis de todos los archivos Google Apps Script y Codigo_Completo.gs: APROBADA.
+- Extracción de vehículos desde {rows:[...], total:N}: APROBADA.
+- Extracción de conductores desde {rows:[...], total:N}: APROBADA.
+- Verificación de catálogos de combustible normalizados: APROBADA.
+- Verificación de referencias HTML sin versión 3.9.0: APROBADA.
+- Integridad del archivo ZIP: APROBADA.
+
+ESTADO: APROBADO PARA PRUEBAS FUNCIONALES Y DESPLIEGUE.

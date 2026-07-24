@@ -1,0 +1,17 @@
+VALIDACIÓN TÉCNICA — SISTEMA DE GESTIÓN DE FLOTAS 3.8.0
+
+OBJETIVO
+Acelerar el módulo Operaciones sin eliminar información ni debilitar controles.
+
+RESULTADO
+- Una sola llamada especializada para abrir Operaciones.
+- Sin consulta anticipada de check-ins.
+- Todas las operaciones activas incluidas.
+- Historial rápido: 250 registros recientes, máximo configurable 500.
+- Catálogos relacionados reducidos a registros disponibles, activos o vinculados.
+- Punto operacional incluido en la respuesta.
+- Caché e invalidación automática verificadas.
+- Código JavaScript y Google Apps Script sin errores de sintaxis.
+- Auditoría, permisos y respaldo conservados.
+
+ESTADO: APROBADO PARA PRUEBAS Y DESPLIEGUE.

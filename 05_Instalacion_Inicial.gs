@@ -151,7 +151,7 @@ function actualizarSistema() {
   try { repararModuloCheckin(); } catch (error) { Logger.log('Reparación de check-in: ' + error.message); }
   try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
   reiniciarCachesEjecucion_();
-  resultado.message = 'Sistema 3.1.2 actualizado: estructura, catálogos, permisos, GPS actual, check-in y punto operacional verificados.';
+  resultado.message = 'Sistema 3.9.1 actualizado: módulo Operaciones acelerado, estructura, combustible, permisos, GPS, check-in y punto operacional verificados.';
   return resultado;
 }
 
@@ -171,22 +171,22 @@ function asegurarCatalogos_() {
   asegurarRol_('ROL-SUPERVISOR', 'Supervisor', 'Gestión operacional y reportes');
   asegurarRol_('ROL-CONDUCTOR', 'Conductor', 'Operaciones, rutas, GPS y notificaciones propias');
 
-  const modules = ['PANEL_PRINCIPAL','USUARIOS','VEHICULOS','CONDUCTORES','OPERACIONES','CHECKIN','CHECKIN_APROBACIONES','GPS','HISTORIAL','MANTENCIONES','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','CONFIGURACION','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
+  const modules = ['PANEL_PRINCIPAL','USUARIOS','VEHICULOS','CONDUCTORES','OPERACIONES','CHECKIN','CHECKIN_APROBACIONES','GPS','HISTORIAL','MANTENCIONES','COMBUSTIBLE','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','CONFIGURACION','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
   const actions = ['LEER','CREAR','ACTUALIZAR','ELIMINAR'];
   modules.forEach(function(moduleName) {
     actions.forEach(function(action) {
       asegurarPermisoCatalogo_('ROL-ADMIN', moduleName, action, 'SI');
     });
   });
-  const supervisorModules = ['PANEL_PRINCIPAL','VEHICULOS','CONDUCTORES','OPERACIONES','CHECKIN','CHECKIN_APROBACIONES','GPS','HISTORIAL','MANTENCIONES','DOCUMENTOS','ALERTAS','REPORTES','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
+  const supervisorModules = ['PANEL_PRINCIPAL','VEHICULOS','CONDUCTORES','OPERACIONES','CHECKIN','CHECKIN_APROBACIONES','GPS','HISTORIAL','MANTENCIONES','COMBUSTIBLE','DOCUMENTOS','ALERTAS','REPORTES','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
   supervisorModules.forEach(function(moduleName) {
     actions.forEach(function(action) {
-      asegurarPermisoCatalogo_('ROL-SUPERVISOR', moduleName, action, action === 'ELIMINAR' ? 'NO' : 'SI');
+      asegurarPermisoCatalogo_('ROL-SUPERVISOR', moduleName, action, action === 'ELIMINAR' && moduleName !== 'COMBUSTIBLE' ? 'NO' : 'SI');
     });
   });
   const driverRules = {
     PANEL_PRINCIPAL:['LEER'], VEHICULOS:['LEER'], CONDUCTORES:['LEER'], OPERACIONES:['LEER','CREAR','ACTUALIZAR'], CHECKIN:['LEER','CREAR'],
-    GPS:['LEER','CREAR'], HISTORIAL:['LEER'], DOCUMENTOS:['LEER'], ALERTAS:['LEER','ACTUALIZAR'],
+    GPS:['LEER','CREAR'], HISTORIAL:['LEER'], COMBUSTIBLE:['LEER'], DOCUMENTOS:['LEER'], ALERTAS:['LEER','ACTUALIZAR'],
     QR:['LEER','ACTUALIZAR'], RUTAS:['LEER','ACTUALIZAR'], NOTIFICACIONES:['LEER','ACTUALIZAR'],
     CONEXIONES:['LEER','CREAR','ACTUALIZAR']
   };
@@ -216,7 +216,7 @@ function limpiarDatosOperativosServicio_(request, session) {
   exigirPermiso_(session.user, 'CONFIGURACION', 'ELIMINAR');
   if (String(request.confirmacion || '') !== 'LIMPIAR DATOS') throw new Error('CONFIRMACION_REQUERIDA');
   PropertiesService.getScriptProperties().deleteProperty('GPS_ACTUAL_MIGRADO_' + VERSION_APLICACION);
-  ['VEHICULOS','CONDUCTORES','OPERACIONES','CHECKINS','GPS','GPS_ACTUAL','HISTORIAL','MANTENCIONES','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','QR','RUTAS','NOTIFICACIONES','CONEXIONES'].forEach(limpiarHojaDatos_);
+  ['VEHICULOS','CONDUCTORES','OPERACIONES','CHECKINS','GPS','GPS_ACTUAL','HISTORIAL','MANTENCIONES','CARGAS_COMBUSTIBLE','AUTORIZACIONES_ELIMINACION_COMBUSTIBLE','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','QR','RUTAS','NOTIFICACIONES','CONEXIONES'].forEach(limpiarHojaDatos_);
   registrarBitacora_(session.user, 'LIMPIAR', 'CONFIGURACION', '', 'Datos operativos eliminados; usuarios y empresa conservados');
   return ok_({ cleared: true });
 }

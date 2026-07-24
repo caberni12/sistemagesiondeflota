@@ -3,6 +3,12 @@
 
   const TAMANO_BALDOSA = 256;
   const limitar = (valor, minimo, maximo) => Math.max(minimo, Math.min(maximo, valor));
+  const PROVEEDORES_BALDOSAS = [
+    (z,x,y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`,
+    (z,x,y) => `https://a.basemaps.cartocdn.com/light_all/${z}/${x}/${y}.png`,
+    (z,x,y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${z}/${y}/${x}`
+  ];
+
 
   function latitudLongitudAMundo(latitud, longitud, nivel) {
     const escala = TAMANO_BALDOSA * Math.pow(2, nivel);
@@ -192,10 +198,18 @@
           imagen.alt = '';
           imagen.draggable = false;
           imagen.loading = 'eager';
-          imagen.src = `https://tile.openstreetmap.org/${this.nivel}/${xNormalizado}/${y}.png`;
+          imagen.referrerPolicy = 'origin-when-cross-origin';
+          let proveedor = 0;
+          const cargarProveedor = () => { imagen.src = PROVEEDORES_BALDOSAS[proveedor](this.nivel,xNormalizado,y); };
           imagen.style.left = `${x * TAMANO_BALDOSA - izquierda}px`;
           imagen.style.top = `${y * TAMANO_BALDOSA - arriba}px`;
-          imagen.addEventListener('error', () => imagen.classList.add('error-baldosa'));
+          imagen.addEventListener('load', () => imagen.classList.remove('error-baldosa'));
+          imagen.addEventListener('error', () => {
+            proveedor += 1;
+            if (proveedor < PROVEEDORES_BALDOSAS.length) cargarProveedor();
+            else imagen.classList.add('error-baldosa');
+          });
+          cargarProveedor();
           fragmento.appendChild(imagen);
         }
       }
@@ -253,6 +267,8 @@
       });
       this.capaMarcadores.appendChild(fragmento);
     }
+
+    redibujar() { this.dibujar(); }
 
     eliminar() {
       if (this.observador) this.observador.disconnect();

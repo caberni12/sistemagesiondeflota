@@ -1,0 +1,19 @@
+VALIDACIÓN TÉCNICA — SISTEMA DE GESTIÓN DE FLOTAS 3.9.0
+
+OBJETIVO
+Reducir la carga inicial, impedir bloqueos después de operaciones, recuperar el mapa y mejorar el seguimiento GPS.
+
+RESULTADO
+- Carga manual habilitada para todos los módulos comunes.
+- GPS en tiempo real conservado como excepción automática.
+- Caché persistente de módulos desactivada.
+- Precarga automática eliminada del inicio de sesión.
+- Actualizaciones posteriores a escrituras ejecutadas sin bloquear la interfaz.
+- Historial, auditoría, alertas y notificaciones de cierre movidos a cola secundaria en Google Apps Script.
+- Notificación automática a todos los Administradores con identidad del usuario autenticado.
+- Resumen de Operaciones reducido a 120 cierres recientes y catálogos vinculados.
+- Filtros GPS por vehículo y estado implementados en interfaz, servidor y modo local.
+- Mapa con proveedores alternativos, redibujado y recuperación de errores.
+- Archivos JavaScript, módulos Google Apps Script y archivo consolidado validados sintácticamente.
+
+ESTADO: APROBADO PARA PRUEBAS FUNCIONALES Y DESPLIEGUE.

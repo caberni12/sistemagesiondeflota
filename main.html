@@ -10,9 +10,9 @@
   <meta name="description" content="Panel principal modular del Sistema de Gestión de Flotas">
   <title>Panel principal · Sistema de Gestión de Flotas</title>
   <link rel="icon" href="logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="menu-principal.css?v=3.5.0">
-  <link rel="stylesheet" href="responsive.css?v=3.5.0">
-  <script src="tema.js?v=3.5.0"></script>
+  <link rel="stylesheet" href="menu-principal.css?v=3.10.0">
+  <link rel="stylesheet" href="responsive.css?v=3.10.0">
+  <script src="tema.js?v=3.10.0"></script>
 </head>
 <body class="verificando-sesion">
   <noscript><div class="sin-javascript">Debe habilitar JavaScript para utilizar el sistema.</div></noscript>
@@ -44,9 +44,18 @@
         </div>
         <div class="acciones-modulares">
           <span class="estado-modular" id="estadoModulo"><i></i><span>Preparando módulo</span></span>
+          <button class="boton-icono boton-avisos-menu" id="notificacionesMenu" type="button" aria-label="Abrir centro de notificaciones">🔔<span id="contadorAvisosMenu" hidden>0</span></button>
           <button class="boton-icono" id="cambiarTemaMenu" type="button" aria-label="Cambiar tema">☾</button>
         </div>
       </header>
+
+      <aside class="panel-avisos-menu" id="panelAvisosMenu" aria-hidden="true">
+        <header><div><span>AVISOS AUTOMÁTICOS</span><h2>Centro de notificaciones</h2></div><button class="boton-icono" id="cerrarAvisosMenu" type="button" aria-label="Cerrar avisos">×</button></header>
+        <div class="resumen-avisos-menu"><div><span>Notificaciones</span><b id="totalNotificacionesMenu">0</b></div><div><span>Alertas</span><b id="totalAlertasMenu">0</b></div></div>
+        <div class="lista-avisos-menu" id="listaAvisosMenu"><p class="sin-avisos-menu">No existen avisos pendientes.</p></div>
+        <footer><button type="button" data-abrir-avisos="notifications">Ver notificaciones</button><button type="button" data-abrir-avisos="alerts">Ver alertas</button></footer>
+      </aside>
+      <div class="toast-avisos-menu" id="toastAvisosMenu" aria-live="polite"></div>
 
       <section class="contenedor-iframe" id="contenedorIframe">
         <div class="cargando-modulo" id="cargandoModulo"><img src="logo.svg" alt=""><div><b>Abriendo módulo</b><span>Solo se cargará la sección seleccionada.</span></div></div>
@@ -55,8 +64,8 @@
     </main>
   </div>
 
-  <script src="configuracion.js?v=3.5.0"></script>
-  <script src="conexion.js?v=3.5.0"></script>
-  <script src="menu-principal.js?v=3.5.0"></script>
+  <script src="configuracion.js?v=3.10.0"></script>
+  <script src="conexion.js?v=3.10.0"></script>
+  <script src="menu-principal.js?v=3.10.0"></script>
 </body>
 </html>

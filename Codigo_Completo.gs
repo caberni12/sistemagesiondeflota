@@ -1,5 +1,5 @@
 /**
- * Sistema de Gestión de Flotas 3.10.0
+ * Sistema de Gestión de Flotas 3.10.1
  * Archivo consolidado generado automáticamente.
  * Use este archivo o los módulos numerados, nunca ambos simultáneamente.
  */
@@ -10,7 +10,7 @@
  * Si el proyecto Apps Script está vinculado a la hoja, instalarSistema() guardará
  * automáticamente el ID. Para un proyecto independiente, pegue el ID aquí.
  */
-const VERSION_APLICACION = '3.10.0';
+const VERSION_APLICACION = '3.10.1';
 
 const CONFIGURACION_APLICACION = Object.freeze({
   ID_HOJA_CALCULO: '1onJJEN1rgz0N9GXOiUqV7ong4-nlbdAjzMyW_rumXCM',
@@ -1096,7 +1096,7 @@ function actualizarSistema() {
   try { repararModuloCheckin(); } catch (error) { Logger.log('Reparación de check-in: ' + error.message); }
   try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
   reiniciarCachesEjecucion_();
-  resultado.message = 'Sistema 3.9.1 actualizado: módulo Operaciones acelerado, estructura, combustible, permisos, GPS, check-in y punto operacional verificados.';
+  resultado.message = 'Sistema 3.10.1 actualizado: inicio de operación con captura GPS rápida, estructura, combustible, permisos, GPS, check-in y punto operacional verificados.';
   return resultado;
 }
 
@@ -1279,7 +1279,6 @@ function evaluarUbicacionRespectoPunto_(data, point, phase) {
   const accuracy = Number(data[prefix + 'PRECISION'] || data.PRECISION || 0);
   if (!isFinite(accuracy) || accuracy <= 0) throw new Error('PRECISION_GPS_REQUERIDA');
   const precisionValid = accuracy <= point.PRECISION_GPS_MAXIMA_METROS;
-  if (phase !== 'FIN' && !precisionValid) throw new Error('UBICACION_GPS_IMPRECISA');
   const distance = distanciaGeograficaMetros_(latitude, longitude, point.LATITUD, point.LONGITUD);
   const allowedRadius = phase === 'FIN' ? point.RADIO_FIN_METROS : point.RADIO_INICIO_METROS;
   const tolerance = phase === 'FIN' && !precisionValid
@@ -1301,7 +1300,9 @@ function evaluarUbicacionRespectoPunto_(data, point, phase) {
 
 function validarUbicacionEnPuntoOperacion_(data, point, phase) {
   const result = evaluarUbicacionRespectoPunto_(data, point, phase);
-  if (!result.DENTRO_PERIMETRO) throw new Error(phase === 'FIN' ? 'FUERA_DEL_PUNTO_DE_FINALIZACION' : 'FUERA_DEL_PUNTO_DE_INICIO');
+  // Al iniciar, la ubicación se captura y audita sin bloquear por geocerca o precisión.
+  // La validación estricta de retorno a base continúa aplicándose al finalizar.
+  if (phase === 'FIN' && !result.DENTRO_PERIMETRO) throw new Error('FUERA_DEL_PUNTO_DE_FINALIZACION');
   return result;
 }
 
@@ -1451,11 +1452,17 @@ function iniciarOperacion_(request, session) {
   const route = obtenerRutaParaOperacion_(data, vehicle, driver, session);
   const destination = route ? String(route.DESTINO || point.DIRECCION) : point.DIRECCION;
   const operationType = route ? 'Ruta asignada con retorno a base' : 'Salida y regreso a base';
+  const startOrigin = startLocation.DENTRO_PERIMETRO
+    ? point.DIRECCION
+    : 'Ubicación capturada ' + Number(startLocation.LATITUD).toFixed(6) + ', ' + Number(startLocation.LONGITUD).toFixed(6);
+  const startValidation = startLocation.DENTRO_PERIMETRO
+    ? (startLocation.PRECISION_VALIDA ? 'CAPTURADA_EN_BASE' : 'CAPTURADA_EN_BASE_PRECISION_BAJA')
+    : (startLocation.PRECISION_VALIDA ? 'CAPTURADA_FUERA_BASE' : 'CAPTURADA_FUERA_BASE_PRECISION_BAJA');
 
   const operation = insertarRegistro_('OPERACIONES', {
     VEHICULO_ID: vehicle.ID,
     CONDUCTOR_ID: driver.ID,
-    ORIGEN: point.DIRECCION,
+    ORIGEN: startOrigin,
     DESTINO: destination,
     FECHA_INICIO: new Date(),
     ESTADO: 'Activa',
@@ -1478,7 +1485,7 @@ function iniciarOperacion_(request, session) {
     INICIO_LONGITUD: startLocation.LONGITUD,
     INICIO_PRECISION: startLocation.PRECISION,
     DISTANCIA_INICIO_BASE_METROS: startLocation.DISTANCIA_METROS,
-    VALIDACION_INICIO: 'VALIDADA'
+    VALIDACION_INICIO: startValidation
   }, 'OPE');
   actualizarRegistro_('VEHICULOS', vehicle.ID, { ESTADO:'En ruta' });
   actualizarRegistro_('CONDUCTORES', driver.ID, { ESTADO:'En viaje' });
@@ -1487,16 +1494,16 @@ function iniciarOperacion_(request, session) {
     actualizarRegistro_('RUTAS', route.ID, {
       OPERACION_ID: operation.ID,
       VEHICULO_ID: vehicle.ID,
-      ORIGEN: point.DIRECCION,
-      ORIGEN_LATITUD: point.LATITUD,
-      ORIGEN_LONGITUD: point.LONGITUD,
+      ORIGEN: startOrigin,
+      ORIGEN_LATITUD: startLocation.LATITUD,
+      ORIGEN_LONGITUD: startLocation.LONGITUD,
       ESTADO: 'En curso',
       FECHA_INICIO: route.FECHA_INICIO || new Date()
     });
   }
   encolarTrabajoSegundoPlano_('INICIO_OPERACION', {
     operacionId:operation.ID,
-    detalle:'Operación iniciada en punto autorizado a ' + startLocation.DISTANCIA_METROS + ' m de la base',
+    detalle:'Operación iniciada con ubicación capturada a ' + startLocation.DISTANCIA_METROS + ' m de la base. Estado: ' + startValidation,
     usuario:resumenUsuarioSegundoPlano_(session.user),
     patente:vehicle.PATENTE || vehicle.ID,
     conductor:driver.NOMBRE || driver.ID,

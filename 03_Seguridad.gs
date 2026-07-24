@@ -187,7 +187,7 @@ function crearUsuarioInterno_(data) {
 function crearUsuarioServicio_(data, session) {
   validarRequeridos_(data, ['NOMBRE','CORREO']);
   const row = crearUsuarioInterno_(data);
-  registrarBitacora_(session.user, 'CREAR', 'USUARIOS', row.ID, 'Usuario creado: ' + row.CORREO);
+  registrarBitacora_(session.user, 'CREAR', 'USUARIOS', row.ID, 'Usuario creado. Datos: ' + respaldoAuditoria_(row));
   return ok_({ row: usuarioPublico_(row) });
 }
 
@@ -211,7 +211,7 @@ function actualizarUsuarioServicio_(id, data, session) {
   }
   if (clean.CORREO) clean.CORREO = normalizarEmail_(clean.CORREO);
   const row = actualizarRegistro_('USUARIOS', id, clean);
-  registrarBitacora_(session.user, 'ACTUALIZAR', 'USUARIOS', id, 'Usuario actualizado');
+  registrarBitacora_(session.user, 'ACTUALIZAR', 'USUARIOS', id, 'Respaldo anterior: ' + respaldoAuditoria_(existente) + '. Datos posteriores: ' + respaldoAuditoria_(row));
   return ok_({ row: usuarioPublico_(row) });
 }
 

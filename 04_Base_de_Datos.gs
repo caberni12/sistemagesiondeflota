@@ -254,57 +254,57 @@ function limpiarSalidaRecurso_(sheetName, row) {
 }
 
 function filtrarPorUsuario_(sheetName, rows, user) {
+  if (user.ROL_ID === 'ROL-ADMIN') return rows.map(function(row) { return limpiarSalidaRecurso_(sheetName, row); });
+  if (user.ROL_ID === 'ROL-SUPERVISOR') {
+    if (sheetName === 'AUTORIZACIONES_ELIMINACION_COMBUSTIBLE') {
+      rows = rows.filter(function(row) { return row.SOLICITADO_POR === user.ID; });
+    } else if (sheetName === 'NOTIFICACIONES') {
+      rows = rows.filter(function(row) { return !row.DESTINATARIO_USUARIO_ID || row.DESTINATARIO_USUARIO_ID === user.ID; });
+    } else if (sheetName === 'ALERTAS') {
+      rows = rows.filter(function(row) { return !row.USUARIO_ID || row.USUARIO_ID === user.ID; });
+    }
+    return rows.map(function(row) { return limpiarSalidaRecurso_(sheetName, row); });
+  }
   if (user.ROL_ID !== 'ROL-CONDUCTOR') return rows.map(function(row) { return limpiarSalidaRecurso_(sheetName, row); });
   const driver = listarRegistros_('CONDUCTORES', {}).find(function(row) { return row.USUARIO_ID === user.ID; });
-  if (sheetName === 'NOTIFICACIONES') {
+  if (sheetName === 'AUTORIZACIONES_ELIMINACION_COMBUSTIBLE') {
+    rows = [];
+  } else if (sheetName === 'NOTIFICACIONES') {
     rows = rows.filter(function(row) {
       return row.DESTINATARIO_USUARIO_ID === user.ID || (driver && row.DESTINATARIO_CONDUCTOR_ID === driver.ID);
     });
   } else if (sheetName === 'CONEXIONES') {
     rows = rows.filter(function(row) { return row.USUARIO_ID === user.ID; });
-  } else if (!driver && ['CONDUCTORES','VEHICULOS','OPERACIONES','GPS','GPS_ACTUAL','RUTAS','HISTORIAL','DOCUMENTOS','MANTENCIONES','CHECKINS'].indexOf(sheetName) >= 0) {
+  } else if (!driver && ['CONDUCTORES','VEHICULOS','OPERACIONES','GPS','GPS_ACTUAL','RUTAS','HISTORIAL','DOCUMENTOS','MANTENCIONES','CHECKINS','CARGAS_COMBUSTIBLE'].indexOf(sheetName) >= 0) {
     rows = [];
   } else if (sheetName === 'CONDUCTORES') {
     rows = rows.filter(function(row) { return row.ID === driver.ID; });
-  } else if (sheetName === 'OPERACIONES' || sheetName === 'GPS' || sheetName === 'GPS_ACTUAL' || sheetName === 'RUTAS') {
+  } else if (sheetName === 'OPERACIONES' || sheetName === 'GPS' || sheetName === 'GPS_ACTUAL' || sheetName === 'RUTAS' || sheetName === 'CARGAS_COMBUSTIBLE') {
     rows = rows.filter(function(row) { return row.CONDUCTOR_ID === driver.ID; });
   } else if (sheetName === 'CHECKINS') {
     rows = rows.filter(function(row) { return row.CONDUCTOR_ID === driver.ID; });
   } else if (sheetName === 'VEHICULOS') {
     const vehicleIds = {};
-    listarRegistros_('OPERACIONES', {}).forEach(function(row) {
-      if (row.CONDUCTOR_ID === driver.ID) vehicleIds[row.VEHICULO_ID] = true;
-    });
-    listarRegistros_('RUTAS', {}).forEach(function(row) {
-      if (row.CONDUCTOR_ID === driver.ID) vehicleIds[row.VEHICULO_ID] = true;
-    });
+    listarRegistros_('OPERACIONES', {}).forEach(function(row) { if (row.CONDUCTOR_ID === driver.ID) vehicleIds[row.VEHICULO_ID] = true; });
+    listarRegistros_('RUTAS', {}).forEach(function(row) { if (row.CONDUCTOR_ID === driver.ID) vehicleIds[row.VEHICULO_ID] = true; });
+    listarRegistros_('CARGAS_COMBUSTIBLE', {}).forEach(function(row) { if (row.CONDUCTOR_ID === driver.ID) vehicleIds[row.VEHICULO_ID] = true; });
     rows = rows.filter(function(row) { return vehicleIds[row.ID]; });
   } else if (sheetName === 'HISTORIAL') {
     const operationIds = {};
-    listarRegistros_('OPERACIONES', {}).forEach(function(row) {
-      if (row.CONDUCTOR_ID === driver.ID) operationIds[row.ID] = true;
-    });
+    listarRegistros_('OPERACIONES', {}).forEach(function(row) { if (row.CONDUCTOR_ID === driver.ID) operationIds[row.ID] = true; });
     rows = rows.filter(function(row) { return operationIds[row.OPERACION_ID]; });
   } else if (sheetName === 'DOCUMENTOS') {
     const associatedVehicles = {};
-    listarRegistros_('OPERACIONES', {}).forEach(function(row) {
-      if (row.CONDUCTOR_ID === driver.ID) associatedVehicles[row.VEHICULO_ID] = true;
-    });
-    listarRegistros_('RUTAS', {}).forEach(function(row) {
-      if (row.CONDUCTOR_ID === driver.ID) associatedVehicles[row.VEHICULO_ID] = true;
-    });
+    listarRegistros_('OPERACIONES', {}).forEach(function(row) { if (row.CONDUCTOR_ID === driver.ID) associatedVehicles[row.VEHICULO_ID] = true; });
+    listarRegistros_('RUTAS', {}).forEach(function(row) { if (row.CONDUCTOR_ID === driver.ID) associatedVehicles[row.VEHICULO_ID] = true; });
     rows = rows.filter(function(row) {
       return (row.ASOCIADO_TIPO === 'Conductor' && row.ASOCIADO_ID === driver.ID) ||
         (row.ASOCIADO_TIPO === 'Vehículo' && associatedVehicles[row.ASOCIADO_ID]);
     });
   } else if (sheetName === 'MANTENCIONES') {
     const maintenanceVehicles = {};
-    listarRegistros_('OPERACIONES', {}).forEach(function(row) {
-      if (row.CONDUCTOR_ID === driver.ID) maintenanceVehicles[row.VEHICULO_ID] = true;
-    });
-    listarRegistros_('RUTAS', {}).forEach(function(row) {
-      if (row.CONDUCTOR_ID === driver.ID) maintenanceVehicles[row.VEHICULO_ID] = true;
-    });
+    listarRegistros_('OPERACIONES', {}).forEach(function(row) { if (row.CONDUCTOR_ID === driver.ID) maintenanceVehicles[row.VEHICULO_ID] = true; });
+    listarRegistros_('RUTAS', {}).forEach(function(row) { if (row.CONDUCTOR_ID === driver.ID) maintenanceVehicles[row.VEHICULO_ID] = true; });
     rows = rows.filter(function(row) { return maintenanceVehicles[row.VEHICULO_ID]; });
   } else if (sheetName === 'ALERTAS') {
     rows = rows.filter(function(row) { return !row.USUARIO_ID || row.USUARIO_ID === user.ID; });

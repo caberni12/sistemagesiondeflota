@@ -151,7 +151,7 @@ function actualizarSistema() {
   try { repararModuloCheckin(); } catch (error) { Logger.log('Reparación de check-in: ' + error.message); }
   try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
   reiniciarCachesEjecucion_();
-  resultado.message = 'Sistema 3.9.1 actualizado: módulo Operaciones acelerado, estructura, combustible, permisos, GPS, check-in y punto operacional verificados.';
+  resultado.message = 'Sistema 3.10.1 actualizado: inicio de operación con captura GPS rápida, estructura, combustible, permisos, GPS, check-in y punto operacional verificados.';
   return resultado;
 }
 

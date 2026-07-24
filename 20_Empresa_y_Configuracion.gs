@@ -210,7 +210,7 @@ function guardarEmpresaServicio_(request, session) {
   const confirmed = obtenerRegistro_('EMPRESAS', row.ID) || row;
   if (puntoOperacionDesdeEmpresa_(confirmed)) guardarRespaldoPuntoOperacion_(confirmed);
 
-  registrarBitacora_(session.user, 'ACTUALIZAR', 'CONFIGURACION', row.ID, 'Configuración de empresa guardada');
+  registrarBitacora_(session.user, 'ACTUALIZAR', 'CONFIGURACION', row.ID, 'Respaldo anterior: ' + respaldoAuditoria_(current || {}) + '. Datos posteriores: ' + respaldoAuditoria_(confirmed));
   return ok_({ row: limpiarSalidaRecurso_('EMPRESAS', confirmed), confirmado:true });
 }
 

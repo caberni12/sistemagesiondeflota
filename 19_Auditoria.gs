@@ -1,5 +1,5 @@
 /** Bitácora de auditoría. */
-function registrarBitacora_(user, action, moduleName, recordId, detail) {
+function registrarBitacora_(user, action, moduleName, recordId, detail, ipCliente) {
   try {
     insertarRegistro_('BITACORA', {
       USUARIO_ID: user && user.ID ? user.ID : '',
@@ -8,7 +8,7 @@ function registrarBitacora_(user, action, moduleName, recordId, detail) {
       MODULO: moduleName,
       REGISTRO_ID: recordId || '',
       DETALLE: detail || '',
-      IP_CLIENTE: '',
+      IP_CLIENTE: normalizarIpPublica_(ipCliente || ''),
       FECHA_HORA: new Date(),
       ELIMINADO: 'NO',
     }, 'BIT');

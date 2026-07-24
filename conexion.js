@@ -13,7 +13,8 @@
     readNotification:'marcarNotificacionLeida', heartbeat:'actualizarConexion', realtimeSummary:'resumenTiempoReal',
     diagnoseSystem:'diagnosticoSistema', repairSystem:'repararSistema',
     validateVehicleQr:'validarQrVehiculo', createVehicleCheckin:'crearCheckinVehicular',
-    reviewVehicleCheckin:'revisarCheckinVehicular', availableCheckins:'checkinsDisponibles'
+    reviewVehicleCheckin:'revisarCheckinVehicular', availableCheckins:'checkinsDisponibles',
+    bulkImport:'importarMasivo', registerConnectionIp:'registrarIpConexion'
   });
   const recursosAplicacion = Object.freeze({
     users:'usuarios', roles:'roles', permissions:'permisos', vehicles:'vehiculos', drivers:'conductores',
@@ -52,6 +53,7 @@
   const cacheRespuestas = new Map();
   const solicitudesPendientes = new Map();
   const accionesLectura = new Set(['status','me','dashboard','list','realtimeSummary','diagnoseSystem']);
+  const clientIpCacheKey = 'flotas_ip_publica_v1';
 
   function loadAuth() {
     try { return JSON.parse(localStorage.getItem(config.CLAVE_SESION_LOCAL)) || {}; }
@@ -81,6 +83,31 @@
 
   function backendLabel() {
     return isRemote() ? 'Base de datos central' : 'Base de datos local';
+  }
+
+  async function getClientIp({force=false}={}) {
+    if (!force) {
+      const cached=sessionStorage.getItem(clientIpCacheKey);
+      if(cached)return cached;
+    }
+    const endpoints=['https://api64.ipify.org?format=json','https://api.ipify.org?format=json'];
+    for(const endpoint of endpoints){
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),4500);
+      try{
+        const response=await fetch(endpoint,{cache:'no-store',signal:controller.signal,headers:{Accept:'application/json'}});
+        if(!response.ok)continue;
+        const data=await response.json();const ip=String(data.ip||'').trim();
+        if(ip&&/^[0-9a-fA-F:.]+$/.test(ip)){sessionStorage.setItem(clientIpCacheKey,ip);return ip;}
+      }catch(_){ }finally{clearTimeout(timer);}
+    }
+    return '';
+  }
+
+  async function registerConnectionIp(extra={}) {
+    const ip=extra.IP_PUBLICA||await getClientIp();
+    if(!ip||!auth.token)return {registrada:false};
+    try{return await request('registerConnectionIp',{data:{...extra,IP_PUBLICA:ip}});}
+    catch(_){return {registrada:false};}
   }
 
   const CODIGOS_ERROR_SESION = new Set(['SESION_INVALIDA','SESION_EXPIRADA','AUTENTICACION_REQUERIDA','USUARIO_DESHABILITADO']);
@@ -190,6 +217,8 @@
       changePassword: { actions:['me'], resources:['users','audit'] },
       saveUserPermissions: { actions:['me','dashboard'], resources:['users','audit'] },
       repairSystem: { actions:['status','dashboard','realtimeSummary','diagnoseSystem'], resources:['companies','users','vehicles','drivers','routes','operations','gps','notifications','alerts','history','checkins','audit'] },
+      bulkImport: { actions:['dashboard'], resources:[payload.resource,'audit'] },
+      registerConnectionIp: { actions:['realtimeSummary'], resources:['connections','audit'] },
     };
     if (action === 'logout' || action === 'clearOperationalData') return limpiarCache();
     const impact = impacts[action];
@@ -416,7 +445,7 @@
   async function localRequest(action, payload) {
     await Promise.resolve();
     switch (action) {
-      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.1.2', now:iso() };
+      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.2.0', now:iso() };
       case 'status': return {
         connected:true, needsSetup:activeRows(localDb.users).length === 0, spreadsheetName:'Base local del navegador',
         rows:{ users:activeRows(localDb.users).length, vehicles:activeRows(localDb.vehicles).length,
@@ -446,7 +475,7 @@
         if (!user || user.CONTRASENA_CIFRADA !== await digest(String(payload.contrasena || '') + ':' + user.SAL_CONTRASENA)) throw new Error('CREDENCIALES_INVALIDAS');
         const token = id('TOKEN') + id('TOKEN');
         user.ULTIMO_ACCESO = iso(); user.ACTUALIZADO_EN = iso();
-        const sessionRow={ ID:id('SES'), USUARIO_ID:user.ID, FICHA_SESION_CIFRADA:await digest(token), FECHA_INICIO:iso(), FECHA_EXPIRACION:new Date(Date.now()+72*3600000).toISOString(), ACTIVA:'SI' };
+        const loginIp=String(payload.IP_PUBLICA||payload.ipPublica||'').trim();const sessionRow={ ID:id('SES'), USUARIO_ID:user.ID, FICHA_SESION_CIFRADA:await digest(token), FECHA_INICIO:iso(), FECHA_EXPIRACION:new Date(Date.now()+72*3600000).toISOString(), ACTIVA:'SI', IP_PUBLICA:loginIp, IP_VERSION:loginIp.includes(':')?'IPv6':loginIp?'IPv4':'', IP_CAPTURADA_EN:loginIp?iso():'' };
         localDb.sessions.push(sessionRow);
         audit(user,'INICIO_SESION','SEGURIDAD','Inicio de sesión correcto',user.ID); saveLocal();
         setAuth({ token, sessionId:sessionRow.ID, user:publicUser(user) });
@@ -486,6 +515,8 @@
       case 'saveUserPermissions': return localSaveUserPermissions(payload);
       case 'saveCompany': return localSaveCompany(payload);
       case 'saveOperationalPoint': return localSaveOperationalPoint(payload);
+      case 'bulkImport': return localBulkImport(payload);
+      case 'registerConnectionIp': return localRegisterConnectionIp(payload);
       case 'clearOperationalData': return localClear(payload);
       default: throw new Error('ACCION_NO_ENCONTRADA');
     }
@@ -698,7 +729,8 @@
     return{NOMBRE:company.PUNTO_OPERACION_NOMBRE||'Base operacional',DIRECCION:company.PUNTO_OPERACION_DIRECCION||company.DIRECCION||'Base operacional',LATITUD:latitude,LONGITUD:longitude,RADIO_INICIO_METROS:Math.max(10,Number(company.RADIO_INICIO_METROS||150)),RADIO_FIN_METROS:Math.max(10,Number(company.RADIO_FIN_METROS||150)),PRECISION_GPS_MAXIMA_METROS:Math.max(10,Number(company.PRECISION_GPS_MAXIMA_METROS||120))};
   }
   function localDistanceMeters(lat1,lng1,lat2,lng2){const r=6371000,toRad=value=>Number(value)*Math.PI/180,dLat=toRad(lat2-lat1),dLng=toRad(lng2-lng1),a=Math.sin(dLat/2)**2+Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;return 2*r*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));}
-  function localValidateOperationLocation(data,base,phase){const prefix=phase==='FIN'?'FIN_':'INICIO_',lat=Number(data[prefix+'LATITUD']??data.LATITUD),lng=Number(data[prefix+'LONGITUD']??data.LONGITUD),accuracy=Number(data[prefix+'PRECISION']??data.PRECISION);if(!Number.isFinite(lat)||!Number.isFinite(lng))throw new Error('UBICACION_OPERACION_REQUERIDA');if(!Number.isFinite(accuracy)||accuracy<=0)throw new Error('PRECISION_GPS_REQUERIDA');if(accuracy>base.PRECISION_GPS_MAXIMA_METROS)throw new Error('UBICACION_GPS_IMPRECISA');const distance=localDistanceMeters(lat,lng,base.LATITUD,base.LONGITUD),radius=phase==='FIN'?base.RADIO_FIN_METROS:base.RADIO_INICIO_METROS;if(distance>radius)throw new Error(phase==='FIN'?'FUERA_DEL_PUNTO_DE_FINALIZACION':'FUERA_DEL_PUNTO_DE_INICIO');return{LATITUD:lat,LONGITUD:lng,PRECISION:Math.round(accuracy*10)/10,DISTANCIA_METROS:Math.round(distance*10)/10,ESTADO:'VALIDADA'};}
+  function localEvaluateOperationLocation(data,base,phase){const prefix=phase==='FIN'?'FIN_':'INICIO_',lat=Number(data[prefix+'LATITUD']??data.LATITUD),lng=Number(data[prefix+'LONGITUD']??data.LONGITUD),accuracy=Number(data[prefix+'PRECISION']??data.PRECISION);if(!Number.isFinite(lat)||!Number.isFinite(lng))throw new Error('UBICACION_OPERACION_REQUERIDA');if(!Number.isFinite(accuracy)||accuracy<=0)throw new Error('PRECISION_GPS_REQUERIDA');if(accuracy>base.PRECISION_GPS_MAXIMA_METROS)throw new Error('UBICACION_GPS_IMPRECISA');const distance=localDistanceMeters(lat,lng,base.LATITUD,base.LONGITUD),radius=phase==='FIN'?base.RADIO_FIN_METROS:base.RADIO_INICIO_METROS;return{LATITUD:lat,LONGITUD:lng,PRECISION:Math.round(accuracy*10)/10,DISTANCIA_METROS:Math.round(distance*10)/10,RADIO_PERMITIDO:radius,DENTRO_PERIMETRO:distance<=radius,ESTADO:distance<=radius?'VALIDADA':'FUERA_PERIMETRO'};}
+  function localValidateOperationLocation(data,base,phase){const result=localEvaluateOperationLocation(data,base,phase);if(!result.DENTRO_PERIMETRO)throw new Error(phase==='FIN'?'FUERA_DEL_PUNTO_DE_FINALIZACION':'FUERA_DEL_PUNTO_DE_INICIO');return result;}
   function localRouteForOperation(data,vehicle,driver,user){if(!data.RUTA_ID)return null;const route=find('routes',data.RUTA_ID);if(!route)throw new Error('RUTA_NO_ENCONTRADA');if(!localFilterRows('routes',[route],user).length)throw new Error('PERMISO_DENEGADO');if(!['Asignada','En curso'].includes(route.ESTADO))throw new Error('RUTA_NO_DISPONIBLE');if(route.CONDUCTOR_ID!==driver.ID)throw new Error('RUTA_NO_COINCIDE_CONDUCTOR');if(route.VEHICULO_ID&&route.VEHICULO_ID!==vehicle.ID)throw new Error('RUTA_NO_COINCIDE_VEHICULO');if(route.OPERACION_ID){const linked=find('operations',route.OPERACION_ID);if(linked?.ESTADO==='Activa')throw new Error('RUTA_YA_VINCULADA');}return route;}
   function localStartOperation(payload) {
     const user=requireLocalUser(), data={...(payload.data||payload)};requireLocalPermission(user,'OPERACIONES','CREAR');
@@ -710,10 +742,19 @@
     localDb.operations.push(row);checkin.OPERACION_ID=row.ID;checkin.UTILIZADO='SI';checkin.ACTUALIZADO_EN=now;vehicle.ESTADO='En ruta';driver.ESTADO='En viaje';if(route)Object.assign(route,{OPERACION_ID:row.ID,VEHICULO_ID:vehicle.ID,ORIGEN:base.DIRECCION,ORIGEN_LATITUD:base.LATITUD,ORIGEN_LONGITUD:base.LONGITUD,ESTADO:'En curso',FECHA_INICIO:route.FECHA_INICIO||now,ACTUALIZADO_EN:now});localDb.history.push({ID:id('HIS'),OPERACION_ID:row.ID,EVENTO:'INICIO',DETALLE:`Operación iniciada en punto autorizado a ${start.DISTANCIA_METROS} m de la base`,FECHA_HORA:now,USUARIO_ID:user.ID,CREADO_EN:now,ELIMINADO:'NO'});audit(user,'INICIAR','OPERACIONES','Operación iniciada con ubicación validada',row.ID);saveLocal();return{row,locationValidation:start,base};
   }
   function localFinishOperation(payload) {
-    const user=requireLocalUser(), data=payload.data||payload,row=find('operations',payload.id||payload.OPERACION_ID||data.OPERACION_ID);requireLocalPermission(user,'OPERACIONES','ACTUALIZAR');if(!row||row.ESTADO!=='Activa')throw new Error('OPERACION_NO_ACTIVA');if(!localFilterRows('operations',[row],user).length)throw new Error('PERMISO_DENEGADO');
-    const currentBase=localOperationalBase(),hasSnapshot=String(row.BASE_LATITUD??'').trim()&&String(row.BASE_LONGITUD??'').trim(),base=hasSnapshot?{...currentBase,NOMBRE:row.BASE_NOMBRE||currentBase.NOMBRE,DIRECCION:row.BASE_DIRECCION||row.PUNTO_RETORNO||row.ORIGEN||currentBase.DIRECCION,LATITUD:Number(row.BASE_LATITUD),LONGITUD:Number(row.BASE_LONGITUD),RADIO_FIN_METROS:Number(row.RADIO_FIN_METROS||currentBase.RADIO_FIN_METROS),PRECISION_GPS_MAXIMA_METROS:Number(row.PRECISION_GPS_MAXIMA_METROS||currentBase.PRECISION_GPS_MAXIMA_METROS)}:currentBase,finish=localValidateOperationLocation(data,base,'FIN'),kmEnd=Number(data.KM_FIN||row.KM_INICIO||0),now=iso();row.FECHA_FIN=now;row.ESTADO='Finalizada';row.KM_FIN=kmEnd;row.DISTANCIA_KM=Math.max(0,kmEnd-Number(row.KM_INICIO||0));row.FIN_LATITUD=finish.LATITUD;row.FIN_LONGITUD=finish.LONGITUD;row.FIN_PRECISION=finish.PRECISION;row.DISTANCIA_FIN_BASE_METROS=finish.DISTANCIA_METROS;row.VALIDACION_FIN='VALIDADA';row.OBSERVACIONES=data.OBSERVACIONES||row.OBSERVACIONES||'';row.ACTUALIZADO_EN=now;
+    const user=requireLocalUser(),data=payload.data||payload,row=find('operations',payload.id||payload.OPERACION_ID||data.OPERACION_ID);requireLocalPermission(user,'OPERACIONES','ACTUALIZAR');
+    if(!row||row.ESTADO!=='Activa')throw new Error('OPERACION_NO_ACTIVA');if(!localFilterRows('operations',[row],user).length)throw new Error('PERMISO_DENEGADO');
+    if(!['ROL-ADMIN','ROL-SUPERVISOR','ROL-CONDUCTOR'].includes(user.ROL_ID))throw new Error('PERMISO_DENEGADO');
+    if(user.ROL_ID==='ROL-CONDUCTOR'&&localDriver(user)?.ID!==row.CONDUCTOR_ID)throw new Error('PERMISO_DENEGADO');
+    const currentBase=localOperationalBase(),hasSnapshot=String(row.BASE_LATITUD??'').trim()&&String(row.BASE_LONGITUD??'').trim(),base=hasSnapshot?{...currentBase,NOMBRE:row.BASE_NOMBRE||currentBase.NOMBRE,DIRECCION:row.BASE_DIRECCION||row.PUNTO_RETORNO||row.ORIGEN||currentBase.DIRECCION,LATITUD:Number(row.BASE_LATITUD),LONGITUD:Number(row.BASE_LONGITUD),RADIO_FIN_METROS:Number(row.RADIO_FIN_METROS||currentBase.RADIO_FIN_METROS),PRECISION_GPS_MAXIMA_METROS:Number(row.PRECISION_GPS_MAXIMA_METROS||currentBase.PRECISION_GPS_MAXIMA_METROS)}:currentBase;
+    let finish,exceptional=false;const reason=String(data.CIERRE_MOTIVO||data.MOTIVO_CIERRE_EXCEPCIONAL||'').trim();
+    try{finish=localValidateOperationLocation(data,base,'FIN');}
+    catch(error){if(String(error.message)!=='FUERA_DEL_PUNTO_DE_FINALIZACION')throw error;if(user.ROL_ID==='ROL-CONDUCTOR')throw error;if(!['ROL-ADMIN','ROL-SUPERVISOR'].includes(user.ROL_ID))throw new Error('CIERRE_EXCEPCIONAL_NO_AUTORIZADO');if(data.CIERRE_EXCEPCIONAL!=='SI')throw new Error('CIERRE_EXCEPCIONAL_CONFIRMACION_REQUERIDA');if(reason.length<10)throw new Error('CIERRE_EXCEPCIONAL_MOTIVO_REQUERIDO');finish=localEvaluateOperationLocation(data,base,'FIN');exceptional=true;}
+    const kmEnd=Number(data.KM_FIN||row.KM_INICIO||0),kmStart=Number(row.KM_INICIO||0);if(!Number.isFinite(kmEnd)||kmEnd<kmStart)throw new Error('KILOMETRAJE_FINAL_INVALIDO');const now=iso(),ip=String(data.IP_PUBLICA||find('sessions',auth.sessionId)?.IP_PUBLICA||'');
+    Object.assign(row,{FECHA_FIN:now,ESTADO:'Finalizada',KM_FIN:kmEnd,DISTANCIA_KM:Math.max(0,kmEnd-kmStart),FIN_LATITUD:finish.LATITUD,FIN_LONGITUD:finish.LONGITUD,FIN_PRECISION:finish.PRECISION,DISTANCIA_FIN_BASE_METROS:finish.DISTANCIA_METROS,VALIDACION_FIN:exceptional?'EXCEPCIONAL_AUTORIZADA':'VALIDADA',OBSERVACIONES:data.OBSERVACIONES||row.OBSERVACIONES||'',CIERRE_TIPO:exceptional?'Excepcional fuera de base':'Normal en base',CIERRE_FUERA_BASE:exceptional?'SI':'NO',CIERRE_MOTIVO:exceptional?reason:'',CIERRE_AUTORIZADO_POR:user.ID,CIERRE_AUTORIZADO_ROL:user.ROL_ID,CIERRE_IP_PUBLICA:ip,CIERRE_FECHA_AUTORIZACION:now,ACTUALIZADO_EN:now});
     const vehicle=find('vehicles',row.VEHICULO_ID),driver=find('drivers',row.CONDUCTOR_ID);if(vehicle){vehicle.ESTADO='Disponible';vehicle.KILOMETRAJE=kmEnd;}if(driver)driver.ESTADO='Disponible';if(row.RUTA_ID){const route=find('routes',row.RUTA_ID);if(route&&['Asignada','En curso'].includes(route.ESTADO))Object.assign(route,{ESTADO:'Completada',FECHA_FIN:now,OPERACION_ID:row.ID,ACTUALIZADO_EN:now});}
-    localDb.history.push({ID:id('HIS'),OPERACION_ID:row.ID,EVENTO:'FIN',DETALLE:`Operación finalizada en punto autorizado a ${finish.DISTANCIA_METROS} m de la base`,FECHA_HORA:now,USUARIO_ID:user.ID,CREADO_EN:now,ELIMINADO:'NO'});audit(user,'FINALIZAR','OPERACIONES','Operación finalizada con ubicación validada',row.ID);saveLocal();return{row,locationValidation:finish,base};
+    const detail=exceptional?`Cierre excepcional autorizado fuera de base a ${finish.DISTANCIA_METROS} m. Motivo: ${reason}`:`Operación finalizada en punto autorizado a ${finish.DISTANCIA_METROS} m de la base`;
+    localDb.history.push({ID:id('HIS'),OPERACION_ID:row.ID,EVENTO:exceptional?'FIN_EXCEPCIONAL':'FIN',DETALLE:detail,FECHA_HORA:now,USUARIO_ID:user.ID,CREADO_EN:now,ELIMINADO:'NO'});if(exceptional)localDb.alerts.push({ID:id('ALT'),TIPO:'Cierre excepcional',NIVEL:'Advertencia',TITULO:'Operación finalizada fuera de la base',MENSAJE:`${row.ID} fue cerrada por ${user.NOMBRE} a ${finish.DISTANCIA_METROS} m de la base. Motivo: ${reason}`,MODULO:'OPERACIONES',REGISTRO_ID:row.ID,LEIDA:'NO',USUARIO_ID:'',FECHA_HORA:now,CREADO_EN:now,ACTUALIZADO_EN:now,ELIMINADO:'NO'});audit(user,exceptional?'FINALIZAR_EXCEPCIONAL':'FINALIZAR','OPERACIONES',detail,row.ID);saveLocal();return{row,locationValidation:finish,base,cierreExcepcional:exceptional,autorizadoPor:{ID:user.ID,NOMBRE:user.NOMBRE,ROL_ID:user.ROL_ID}};
   }
   function localValidateVehicleQr(payload){
     const user=requireLocalUser();requireLocalPermission(user,'QR','LEER');const normalized=String(payload.codigo||payload.CODIGO||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
@@ -790,7 +831,7 @@
       SESION_ID:sessionId,SESION_CLIENTE_ID:clientSessionId,SECCION_ACTUAL:String(data.SECCION_ACTUAL||'dashboard').slice(0,80),ACTIVIDAD:activity,
       VEHICULO_ID:operation?.VEHICULO_ID||route?.VEHICULO_ID||'',OPERACION_ID:operation?.ID||'',RUTA_ID:route?.ID||'',GPS_ACTIVO:gpsActive?'SI':'NO',PAGINA_VISIBLE:data.PAGINA_VISIBLE==='NO'?'NO':'SI',
       ESTADO:data.ESTADO||'En línea',ULTIMA_CONEXION:now,PLATAFORMA:data.PLATAFORMA||navigator.platform||'',NAVEGADOR:data.NAVEGADOR||navigator.userAgent,
-      TIPO_RED:data.TIPO_RED||'',BATERIA_PORCENTAJE:data.BATERIA_PORCENTAJE??'',ACTUALIZADO_EN:now,ELIMINADO:'NO'};
+      TIPO_RED:data.TIPO_RED||'',BATERIA_PORCENTAJE:data.BATERIA_PORCENTAJE??'',IP_PUBLICA:data.IP_PUBLICA||find('sessions',auth.sessionId)?.IP_PUBLICA||'',IP_VERSION:String(data.IP_PUBLICA||find('sessions',auth.sessionId)?.IP_PUBLICA||'').includes(':')?'IPv6':(data.IP_PUBLICA||find('sessions',auth.sessionId)?.IP_PUBLICA)?'IPv4':'',IP_CAPTURADA_EN:(data.IP_PUBLICA||find('sessions',auth.sessionId)?.IP_PUBLICA)?now:'',ACTUALIZADO_EN:now,ELIMINADO:'NO'};
     const row=existing?Object.assign(existing,values):{ID:id('CNX'),...values,CREADO_EN:now};if(!existing)localDb.connections.push(row);saveLocal();return{row,serverTime:now};
   }
   function localRealtimeSummary(payload={}){
@@ -834,7 +875,7 @@
   }
 
   function localSaveOperationalPoint(payload){
-    const user=requireLocalUser();requireLocalPermission(user,'CONFIGURACION','ACTUALIZAR');
+    const user=requireLocalUser();if(!['ROL-ADMIN','ROL-SUPERVISOR'].includes(user.ROL_ID))throw new Error('PUNTO_OPERACION_ROL_NO_AUTORIZADO');
     const data={...(payload.data||payload)};data.VALIDAR_UBICACION_OPERACION='SI';data.RETORNO_BASE_OBLIGATORIO='SI';
     const lat=Number(data.PUNTO_OPERACION_LATITUD),lng=Number(data.PUNTO_OPERACION_LONGITUD);
     if(!Number.isFinite(lat)||lat<-90||lat>90||!Number.isFinite(lng)||lng<-180||lng>180)throw new Error('COORDENADAS_INVALIDAS');
@@ -843,10 +884,13 @@
     if(!String(data.PUNTO_OPERACION_NOMBRE||'').trim())data.PUNTO_OPERACION_NOMBRE='Base operacional';
     if(!String(data.PUNTO_OPERACION_DIRECCION||'').trim())data.PUNTO_OPERACION_DIRECCION=localPrimaryCompany()?.DIRECCION||data.PUNTO_OPERACION_NOMBRE;
     let row=localPrimaryCompany();if(!row){row={ID:id('EMP'),NOMBRE_FANTASIA:data.PUNTO_OPERACION_NOMBRE,RAZON_SOCIAL:data.PUNTO_OPERACION_NOMBRE,ESTADO:'Activo',CREADO_EN:iso(),ELIMINADO:'NO'};localDb.companies.push(row);}
-    Object.assign(row,data,{ACTUALIZADO_EN:iso(),ESTADO:row.ESTADO||'Activo'});audit(user,'CONFIGURAR_PUNTO','CONFIGURACION','Punto operacional guardado y confirmado',row.ID);saveLocal();
+    const previous={lat:row.PUNTO_OPERACION_LATITUD,lng:row.PUNTO_OPERACION_LONGITUD};const changedAt=iso(),ip=String(data.IP_PUBLICA||find('sessions',auth.sessionId)?.IP_PUBLICA||'');Object.assign(row,data,{PUNTO_OPERACION_MODIFICADO_POR:user.ID,PUNTO_OPERACION_MODIFICADO_ROL:user.ROL_ID,PUNTO_OPERACION_MODIFICADO_IP:ip,PUNTO_OPERACION_MODIFICADO_EN:changedAt,ACTUALIZADO_EN:changedAt,ESTADO:row.ESTADO||'Activo'});audit(user,'CONFIGURAR_PUNTO','CONFIGURACION',`Punto operacional actualizado de ${previous.lat||'sin latitud'},${previous.lng||'sin longitud'} a ${lat},${lng}`,row.ID);saveLocal();
     const point=localOperationalBase();return{row:cleanRow(row),point,confirmado:true};
   }
 
+  function localImportKey(resource,row){if(resource==='vehicles')return `PATENTE:${String(row.PATENTE||'').replace(/[^A-Z0-9]/gi,'').toUpperCase()}`;if(resource==='drivers')return `RUT:${String(row.RUT||'').replace(/[^0-9Kk]/g,'').toUpperCase()}`;return ['DOC',row.TIPO,row.ASOCIADO_TIPO,row.IDENTIFICACION,row.FECHA_VENCIMIENTO].map(value=>String(value||'').trim().toUpperCase()).join(':');}
+  function localBulkImport(payload){const user=requireLocalUser(),resource=String(payload.resource||payload.recurso||''),key=resourceMap[resource],data=payload.data||payload,rows=Array.isArray(data.rows)?data.rows:Array.isArray(data.filas)?data.filas:[];if(!['vehicles','drivers','documents'].includes(resource)||!key)throw new Error('RECURSO_IMPORTACION_NO_PERMITIDO');requireLocalPermission(user,moduleByResource[key],'CREAR');const update=String(data.actualizarExistentes??'SI')!=='NO';if(update)requireLocalPermission(user,moduleByResource[key],'ACTUALIZAR');if(!rows.length)throw new Error('IMPORTACION_SIN_FILAS');if(rows.length>1500)throw new Error('IMPORTACION_DEMASIADAS_FILAS');const required={vehicles:['PATENTE','MARCA','MODELO'],drivers:['NOMBRE','RUT'],documents:['TIPO','ASOCIADO_TIPO','IDENTIFICACION','FECHA_VENCIMIENTO']}[resource],errors=[],seen=new Set(),indexMap=new Map(activeRows(localDb[key]).map(row=>[localImportKey(resource,row),row]));let created=0,updated=0,skipped=0;rows.forEach((raw,i)=>{try{const row={};Object.entries(raw||{}).forEach(([field,value])=>{const normalized=String(field).trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,'_').replace(/^_+|_+$/g,'');if(normalized)row[normalized]=value;});required.forEach(field=>{if(String(row[field]??'').trim()==='')throw new Error(`CAMPO_REQUERIDO_${field}`);});if(resource==='vehicles'){row.PATENTE=String(row.PATENTE).trim().toUpperCase();row.ESTADO=row.ESTADO||'Disponible';row.KILOMETRAJE=Number(row.KILOMETRAJE||0);row.QR_CODIGO=row.QR_CODIGO||`VEH-${row.PATENTE.replace(/[^A-Z0-9]/g,'')}`;}if(resource==='drivers'){row.RUT=String(row.RUT).trim().toUpperCase();row.CORREO=String(row.CORREO||'').trim().toLowerCase();row.ESTADO=row.ESTADO||'Disponible';}if(resource==='documents'){row.ASOCIADO_TIPO=String(row.ASOCIADO_TIPO).trim();row.IDENTIFICACION=String(row.IDENTIFICACION).trim().toUpperCase();row.ESTADO=row.ESTADO||'Vigente';if(!row.ASOCIADO_ID){if(row.ASOCIADO_TIPO==='Vehículo')row.ASOCIADO_ID=activeRows(localDb.vehicles).find(item=>String(item.PATENTE||'').replace(/[^A-Z0-9]/gi,'').toUpperCase()===row.IDENTIFICACION.replace(/[^A-Z0-9]/gi,''))?.ID||'';else if(row.ASOCIADO_TIPO==='Conductor')row.ASOCIADO_ID=activeRows(localDb.drivers).find(item=>String(item.RUT||'').replace(/[^0-9Kk]/g,'').toUpperCase()===row.IDENTIFICACION.replace(/[^0-9Kk]/g,''))?.ID||'';else row.ASOCIADO_ID=localPrimaryCompany()?.ID||'';}if(!row.ASOCIADO_ID)throw new Error('ASOCIADO_NO_ENCONTRADO');}const importKey=localImportKey(resource,row);if(seen.has(importKey))throw new Error('DUPLICADA_EN_ARCHIVO');seen.add(importKey);const existing=indexMap.get(importKey),now=iso();if(existing){if(!update){skipped++;return;}Object.assign(existing,row,{ACTUALIZADO_EN:now,ELIMINADO:'NO'});updated++;}else{const prefixes={vehicles:'VEH',drivers:'CON',documents:'DOC'},createdRow={ID:id(prefixes[resource]),...row,CREADO_EN:now,ACTUALIZADO_EN:now,ELIMINADO:'NO'};localDb[key].push(createdRow);indexMap.set(importKey,createdRow);created++;}}catch(error){errors.push({fila:i+2,error:String(error.message||error)});}});audit(user,'IMPORTAR_MASIVO',moduleByResource[key],`Importación masiva: ${created} creados, ${updated} actualizados, ${skipped} omitidos, ${errors.length} errores`);saveLocal();return{resource,totalRecibidas:rows.length,creadas:created,actualizadas:updated,omitidas:skipped,errores:errors,correcto:errors.length===0};}
+  function localRegisterConnectionIp(payload){const user=requireLocalUser(),data=payload.data||payload,ip=String(data.IP_PUBLICA||'').trim();if(!ip)return{registrada:false};const session=find('sessions',auth.sessionId),now=iso();if(session)Object.assign(session,{IP_PUBLICA:ip,IP_VERSION:ip.includes(':')?'IPv6':'IPv4',IP_CAPTURADA_EN:now,ULTIMO_USO:now});activeRows(localDb.connections).filter(row=>row.SESION_ID===auth.sessionId).forEach(row=>Object.assign(row,{IP_PUBLICA:ip,IP_VERSION:ip.includes(':')?'IPv6':'IPv4',IP_CAPTURADA_EN:now,ACTUALIZADO_EN:now}));audit(user,'REGISTRAR_IP','SEGURIDAD','Dirección IP pública registrada al conectar',auth.sessionId);saveLocal();return{registrada:true,ipVersion:ip.includes(':')?'IPv6':'IPv4',fecha:now};}
   function localDiagnoseSystem(){
     const user=requireLocalUser();requireLocalPermission(user,'CONFIGURACION','LEER');
     const company=localPrimaryCompany()||{};
@@ -861,7 +905,7 @@
       alerts:{nombre:'Alertas',estado:'OK',detalle:`${activeRows(localDb.alerts).length} registros`},
       history:{nombre:'Historiales',estado:'OK',detalle:`${activeRows(localDb.history).length} eventos operativos · ${activeRows(localDb.checkins).length} check-ins`}
     };
-    return{version:'3.1.2',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
+    return{version:'3.2.0',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
   }
   function localRepairSystem(){
     const user=requireLocalUser();requireLocalPermission(user,'CONFIGURACION','ACTUALIZAR');
@@ -884,6 +928,8 @@
     isAuthError,
     getAuth: () => ({ ...auth }),
     setAuth,
+    getClientIp,
+    registerConnectionIp,
     reloadLocal: () => { localDb = loadLocal(); },
   };
   })();

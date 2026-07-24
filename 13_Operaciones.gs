@@ -27,7 +27,7 @@ function obtenerPuntoOperacionConfigurado_() {
   return point;
 }
 
-function validarUbicacionEnPuntoOperacion_(data, point, phase) {
+function evaluarUbicacionRespectoPunto_(data, point, phase) {
   const prefix = phase === 'FIN' ? 'FIN_' : 'INICIO_';
   const latitude = numeroUbicacionOperacion_(data[prefix + 'LATITUD'] || data.LATITUD, 'LATITUD');
   const longitude = numeroUbicacionOperacion_(data[prefix + 'LONGITUD'] || data.LONGITUD, 'LONGITUD');
@@ -36,15 +36,21 @@ function validarUbicacionEnPuntoOperacion_(data, point, phase) {
   if (accuracy > point.PRECISION_GPS_MAXIMA_METROS) throw new Error('UBICACION_GPS_IMPRECISA');
   const distance = distanciaGeograficaMetros_(latitude, longitude, point.LATITUD, point.LONGITUD);
   const allowedRadius = phase === 'FIN' ? point.RADIO_FIN_METROS : point.RADIO_INICIO_METROS;
-  if (distance > allowedRadius) throw new Error(phase === 'FIN' ? 'FUERA_DEL_PUNTO_DE_FINALIZACION' : 'FUERA_DEL_PUNTO_DE_INICIO');
   return {
     LATITUD: latitude,
     LONGITUD: longitude,
     PRECISION: Math.round(accuracy * 10) / 10,
     DISTANCIA_METROS: Math.round(distance * 10) / 10,
     RADIO_PERMITIDO: allowedRadius,
-    ESTADO: 'VALIDADA'
+    DENTRO_PERIMETRO: distance <= allowedRadius,
+    ESTADO: distance <= allowedRadius ? 'VALIDADA' : 'FUERA_PERIMETRO'
   };
+}
+
+function validarUbicacionEnPuntoOperacion_(data, point, phase) {
+  const result = evaluarUbicacionRespectoPunto_(data, point, phase);
+  if (!result.DENTRO_PERIMETRO) throw new Error(phase === 'FIN' ? 'FUERA_DEL_PUNTO_DE_FINALIZACION' : 'FUERA_DEL_PUNTO_DE_INICIO');
+  return result;
 }
 
 function obtenerRutaParaOperacion_(data, vehicle, driver, session) {
@@ -148,9 +154,17 @@ function iniciarOperacion_(request, session) {
 
 function finalizarOperacion_(request, session) {
   exigirPermiso_(session.user, 'OPERACIONES', 'ACTUALIZAR');
+  const role = String(session.user.ROL_ID || '');
+  if (['ROL-ADMIN','ROL-SUPERVISOR','ROL-CONDUCTOR'].indexOf(role) < 0) throw new Error('PERMISO_DENEGADO');
+  const data = request.datos || request || {};
   const operation = obtenerRegistro_('OPERACIONES', request.identificador || request.OPERACION_ID);
   if (!operation || operation.ESTADO !== 'Activa') throw new Error('OPERACION_NO_ACTIVA');
   if (!filtrarPorUsuario_('OPERACIONES', [operation], session.user).length) throw new Error('PERMISO_DENEGADO');
+  if (role === 'ROL-CONDUCTOR') {
+    const ownDriver = obtenerConductorDeUsuario_(session.user.ID);
+    if (!ownDriver || String(operation.CONDUCTOR_ID) !== String(ownDriver.ID)) throw new Error('PERMISO_DENEGADO');
+  }
+
   const currentPoint = obtenerPuntoOperacionConfigurado_();
   const snapshotLatitudeText = String(operation.BASE_LATITUD == null ? '' : operation.BASE_LATITUD).trim();
   const snapshotLongitudeText = String(operation.BASE_LONGITUD == null ? '' : operation.BASE_LONGITUD).trim();
@@ -166,37 +180,81 @@ function finalizarOperacion_(request, session) {
     RETORNO_BASE_OBLIGATORIO: 'SI'
   };
   if (!isFinite(point.LATITUD) || !isFinite(point.LONGITUD)) throw new Error('PUNTO_OPERACION_NO_CONFIGURADO');
-  const finishLocation = validarUbicacionEnPuntoOperacion_(request.datos || request, point, 'FIN');
-  const kmEnd = Number(request.KM_FIN || (request.datos || {}).KM_FIN || operation.KM_INICIO || 0);
+
+  let finishLocation = null;
+  let exceptional = false;
+  const reason = String(data.CIERRE_MOTIVO || data.MOTIVO_CIERRE_EXCEPCIONAL || '').trim();
+  try {
+    finishLocation = validarUbicacionEnPuntoOperacion_(data, point, 'FIN');
+  } catch (error) {
+    const code = String(error && error.message ? error.message : error);
+    if (code !== 'FUERA_DEL_PUNTO_DE_FINALIZACION') throw error;
+    if (role === 'ROL-CONDUCTOR') throw error;
+    if (['ROL-ADMIN','ROL-SUPERVISOR'].indexOf(role) < 0) throw new Error('CIERRE_EXCEPCIONAL_NO_AUTORIZADO');
+    if (String(data.CIERRE_EXCEPCIONAL || '') !== 'SI') throw new Error('CIERRE_EXCEPCIONAL_CONFIRMACION_REQUERIDA');
+    if (reason.length < 10) throw new Error('CIERRE_EXCEPCIONAL_MOTIVO_REQUERIDO');
+    finishLocation = evaluarUbicacionRespectoPunto_(data, point, 'FIN');
+    exceptional = true;
+  }
+
+  const kmEnd = Number(data.KM_FIN || operation.KM_INICIO || 0);
   const kmStart = Number(operation.KM_INICIO || 0);
+  if (!isFinite(kmEnd) || kmEnd < kmStart) throw new Error('KILOMETRAJE_FINAL_INVALIDO');
+  const ipCliente = normalizarIpPublica_(data.IP_PUBLICA || session.session.IP_PUBLICA || '');
+  const now = new Date();
   const updated = actualizarRegistro_('OPERACIONES', operation.ID, {
-    FECHA_FIN: new Date(),
+    FECHA_FIN: now,
     ESTADO: 'Finalizada',
     KM_FIN: kmEnd,
     DISTANCIA_KM: Math.max(0, kmEnd - kmStart),
-    OBSERVACIONES: request.OBSERVACIONES || (request.datos || {}).OBSERVACIONES || operation.OBSERVACIONES || '',
+    OBSERVACIONES: data.OBSERVACIONES || operation.OBSERVACIONES || '',
     FIN_LATITUD: finishLocation.LATITUD,
     FIN_LONGITUD: finishLocation.LONGITUD,
     FIN_PRECISION: finishLocation.PRECISION,
     DISTANCIA_FIN_BASE_METROS: finishLocation.DISTANCIA_METROS,
-    VALIDACION_FIN: 'VALIDADA'
+    VALIDACION_FIN: exceptional ? 'EXCEPCIONAL_AUTORIZADA' : 'VALIDADA',
+    CIERRE_TIPO: exceptional ? 'Excepcional fuera de base' : 'Normal en base',
+    CIERRE_FUERA_BASE: exceptional ? 'SI' : 'NO',
+    CIERRE_MOTIVO: exceptional ? reason : '',
+    CIERRE_AUTORIZADO_POR: session.user.ID,
+    CIERRE_AUTORIZADO_ROL: role,
+    CIERRE_IP_PUBLICA: ipCliente,
+    CIERRE_FECHA_AUTORIZACION: now
   });
   actualizarRegistro_('VEHICULOS', operation.VEHICULO_ID, { ESTADO:'Disponible', KILOMETRAJE:kmEnd });
   actualizarRegistro_('CONDUCTORES', operation.CONDUCTOR_ID, { ESTADO:'Disponible' });
   if (operation.RUTA_ID) {
     const route = obtenerRegistro_('RUTAS', operation.RUTA_ID);
     if (route && ['Asignada','En curso'].indexOf(route.ESTADO) >= 0) {
-      actualizarRegistro_('RUTAS', route.ID, { ESTADO:'Completada', FECHA_FIN:new Date(), OPERACION_ID:operation.ID });
+      actualizarRegistro_('RUTAS', route.ID, { ESTADO:'Completada', FECHA_FIN:now, OPERACION_ID:operation.ID });
     }
   }
+  const historyDetail = exceptional
+    ? 'Cierre excepcional autorizado fuera de base a ' + finishLocation.DISTANCIA_METROS + ' m. Motivo: ' + reason
+    : 'Operación finalizada en punto autorizado a ' + finishLocation.DISTANCIA_METROS + ' m de la base';
   insertarRegistro_('HISTORIAL', {
     OPERACION_ID: operation.ID,
-    EVENTO:'FIN',
-    DETALLE:'Operación finalizada en punto autorizado a ' + finishLocation.DISTANCIA_METROS + ' m de la base',
-    FECHA_HORA:new Date(),
+    EVENTO: exceptional ? 'FIN_EXCEPCIONAL' : 'FIN',
+    DETALLE: historyDetail,
+    FECHA_HORA:now,
     USUARIO_ID:session.user.ID,
     ELIMINADO:'NO'
   }, 'HIS');
-  registrarBitacora_(session.user, 'FINALIZAR', 'OPERACIONES', operation.ID, 'Operación finalizada con ubicación validada');
-  return ok_({ row: limpiarSalidaRecurso_('OPERACIONES', updated), locationValidation:finishLocation, base:point });
+  registrarBitacora_(session.user, exceptional ? 'FINALIZAR_EXCEPCIONAL' : 'FINALIZAR', 'OPERACIONES', operation.ID, historyDetail, ipCliente);
+  if (exceptional) {
+    try {
+      insertarRegistro_('ALERTAS', {
+        TIPO:'Cierre excepcional', NIVEL:'Advertencia', TITULO:'Operación finalizada fuera de la base',
+        MENSAJE:operation.ID + ' fue cerrada por ' + session.user.NOMBRE + ' a ' + finishLocation.DISTANCIA_METROS + ' m de la base. Motivo: ' + reason,
+        MODULO:'OPERACIONES', REGISTRO_ID:operation.ID, LEIDA:'NO', USUARIO_ID:'', FECHA_HORA:now, ELIMINADO:'NO'
+      }, 'ALT');
+    } catch (alertError) { console.error(alertError); }
+  }
+  return ok_({
+    row: limpiarSalidaRecurso_('OPERACIONES', updated),
+    locationValidation:finishLocation,
+    base:point,
+    cierreExcepcional:exceptional,
+    autorizadoPor:{ ID:session.user.ID, NOMBRE:session.user.NOMBRE, ROL_ID:role }
+  });
 }

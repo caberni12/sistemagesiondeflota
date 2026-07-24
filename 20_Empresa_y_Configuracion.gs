@@ -178,6 +178,7 @@ function repararPuntoOperacional() {
 
 /** Guarda la identidad y los datos institucionales de la empresa. */
 function guardarEmpresaServicio_(request, session) {
+  if (String(session.user.ROL_ID || '') !== 'ROL-ADMIN') throw new Error('PERMISO_DENEGADO');
   exigirPermiso_(session.user, 'CONFIGURACION', 'ACTUALIZAR');
   asegurarHoja_('EMPRESAS');
   const current = obtenerEmpresaPrincipal_();
@@ -215,7 +216,7 @@ function guardarEmpresaServicio_(request, session) {
 
 /** Guarda y confirma exclusivamente el punto operacional. */
 function guardarPuntoOperacionServicio_(request, session) {
-  exigirPermiso_(session.user, 'CONFIGURACION', 'ACTUALIZAR');
+  if (['ROL-ADMIN','ROL-SUPERVISOR'].indexOf(String(session.user.ROL_ID || '')) < 0) throw new Error('PUNTO_OPERACION_ROL_NO_AUTORIZADO');
   asegurarHoja_('EMPRESAS');
   const current = obtenerEmpresaPrincipal_();
   const raw = Object.assign({}, request.datos || request || {});
@@ -228,6 +229,12 @@ function guardarPuntoOperacionServicio_(request, session) {
   const fields = ['VALIDAR_UBICACION_OPERACION','PUNTO_OPERACION_NOMBRE','PUNTO_OPERACION_DIRECCION','PUNTO_OPERACION_LATITUD','PUNTO_OPERACION_LONGITUD','RADIO_INICIO_METROS','RADIO_FIN_METROS','PRECISION_GPS_MAXIMA_METROS','RETORNO_BASE_OBLIGATORIO'];
   const pointData = {};
   fields.forEach(function(field) { if (Object.prototype.hasOwnProperty.call(data, field)) pointData[field] = data[field]; });
+  const oldPoint = puntoOperacionDesdeEmpresa_(current);
+  const ipCliente = normalizarIpPublica_((request.datos || request || {}).IP_PUBLICA || session.session.IP_PUBLICA || '');
+  pointData.PUNTO_OPERACION_MODIFICADO_POR = session.user.ID;
+  pointData.PUNTO_OPERACION_MODIFICADO_ROL = session.user.ROL_ID;
+  pointData.PUNTO_OPERACION_MODIFICADO_IP = ipCliente;
+  pointData.PUNTO_OPERACION_MODIFICADO_EN = new Date();
   if (!current) {
     pointData.NOMBRE_FANTASIA = pointData.PUNTO_OPERACION_NOMBRE || 'Empresa';
     pointData.RAZON_SOCIAL = pointData.NOMBRE_FANTASIA;
@@ -243,7 +250,10 @@ function guardarPuntoOperacionServicio_(request, session) {
   const point = puntoOperacionDesdeEmpresa_(confirmed);
   if (!confirmed || !point) throw new Error('PUNTO_OPERACION_NO_CONFIRMADO');
   guardarRespaldoPuntoOperacion_(confirmed);
-  registrarBitacora_(session.user, 'CONFIGURAR_PUNTO', 'CONFIGURACION', row.ID, 'Punto operacional guardado y confirmado');
+  const detalleCambio = oldPoint
+    ? 'Punto operacional actualizado de ' + oldPoint.LATITUD + ',' + oldPoint.LONGITUD + ' a ' + point.LATITUD + ',' + point.LONGITUD
+    : 'Punto operacional creado en ' + point.LATITUD + ',' + point.LONGITUD;
+  registrarBitacora_(session.user, 'CONFIGURAR_PUNTO', 'CONFIGURACION', row.ID, detalleCambio, ipCliente);
   return ok_({ row: limpiarSalidaRecurso_('EMPRESAS', confirmed), point:point, confirmado:true });
 }
 

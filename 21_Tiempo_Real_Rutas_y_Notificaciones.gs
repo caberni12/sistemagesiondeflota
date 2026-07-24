@@ -177,6 +177,9 @@ function actualizarConexion_(request, session) {
     NAVEGADOR: String(data.NAVEGADOR || request.agenteNavegador || '').slice(0, 300),
     TIPO_RED: String(data.TIPO_RED || '').slice(0, 80),
     BATERIA_PORCENTAJE: data.BATERIA_PORCENTAJE === '' ? '' : Number(data.BATERIA_PORCENTAJE || 0),
+    IP_PUBLICA: normalizarIpPublica_(data.IP_PUBLICA || session.session.IP_PUBLICA || ''),
+    IP_VERSION: versionIp_(data.IP_PUBLICA || session.session.IP_PUBLICA || ''),
+    IP_CAPTURADA_EN: (data.IP_PUBLICA || session.session.IP_PUBLICA) ? new Date() : '',
     ELIMINADO: 'NO',
   };
   const row = existing

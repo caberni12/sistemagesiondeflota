@@ -57,8 +57,9 @@
     bloquear(setupButton,true,'Configurando…','Configurar y entrar');
     try{
       await api.request('bootstrap',datos);
-      const resultado=await api.request('login',{correo:datos.correo,contrasena:datos.contrasena});
+      const ipPromise=api.getClientIp?.().catch(()=> '')||Promise.resolve('');const resultado=await api.request('login',{correo:datos.correo,contrasena:datos.contrasena});
       api.setAuth({token:resultado.token,sessionId:resultado.sessionId||'',user:resultado.user,expiresAt:resultado.expiresAt||''});
+      ipPromise.then(IP_PUBLICA=>api.registerConnectionIp?.({IP_PUBLICA})).catch(()=>{});
       cambiarEstado('Sistema configurado','conectado');mostrarMensaje('Preconfiguración terminada. Abriendo el panel principal…','exito',mensajeSetup);entrar();
     }catch(error){mostrarMensaje(textoError(error),'error',mensajeSetup);if(String(error?.message||'')==='SISTEMA_YA_INICIALIZADO')setTimeout(()=>comprobar({redirigir:false}),800);}
     finally{bloquear(setupButton,false,'Configurando…','Configurar y entrar');}
@@ -66,7 +67,7 @@
 
   loginForm.addEventListener('submit',async event=>{
     event.preventDefault();ocultarMensaje();if(!loginForm.reportValidity())return;bloquear(loginButton,true,'Ingresando…','Ingresar al sistema');
-    try{const datos=Object.fromEntries(new FormData(loginForm).entries());const resultado=await api.request('login',datos);api.setAuth({token:resultado.token,sessionId:resultado.sessionId||'',user:resultado.user,expiresAt:resultado.expiresAt||''});cambiarEstado('Acceso correcto','conectado');mostrarMensaje('Sesión iniciada. Abriendo el panel principal…','exito');entrar();}
+    try{const datos=Object.fromEntries(new FormData(loginForm).entries());const ipPromise=api.getClientIp?.().catch(()=> '')||Promise.resolve('');const resultado=await api.request('login',datos);api.setAuth({token:resultado.token,sessionId:resultado.sessionId||'',user:resultado.user,expiresAt:resultado.expiresAt||''});ipPromise.then(IP_PUBLICA=>api.registerConnectionIp?.({IP_PUBLICA})).catch(()=>{});cambiarEstado('Acceso correcto','conectado');mostrarMensaje('Sesión iniciada. Abriendo el panel principal…','exito');entrar();}
     catch(error){mostrarMensaje(textoError(error));cambiarEstado('Acceso no autorizado','error');$('#contrasenaAcceso').select();}
     finally{bloquear(loginButton,false,'Ingresando…','Ingresar al sistema');}
   });

@@ -95,10 +95,13 @@ function iniciarSesion_(request) {
     ULTIMO_USO: now,
     ACTIVA: 'SI',
     AGENTE_NAVEGADOR: String(request.agenteNavegador || '').slice(0, 500),
+    IP_PUBLICA: normalizarIpPublica_(request.IP_PUBLICA || request.ipPublica || ''),
+    IP_VERSION: versionIp_(request.IP_PUBLICA || request.ipPublica || ''),
+    IP_CAPTURADA_EN: (request.IP_PUBLICA || request.ipPublica) ? now : '',
     ELIMINADO: 'NO',
   }, 'SES');
   actualizarRegistro_('USUARIOS', user.ID, { ULTIMO_ACCESO: now });
-  registrarBitacora_(user, 'INICIO_SESION', 'SEGURIDAD', user.ID, 'Inicio de sesión correcto');
+  registrarBitacora_(user, 'INICIO_SESION', 'SEGURIDAD', user.ID, 'Inicio de sesión correcto', normalizarIpPublica_(request.IP_PUBLICA || request.ipPublica || ''));
   return ok_({ token: rawToken, sessionId:sessionRow.ID, expiresAt: expires.toISOString(), user: usuarioPublico_(user) });
 }
 

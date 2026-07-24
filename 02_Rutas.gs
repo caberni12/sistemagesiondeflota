@@ -44,6 +44,8 @@ function enrutarSolicitud_(request, event) {
     case 'guardarEmpresa': return guardarEmpresaServicio_(request, session);
     case 'guardarPuntoOperacion': return guardarPuntoOperacionServicio_(request, session);
     case 'limpiarDatosOperativos': return limpiarDatosOperativosServicio_(request, session);
+    case 'importarMasivo': return importarMasivoServicio_(request, session);
+    case 'registrarIpConexion': return registrarIpConexion_(request, session);
     default: throw new Error('ACCION_NO_ENCONTRADA');
   }
 }

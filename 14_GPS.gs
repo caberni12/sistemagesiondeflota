@@ -200,6 +200,7 @@ function guardarUbicacion_(request, session) {
       NAVEGADOR: data.NAVEGADOR || ''
     } }, session);
   }
+  try { solicitarRevisionAlertasSegundoPlano_('Nueva ubicación GPS'); } catch (_) {}
   return ok_({ row: current, historialGuardado:Boolean(history) });
 }
 

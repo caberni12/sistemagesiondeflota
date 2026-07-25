@@ -134,6 +134,7 @@ function instalarSistema() {
   Object.keys(ESQUEMAS_APLICACION).forEach(function(sheetName) { asegurarHoja_(sheetName); });
   migrarGpsActualDesdeHistorial_();
   asegurarCatalogos_();
+  try { instalarActivadorAlertasAutomaticas_(); } catch (error) { Logger.log('Activador de alertas: ' + error.message); }
   const claveInstalacion = obtenerOCrearClaveInstalacion_();
   Logger.log('CLAVE DE INSTALACIÓN: ' + claveInstalacion);
   return {
@@ -151,7 +152,7 @@ function actualizarSistema() {
   try { repararModuloCheckin(); } catch (error) { Logger.log('Reparación de check-in: ' + error.message); }
   try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
   reiniciarCachesEjecucion_();
-  resultado.message = 'Sistema 3.10.1 actualizado: inicio de operación con captura GPS rápida, estructura, combustible, permisos, GPS, check-in y punto operacional verificados.';
+  resultado.message = 'Sistema 3.12.0 actualizado: inicio de operación con captura GPS rápida, estructura, combustible, permisos, GPS, check-in y punto operacional verificados.';
   return resultado;
 }
 

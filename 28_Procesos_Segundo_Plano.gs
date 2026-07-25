@@ -83,6 +83,7 @@ function procesarColaSegundoPlano_() {
 function procesarTrabajoSegundoPlano_(job) {
   if (!job || !job.tipo) return;
   const data = job.datos || {};
+  if (job.tipo === 'MOTOR_ALERTAS') { ejecutarMotorAlertasAutomaticas_({ force:true }); return; }
   if (job.tipo === 'INICIO_OPERACION') {
     insertarRegistro_('HISTORIAL', { OPERACION_ID:data.operacionId, EVENTO:'INICIO', DETALLE:data.detalle, FECHA_HORA:new Date(), USUARIO_ID:data.usuario && data.usuario.ID || '', ELIMINADO:'NO' }, 'HIS');
     registrarBitacora_(data.usuario || {}, 'INICIAR', 'OPERACIONES', data.operacionId, (data.patente || '') + ' / ' + (data.conductor || '') + ' / ubicación validada', data.ip || '');

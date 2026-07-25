@@ -9,13 +9,13 @@
     create:'crear', update:'actualizar', delete:'eliminar', startOperation:'iniciarOperacion',
     finishOperation:'finalizarOperacion', editOperationAdmin:'editarOperacionAdministrativa', deleteOperationAdmin:'eliminarOperacionAdministrativa', saveLocation:'guardarUbicacion', latestLocations:'ultimasUbicaciones',
     changePassword:'cambiarContrasena', saveUserPermissions:'actualizarPermisosUsuario', saveCompany:'guardarEmpresa', saveOperationalPoint:'guardarPuntoOperacion', getOperationalPoint:'obtenerPuntoOperacion', clearOperationalData:'limpiarDatosOperativos',
-    assignRoute:'asignarRuta', updateRouteStatus:'actualizarEstadoRuta', sendNotification:'enviarNotificacion',
+    assignRoute:'asignarRuta', updateRouteStatus:'actualizarEstadoRuta', registerRouteEvidence:'registrarEvidenciaRuta', sendNotification:'enviarNotificacion',
     readNotification:'marcarNotificacionLeida', heartbeat:'actualizarConexion', realtimeSummary:'resumenTiempoReal',
     diagnoseSystem:'diagnosticoSistema', repairSystem:'repararSistema',
     validateVehicleQr:'validarQrVehiculo', createVehicleCheckin:'crearCheckinVehicular',
     reviewVehicleCheckin:'revisarCheckinVehicular', availableCheckins:'checkinsDisponibles',
     bulkImport:'importarMasivo', registerConnectionIp:'registrarIpConexion', fuelSummary:'resumenCombustible',
-    requestFuelDeletion:'solicitarEliminacionCombustible', resolveFuelDeletion:'resolverSolicitudEliminacionCombustible', deleteFuel:'eliminarCargaCombustible', uploadDriveFile:'subirArchivoDrive'
+    requestFuelDeletion:'solicitarEliminacionCombustible', resolveFuelDeletion:'resolverSolicitudEliminacionCombustible', deleteFuel:'eliminarCargaCombustible', uploadDriveFile:'subirArchivoDrive', runAutomaticAlerts:'ejecutarAlertasAutomaticas'
   });
   const recursosAplicacion = Object.freeze({
     users:'usuarios', roles:'roles', permissions:'permisos', vehicles:'vehiculos', drivers:'conductores',
@@ -542,7 +542,7 @@
   async function localRequest(action, payload) {
     await Promise.resolve();
     switch (action) {
-      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.11.0', now:iso() };
+      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.12.0', now:iso() };
       case 'status': return {
         connected:true, needsSetup:activeRows(localDb.users).length === 0, spreadsheetName:'Base local del navegador',
         rows:{ users:activeRows(localDb.users).length, vehicles:activeRows(localDb.vehicles).length,
@@ -606,6 +606,7 @@
       case 'latestLocations': return localLatestLocations(payload);
       case 'assignRoute': return localAssignRoute(payload);
       case 'updateRouteStatus': return localUpdateRouteStatus(payload);
+      case 'registerRouteEvidence': return localRegisterRouteEvidence(payload);
       case 'sendNotification': return localSendNotification(payload);
       case 'readNotification': return localReadNotification(payload);
       case 'heartbeat': return localHeartbeat(payload);
@@ -622,6 +623,7 @@
       case 'requestFuelDeletion': return localRequestFuelDeletion(payload);
       case 'resolveFuelDeletion': return localResolveFuelDeletion(payload);
       case 'deleteFuel': return localDeleteFuel(payload);
+      case 'runAutomaticAlerts': return localRunAutomaticAlerts();
       case 'uploadDriveFile': throw new Error('DRIVE_REQUIERE_CONEXION_CENTRAL');
       case 'clearOperationalData': return localClear(payload);
       default: throw new Error('ACCION_NO_ENCONTRADA');
@@ -1013,6 +1015,8 @@
     });
     return sent;
   }
+  function localRegisterRouteEvidence(payload){const user=requireLocalUser(),data=payload.data||payload,row=find('routes',data.RUTA_ID||payload.id);requireLocalPermission(user,'RUTAS','ACTUALIZAR');if(!row||!localFilterRows('routes',[row],user).length)throw new Error('RUTA_NO_ENCONTRADA');let urls=data.URLS;if(typeof urls==='string'){try{urls=JSON.parse(urls);}catch(_){urls=[urls];}}if(!Array.isArray(urls)||!urls.length)throw new Error('EVIDENCIA_RUTA_REQUERIDA');let existing=[];try{existing=JSON.parse(row.EVIDENCIAS_FOTOS_CODIFICADAS||'[]');}catch(_){existing=[];}const additions=urls.map(item=>typeof item==='string'?{url:item,nombre:'Fotografía de ruta'}:item).map(item=>({...item,fecha:iso(),usuarioId:user.ID,usuarioNombre:user.NOMBRE,observacion:data.OBSERVACION||''}));const all=existing.concat(additions).slice(-30);Object.assign(row,{EVIDENCIAS_FOTOS_CODIFICADAS:JSON.stringify(all),ULTIMA_EVIDENCIA_URL:additions[additions.length-1]?.url||'',ULTIMA_EVIDENCIA_FECHA:iso(),ULTIMA_EVIDENCIA_POR:user.ID,ULTIMA_EVIDENCIA_OBSERVACION:data.OBSERVACION||'',ACTUALIZADO_EN:iso()});audit(user,'CARGAR_EVIDENCIA','RUTAS',`${additions.length} fotografía(s) asociadas`,row.ID);saveLocal();return{row:cleanRow(row),evidencias:all,agregadas:additions.length};}
+  function localRunAutomaticAlerts(){return{creadas:0,revisadas:{modo:'local'}};}
   function localSendNotification(payload){
     const user=requireLocalUser(),data=payload.data||payload;requireLocalPermission(user,'NOTIFICACIONES','CREAR');if(!data.TITULO||!data.MENSAJE)throw new Error('DATOS_NOTIFICACION_REQUERIDOS');
     let driverId=data.DESTINATARIO_CONDUCTOR_ID||'',userId=data.DESTINATARIO_USUARIO_ID||'';if(driverId){const driver=find('drivers',driverId);if(!driver)throw new Error('CONDUCTOR_NO_ENCONTRADO');userId=userId||driver.USUARIO_ID||'';}
@@ -1127,7 +1131,7 @@
       alerts:{nombre:'Alertas',estado:'OK',detalle:`${activeRows(localDb.alerts).length} registros`},
       history:{nombre:'Historiales',estado:'OK',detalle:`${activeRows(localDb.history).length} eventos operativos · ${activeRows(localDb.checkins).length} check-ins`}
     };
-    return{version:'3.11.0',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
+    return{version:'3.12.0',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
   }
   function localRepairSystem(){
     const user=requireLocalUser();requireLocalPermission(user,'CONFIGURACION','ACTUALIZAR');

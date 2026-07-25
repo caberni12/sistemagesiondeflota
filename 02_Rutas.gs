@@ -36,6 +36,7 @@ function enrutarSolicitud_(request, event) {
     case 'ultimasUbicaciones': return ultimasUbicaciones_(request, session);
     case 'asignarRuta': return asignarRuta_(request, session);
     case 'actualizarEstadoRuta': return actualizarEstadoRuta_(request, session);
+    case 'registrarEvidenciaRuta': return registrarEvidenciaRuta_(request, session);
     case 'enviarNotificacion': return enviarNotificacion_(request, session);
     case 'marcarNotificacionLeida': return marcarNotificacionLeida_(request, session);
     case 'actualizarConexion': return actualizarConexion_(request, session);
@@ -44,6 +45,8 @@ function enrutarSolicitud_(request, event) {
     case 'solicitarEliminacionCombustible': return solicitarEliminacionCombustible_(request, session);
     case 'resolverSolicitudEliminacionCombustible': return resolverSolicitudEliminacionCombustible_(request, session);
     case 'eliminarCargaCombustible': return eliminarCargaCombustible_(request, session);
+    case 'subirArchivoDrive': return subirArchivoDrive_(request, session);
+    case 'ejecutarAlertasAutomaticas': return ejecutarAlertasAutomaticasServicio_(request, session);
     case 'diagnosticoSistema': return diagnosticoSistema_(request, session);
     case 'repararSistema': return repararSistema_(request, session);
     case 'cambiarContrasena': return cambiarPassword_(request, session);
@@ -131,6 +134,7 @@ function servicioCrear_(request, session) {
   const data = normalizarEntradaRecurso_(resource.sheet, request.datos || {}, session.user);
   const row = insertarRegistro_(resource.sheet, data, resource.prefix);
   registrarBitacora_(session.user, 'CREAR', resource.module, row.ID, 'Registro creado. Datos: ' + respaldoAuditoria_(row));
+  if (['MANTENCIONES','DOCUMENTOS','VEHICULOS'].indexOf(resource.sheet) >= 0) { try { solicitarRevisionAlertasSegundoPlano_('Creación en ' + resource.sheet); } catch (_) {} }
   return ok_({ row: limpiarSalidaRecurso_(resource.sheet, row) });
 }
 
@@ -162,6 +166,7 @@ function servicioActualizar_(request, session) {
   const row = actualizarRegistro_(resource.sheet, request.identificador, data);
   registrarBitacora_(session.user, 'ACTUALIZAR', resource.module, request.identificador,
     'Respaldo anterior: ' + respaldoAuditoria_(existing) + '. Datos posteriores: ' + respaldoAuditoria_(row));
+  if (['MANTENCIONES','DOCUMENTOS','VEHICULOS'].indexOf(resource.sheet) >= 0) { try { solicitarRevisionAlertasSegundoPlano_('Actualización en ' + resource.sheet); } catch (_) {} }
   return ok_({ row: limpiarSalidaRecurso_(resource.sheet, row) });
 }
 

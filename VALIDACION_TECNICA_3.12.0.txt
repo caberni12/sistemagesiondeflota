@@ -1,0 +1,25 @@
+VALIDACION WEB 3.12.0
+Fecha: 2026-07-25
+
+JS OK: acceso.js
+JS OK: aplicacion.js
+JS OK: conexion.js
+JS OK: configuracion.js
+JS OK: mapa.js
+JS OK: menu-principal.js
+JS OK: tema.js
+Apps Script consolidado: sintaxis JavaScript OK
+Funciones Apps Script: 191 sin duplicados
+Referencias HTML locales: OK
+
+VALIDACION ANDROID 1.4.0
+Proyecto Android 1.4.0 verificado correctamente.
+Android JS OK: app/src/main/assets/web/acceso.js
+Android JS OK: app/src/main/assets/web/aplicacion.js
+Android JS OK: app/src/main/assets/web/conexion.js
+Android JS OK: app/src/main/assets/web/configuracion.js
+Android JS OK: app/src/main/assets/web/mapa.js
+Android JS OK: app/src/main/assets/web/menu-principal.js
+Android JS OK: app/src/main/assets/web/tema.js
+Archivos Java: llaves balanceadas y sin conflictos
+Integración web + funciones Android nativas: OK

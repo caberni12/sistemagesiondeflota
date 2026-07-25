@@ -59,6 +59,19 @@ function asignarRuta_(request, session) {
   return ok_({ row: limpiarSalidaRecurso_('RUTAS', route), notification: limpiarSalidaRecurso_('NOTIFICACIONES', notification) });
 }
 
+function registrarEvidenciaRuta_(request, session) {
+  exigirPermiso_(session.user,'RUTAS','ACTUALIZAR');const data=request.datos||request,routeId=String(request.identificador||data.RUTA_ID||'').trim(),route=obtenerRegistro_('RUTAS',routeId);
+  if(!route)throw new Error('RUTA_NO_ENCONTRADA');if(!filtrarPorUsuario_('RUTAS',[route],session.user).length)throw new Error('PERMISO_DENEGADO');
+  let urls=data.URLS;if(typeof urls==='string'){try{urls=JSON.parse(urls);}catch(_){urls=[urls];}}if(!Array.isArray(urls))urls=data.URL?[data.URL]:[];
+  urls=urls.map(function(item){return typeof item==='string'?{url:item}:(item||{});}).filter(function(item){return /^https:\/\/drive\.google\.com\//i.test(String(item.url||''));});if(!urls.length)throw new Error('EVIDENCIA_RUTA_REQUERIDA');
+  let existing=[];try{existing=JSON.parse(String(route.EVIDENCIAS_FOTOS_CODIFICADAS||'[]'));}catch(_){existing=[];}if(!Array.isArray(existing))existing=[];
+  const observation=String(data.OBSERVACION||'').trim().slice(0,800),additions=urls.map(function(item){return{url:String(item.url||''),nombre:String(item.nombre||'Fotografía de ruta').slice(0,180),fecha:fechaIso_(),usuarioId:session.user.ID,usuarioNombre:session.user.NOMBRE||session.user.CORREO||session.user.ID,observacion:observation};}),all=existing.concat(additions).slice(-30),last=additions[additions.length-1];
+  const updated=actualizarRegistro_('RUTAS',route.ID,{EVIDENCIAS_FOTOS_CODIFICADAS:JSON.stringify(all),ULTIMA_EVIDENCIA_URL:last.url,ULTIMA_EVIDENCIA_FECHA:new Date(),ULTIMA_EVIDENCIA_POR:session.user.ID,ULTIMA_EVIDENCIA_OBSERVACION:observation});
+  registrarBitacora_(session.user,'CARGAR_EVIDENCIA','RUTAS',route.ID,additions.length+' fotografía(s) asociada(s) a la ruta. '+(observation?'Observación: '+observation:''));
+  if(session.user.ROL_ID==='ROL-CONDUCTOR')notificarRolesInterno_(['ROL-ADMIN','ROL-SUPERVISOR'],{TITULO:'Nuevo respaldo fotográfico de ruta',MENSAJE:(session.user.NOMBRE||'El conductor')+' cargó '+additions.length+' fotografía(s) en la ruta '+(route.NOMBRE||route.ID)+'.',TIPO:'Ruta',PRIORIDAD:'Normal',RUTA_ID:route.ID,OPERACION_ID:route.OPERACION_ID||'',CREADO_POR:session.user.ID});
+  return ok_({row:limpiarSalidaRecurso_('RUTAS',updated),evidencias:all,agregadas:additions.length});
+}
+
 function actualizarEstadoRuta_(request, session) {
   exigirPermiso_(session.user, 'RUTAS', 'ACTUALIZAR');
   const routeId = request.identificador || request.RUTA_ID;
@@ -245,6 +258,7 @@ function coincideEstadoConexionTiempoReal_(row, filter) {
 
 function resumenTiempoReal_(request, session) {
   exigirPermiso_(session.user, 'PANEL_PRINCIPAL', 'LEER');
+  try { solicitarRevisionAlertasSegundoPlano_('Consulta de seguimiento en tiempo real'); } catch (error) { console.log('Cola de alertas: ' + error.message); }
   const onlyGps = String(request.soloGps || request.SOLO_GPS || '') === 'SI';
   const vehicleFilter = filtroVehiculosTiempoReal_(request, session.user);
   const connectionFilter = filtroEstadoConexionTiempoReal_(request);

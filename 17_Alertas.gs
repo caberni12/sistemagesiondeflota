@@ -1,8 +1,34 @@
-/** Módulo de alertas. */
-function crearAlerta_(data) {
-  return insertarRegistro_('ALERTAS', {
-    TIPO: data.TIPO || 'Sistema', NIVEL: data.NIVEL || 'Info', TITULO:data.TITULO || 'Alerta',
-    MENSAJE:data.MENSAJE || '', MODULO:data.MODULO || '', REGISTRO_ID:data.REGISTRO_ID || '',
-    LEIDA:'NO', USUARIO_ID:data.USUARIO_ID || '', FECHA_HORA:new Date(), ELIMINADO:'NO'
-  }, 'ALT');
+/** Módulo de alertas automáticas, anomalías y mantenciones. */
+function crearAlerta_(data){return insertarRegistro_('ALERTAS',{TIPO:data.TIPO||'Sistema',NIVEL:data.NIVEL||'Info',TITULO:data.TITULO||'Alerta',MENSAJE:data.MENSAJE||'',MODULO:data.MODULO||'',REGISTRO_ID:data.REGISTRO_ID||'',LEIDA:'NO',USUARIO_ID:data.USUARIO_ID||'',FECHA_HORA:new Date(),ELIMINADO:'NO'},'ALT');}
+function crearAlertaUnica_(data){
+  const now=Date.now(),windowMs=Number(CONFIGURACION_APLICACION.HORAS_REPETICION_ALERTA||8)*3600000,type=String(data.TIPO||'Sistema'),moduleName=String(data.MODULO||'Sistema'),recordId=String(data.REGISTRO_ID||''),title=String(data.TITULO||'Alerta');
+  const existing=listarRegistros_('ALERTAS',{}).find(function(row){if(String(row.TIPO||'')!==type||String(row.MODULO||'')!==moduleName||String(row.REGISTRO_ID||'')!==recordId||String(row.TITULO||'')!==title)return false;const date=new Date(row.FECHA_HORA||row.CREADO_EN||0).getTime();return row.LEIDA!=='SI'||(isFinite(date)&&now-date<windowMs);});
+  if(existing)return{row:existing,created:false};const alert=crearAlerta_(data);
+  try{notificarRolesInterno_(['ROL-ADMIN','ROL-SUPERVISOR'],{TITULO:'Alerta: '+alert.TITULO,MENSAJE:alert.MENSAJE,TIPO:alert.TIPO||'Alerta',PRIORIDAD:String(alert.NIVEL||'').toLowerCase().indexOf('cr')>=0?'Urgente':'Alta',CREADO_POR:'SISTEMA'});}catch(error){console.log('Notificación de alerta: '+error.message);}
+  return{row:alert,created:true};
 }
+function diasHasta_(value,now){if(!value)return null;const date=new Date(value);if(isNaN(date.getTime()))return null;return Math.ceil((date.getTime()-now.getTime())/86400000);}
+function ejecutarMotorAlertasAutomaticas_(options){
+  const opts=options||{},cache=CacheService.getScriptCache();if(!opts.force&&cache.get('MOTOR_ALERTAS_EJECUTANDO')==='SI')return{creadas:0,omitida:true};cache.put('MOTOR_ALERTAS_EJECUTANDO','SI',45);
+  const lock=LockService.getScriptLock();if(!lock.tryLock(3000))return{creadas:0,omitida:true};let created=0;
+  try{
+    const now=new Date(),maintenanceDays=Number(CONFIGURACION_APLICACION.DIAS_AVISO_MANTENCION||7),documentDays=Number(CONFIGURACION_APLICACION.DIAS_AVISO_DOCUMENTO||30),minutesWithoutGps=Number(CONFIGURACION_APLICACION.MINUTOS_SIN_GPS_ALERTA||5),precisionLimit=Number(CONFIGURACION_APLICACION.METROS_PRECISION_GPS_ALERTA||150),vehicles=listarRegistros_('VEHICULOS',{}),vehicleMap={};vehicles.forEach(function(row){vehicleMap[row.ID]=row;});
+    listarRegistros_('MANTENCIONES',{}).forEach(function(row){if(['Realizada','Cancelada'].indexOf(String(row.ESTADO||''))>=0)return;const days=diasHasta_(row.FECHA_PROGRAMADA,now);if(days===null)return;const vehicle=vehicleMap[row.VEHICULO_ID]||{},label=vehicle.PATENTE||row.VEHICULO_ID||'Equipo';if(days<0){if(row.ESTADO!=='Atrasada')actualizarRegistro_('MANTENCIONES',row.ID,{ESTADO:'Atrasada'});if(crearAlertaUnica_({TIPO:'Mantención',NIVEL:'Crítica',TITULO:'Mantención atrasada',MENSAJE:label+' tiene la mantención "'+(row.TITULO||row.TIPO||row.ID)+'" atrasada por '+Math.abs(days)+' día(s).',MODULO:'MANTENCIONES',REGISTRO_ID:row.ID}).created)created++;}else if(days<=maintenanceDays){if(crearAlertaUnica_({TIPO:'Mantención',NIVEL:days<=2?'Crítica':'Advertencia',TITULO:'Mantención próxima',MENSAJE:label+' requiere "'+(row.TITULO||row.TIPO||row.ID)+'" en '+days+' día(s).',MODULO:'MANTENCIONES',REGISTRO_ID:row.ID}).created)created++;}});
+    vehicles.forEach(function(row){const days=diasHasta_(row.PROXIMA_MANTENCION,now);if(days===null||days>maintenanceDays)return;if(crearAlertaUnica_({TIPO:'Mantención',NIVEL:days<0?'Crítica':'Advertencia',TITULO:days<0?'Equipo con mantención vencida':'Equipo próximo a mantención',MENSAJE:(row.PATENTE||row.ID)+(days<0?' superó la fecha de próxima mantención por '+Math.abs(days)+' día(s).':' debe entrar a mantención en '+days+' día(s).'),MODULO:'VEHICULOS',REGISTRO_ID:row.ID}).created)created++;});
+    listarRegistros_('DOCUMENTOS',{}).forEach(function(row){const days=diasHasta_(row.FECHA_VENCIMIENTO,now);if(days===null||days>documentDays)return;if(crearAlertaUnica_({TIPO:'Documento',NIVEL:days<0?'Crítica':'Advertencia',TITULO:days<0?'Documento vencido':'Documento próximo a vencer',MENSAJE:(row.TIPO||'Documento')+' '+(row.IDENTIFICACION||row.ID)+(days<0?' está vencido.':' vence en '+days+' día(s).'),MODULO:'DOCUMENTOS',REGISTRO_ID:row.ID}).created)created++;});
+    listarRegistros_('CHECKINS',{}).forEach(function(row){if(row.ESTADO_REVISION!=='Bloqueado'&&Number(row.FALLAS_CRITICAS||0)<=0)return;if(crearAlertaUnica_({TIPO:'Check-in',NIVEL:'Crítica',TITULO:'Vehículo bloqueado por inspección',MENSAJE:'El check-in '+row.ID+' registra '+Number(row.FALLAS_CRITICAS||0)+' falla(s) crítica(s).',MODULO:'CHECKIN',REGISTRO_ID:row.ID,USUARIO_ID:row.CREADO_POR||''}).created)created++;});
+    const gpsRows=listarRegistros_('GPS_ACTUAL',{}),activeOperations=listarRegistros_('OPERACIONES',{}).filter(function(row){return row.ESTADO==='Activa';});
+    activeOperations.forEach(function(operation){const gps=gpsRows.filter(function(row){return(operation.ID&&row.OPERACION_ID===operation.ID)||(operation.VEHICULO_ID&&row.VEHICULO_ID===operation.VEHICULO_ID)||(operation.CONDUCTOR_ID&&row.CONDUCTOR_ID===operation.CONDUCTOR_ID);}).sort(function(a,b){return new Date(b.FECHA_HORA||0)-new Date(a.FECHA_HORA||0);})[0],ageMinutes=gps?(now.getTime()-new Date(gps.FECHA_HORA||0).getTime())/60000:Infinity;if(!gps||!isFinite(ageMinutes)||ageMinutes>=minutesWithoutGps){if(crearAlertaUnica_({TIPO:'GPS',NIVEL:'Crítica',TITULO:'Operación activa sin ubicación reciente',MENSAJE:'La operación '+operation.ID+' no registra una ubicación válida desde hace '+(isFinite(ageMinutes)?Math.floor(ageMinutes)+' minutos':'varios minutos')+'.',MODULO:'GPS',REGISTRO_ID:operation.ID,USUARIO_ID:operation.CREADO_POR||''}).created)created++;}else if(Number(gps.PRECISION_METROS||0)>precisionLimit){if(crearAlertaUnica_({TIPO:'GPS',NIVEL:'Advertencia',TITULO:'Señal GPS con baja precisión',MENSAJE:'La operación '+operation.ID+' reporta una precisión aproximada de ±'+Math.round(Number(gps.PRECISION_METROS||0))+' metros.',MODULO:'GPS',REGISTRO_ID:operation.ID,USUARIO_ID:operation.CREADO_POR||''}).created)created++;}});
+    return{creadas:created,revisadas:{mantenciones:listarRegistros_('MANTENCIONES',{}).length,vehiculos:vehicles.length,documentos:listarRegistros_('DOCUMENTOS',{}).length,operaciones:activeOperations.length}};
+  }finally{lock.releaseLock();}
+}
+function solicitarRevisionAlertasSegundoPlano_(motivo){
+  const cache=CacheService.getScriptCache(),clave='MOTOR_ALERTAS_EN_COLA';
+  if(cache.get(clave)==='SI')return false;
+  cache.put(clave,'SI',60);
+  encolarTrabajoSegundoPlano_('MOTOR_ALERTAS',{motivo:String(motivo||'Evento del sistema'),solicitadoEn:fechaIso_()});
+  return true;
+}
+function ejecutarAlertasAutomaticasServicio_(request,session){exigirPermiso_(session.user,'ALERTAS','LEER');const result=ejecutarMotorAlertasAutomaticas_({force:true});registrarBitacora_(session.user,'EJECUTAR_MOTOR','ALERTAS','','Motor automático ejecutado. Alertas creadas: '+Number(result.creadas||0));return ok_(result);}
+function procesarAlertasAutomaticasProgramadas_(){return ejecutarMotorAlertasAutomaticas_({force:true});}
+function instalarActivadorAlertasAutomaticas_(){const handler='procesarAlertasAutomaticasProgramadas_';const exists=ScriptApp.getProjectTriggers().some(function(trigger){return trigger.getHandlerFunction()===handler;});if(!exists)ScriptApp.newTrigger(handler).timeBased().everyMinutes(5).create();return true;}

@@ -64,6 +64,7 @@ function repararSistema_(request, session) {
   asegurarCatalogos_();
   migrarGpsActualDesdeHistorial_();
   try { repararModuloCheckin(); } catch (error) { Logger.log('Check-in: ' + error.message); }
+  try { instalarActivadorAlertasAutomaticas_(); } catch (error) { Logger.log('Activador de alertas: ' + error.message); }
   registrarBitacora_(session.user, 'REPARAR_SISTEMA', 'CONFIGURACION', '', 'Hojas, columnas, catálogos, permisos, GPS actual y check-in verificados');
   reiniciarCachesEjecucion_();
   const diagnostic = diagnosticoSistema_({}, session).data;

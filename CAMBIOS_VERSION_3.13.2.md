@@ -1,4 +1,4 @@
-# Sistema de Gestión de Flotas 3.13.2
+# Sistema de Gestión de Flotas 3.13.3
 
 - Deduplicación transaccional de alertas mediante `CLAVE_UNICA`.
 - Deduplicación por destinatario de notificaciones automáticas.

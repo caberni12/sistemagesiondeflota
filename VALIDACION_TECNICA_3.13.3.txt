@@ -1,0 +1,14 @@
+Sistema de Gestión de Flotas web 3.13.3
+
+Validaciones realizadas:
+- Sintaxis de aplicacion.js, conexion.js, configuracion.js y mapa.js.
+- Sintaxis del archivo maestro Codigo_Completo.gs.
+- Acciones iniciarRuta y completarRuta registradas en el enrutador.
+- Esquemas con RUTA_ID en GPS/GPS_ACTUAL.
+- Esquemas de ruta con CHECKIN_ID y GPS_SEGUIMIENTO_ACTIVO.
+- Esquema CHECKINS con FECHA_OPERATIVA.
+- Prueba simulada: check-in diario reutilizable para el mismo conductor y vehículo.
+- Prueba simulada: otro conductor no puede reutilizar el check-in del vehículo.
+- Prueba simulada: inicio de ruta vincula operación activa y activa GPS.
+- Prueba simulada: completar ruta desactiva GPS.
+- Corrección de fecha AAAA-MM-DD para zona horaria de Chile.

@@ -6,7 +6,7 @@
  * Si el proyecto Apps Script está vinculado a la hoja, instalarSistema() guardará
  * automáticamente el ID. Para un proyecto independiente, pegue el ID aquí.
  */
-const VERSION_APLICACION = '3.13.2';
+const VERSION_APLICACION = '3.13.3';
 
 const CONFIGURACION_APLICACION = Object.freeze({
   ID_HOJA_CALCULO: '1onJJEN1rgz0N9GXOiUqV7ong4-nlbdAjzMyW_rumXCM',
@@ -45,8 +45,8 @@ const ESQUEMAS_APLICACION = Object.freeze({
   VEHICULOS: ['ID','PATENTE','MARCA','MODELO','ANIO','COLOR','COMBUSTIBLE','VIN','KILOMETRAJE','ESTADO','QR_CODIGO','PROXIMA_MANTENCION','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   CONDUCTORES: ['ID','NOMBRE','RUT','TELEFONO','CORREO','LICENCIA_CLASE','LICENCIA_VENCIMIENTO','ESTADO','USUARIO_ID','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   OPERACIONES: ['ID','VEHICULO_ID','CONDUCTOR_ID','ORIGEN','DESTINO','FECHA_INICIO','FECHA_FIN','ESTADO','KM_INICIO','KM_FIN','DISTANCIA_KM','OBSERVACIONES','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','CHECKIN_ID','RUTA_ID','TIPO_OPERACION','PUNTO_RETORNO','BASE_NOMBRE','BASE_DIRECCION','BASE_LATITUD','BASE_LONGITUD','RADIO_INICIO_METROS','RADIO_FIN_METROS','PRECISION_GPS_MAXIMA_METROS','INICIO_LATITUD','INICIO_LONGITUD','INICIO_PRECISION','DISTANCIA_INICIO_BASE_METROS','VALIDACION_INICIO','FIN_LATITUD','FIN_LONGITUD','FIN_PRECISION','DISTANCIA_FIN_BASE_METROS','VALIDACION_FIN','CIERRE_TIPO','CIERRE_FUERA_BASE','CIERRE_MOTIVO','CIERRE_AUTORIZADO_POR','CIERRE_AUTORIZADO_ROL','CIERRE_IP_PUBLICA','CIERRE_FECHA_AUTORIZACION'],
-  GPS: ['ID','OPERACION_ID','CONDUCTOR_ID','VEHICULO_ID','LATITUD','LONGITUD','PRECISION_METROS','VELOCIDAD_KMH','RUMBO','FECHA_HORA','FUENTE','CREADO_EN','ELIMINADO','DIRECCION','BATERIA_PORCENTAJE','DISPOSITIVO_ID'],
-  GPS_ACTUAL: ['ID','CLAVE_SEGUIMIENTO','OPERACION_ID','CONDUCTOR_ID','VEHICULO_ID','LATITUD','LONGITUD','PRECISION_METROS','VELOCIDAD_KMH','RUMBO','FECHA_HORA','FUENTE','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','DIRECCION','BATERIA_PORCENTAJE','DISPOSITIVO_ID'],
+  GPS: ['ID','OPERACION_ID','RUTA_ID','CONDUCTOR_ID','VEHICULO_ID','LATITUD','LONGITUD','PRECISION_METROS','VELOCIDAD_KMH','RUMBO','FECHA_HORA','FUENTE','CREADO_EN','ELIMINADO','DIRECCION','BATERIA_PORCENTAJE','DISPOSITIVO_ID'],
+  GPS_ACTUAL: ['ID','CLAVE_SEGUIMIENTO','OPERACION_ID','RUTA_ID','CONDUCTOR_ID','VEHICULO_ID','LATITUD','LONGITUD','PRECISION_METROS','VELOCIDAD_KMH','RUMBO','FECHA_HORA','FUENTE','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','DIRECCION','BATERIA_PORCENTAJE','DISPOSITIVO_ID'],
   HISTORIAL: ['ID','OPERACION_ID','EVENTO','DETALLE','FECHA_HORA','USUARIO_ID','CREADO_EN','ELIMINADO'],
   MANTENCIONES: ['ID','VEHICULO_ID','TIPO','TITULO','DESCRIPCION','FECHA_PROGRAMADA','FECHA_REALIZADA','KILOMETRAJE','COSTO','ESTADO','TALLER','OBSERVACIONES','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   CARGAS_COMBUSTIBLE: ['ID','VEHICULO_ID','CONDUCTOR_ID','OPERACION_ID','RUTA_ID','FECHA_HORA','TIPO_COMBUSTIBLE','LITROS','PRECIO_LITRO','COSTO_TOTAL','KILOMETRAJE','KILOMETRAJE_ANTERIOR','DISTANCIA_DESDE_ULTIMA_CARGA_KM','CONSUMO_KM_L','CONSUMO_L_100KM','ESTACION_SERVICIO','NUMERO_DOCUMENTO','MEDIO_PAGO','TANQUE_LLENO','COMPROBANTE_URL','OBSERVACIONES','CREADO_POR','CREADO_EN','ACTUALIZADO_POR','ACTUALIZADO_EN','ESTADO_REGISTRO','ELIMINADO'],
@@ -58,9 +58,9 @@ const ESQUEMAS_APLICACION = Object.freeze({
   PARAMETROS: ['ID','GRUPO','CLAVE','VALOR','TIPO','DESCRIPCION','ACTIVO','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   EMPRESAS: ['ID','RUT','RAZON_SOCIAL','NOMBRE_FANTASIA','GIRO','DIRECCION','COMUNA','CIUDAD','REGION','PAIS','TELEFONO_PRINCIPAL','TELEFONO_SECUNDARIO','CORREO','SITIO_WEB','REPRESENTANTE_LEGAL','RUT_REPRESENTANTE','DIRECCION_LOGOTIPO','ID_ARCHIVO_LOGOTIPO','NOMBRE_ARCHIVO_LOGOTIPO','TIPO_ARCHIVO_LOGOTIPO','COLOR_PRINCIPAL','COLOR_SECUNDARIO','ZONA_HORARIA','MONEDA','UNIDAD_DISTANCIA','FORMATO_FECHA','TEXTO_PIE','ESTADO','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','COLOR_ACENTO','COLOR_FONDO','COLOR_SUPERFICIE','COLOR_TEXTO','COLOR_TEXTO_SECUNDARIO','COLOR_BORDE','COLOR_MENU','COLOR_MENU_SECUNDARIO','COLOR_EXITO','COLOR_ADVERTENCIA','COLOR_PELIGRO','COLOR_FONDO_OSCURO','COLOR_SUPERFICIE_OSCURO','COLOR_TEXTO_OSCURO','COLOR_TEXTO_SECUNDARIO_OSCURO','COLOR_BORDE_OSCURO','TEMA_PREDETERMINADO','VALIDAR_UBICACION_OPERACION','PUNTO_OPERACION_NOMBRE','PUNTO_OPERACION_DIRECCION','PUNTO_OPERACION_LATITUD','PUNTO_OPERACION_LONGITUD','RADIO_INICIO_METROS','RADIO_FIN_METROS','PRECISION_GPS_MAXIMA_METROS','RETORNO_BASE_OBLIGATORIO','PUNTO_OPERACION_MODIFICADO_POR','PUNTO_OPERACION_MODIFICADO_ROL','PUNTO_OPERACION_MODIFICADO_IP','PUNTO_OPERACION_MODIFICADO_EN'],
   QR: ['ID','CODIGO','TIPO','REGISTRO_ID','ESTADO','FECHA_GENERACION','FECHA_ULTIMO_USO','USOS','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
-  RUTAS: ['ID','NOMBRE','CONDUCTOR_ID','VEHICULO_ID','OPERACION_ID','ORIGEN','ORIGEN_LATITUD','ORIGEN_LONGITUD','DESTINO','DESTINO_LATITUD','DESTINO_LONGITUD','PARADAS_CODIFICADAS','PROVEEDOR_NAVEGACION','ESTADO','INSTRUCCIONES','FECHA_ASIGNACION','FECHA_INICIO','FECHA_FIN','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','EVIDENCIAS_FOTOS_CODIFICADAS','ULTIMA_EVIDENCIA_URL','ULTIMA_EVIDENCIA_FECHA','ULTIMA_EVIDENCIA_POR','ULTIMA_EVIDENCIA_OBSERVACION'],
+  RUTAS: ['ID','NOMBRE','CONDUCTOR_ID','VEHICULO_ID','OPERACION_ID','ORIGEN','ORIGEN_LATITUD','ORIGEN_LONGITUD','DESTINO','DESTINO_LATITUD','DESTINO_LONGITUD','PARADAS_CODIFICADAS','PROVEEDOR_NAVEGACION','ESTADO','INSTRUCCIONES','FECHA_ASIGNACION','FECHA_INICIO','FECHA_FIN','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','EVIDENCIAS_FOTOS_CODIFICADAS','ULTIMA_EVIDENCIA_URL','ULTIMA_EVIDENCIA_FECHA','ULTIMA_EVIDENCIA_POR','ULTIMA_EVIDENCIA_OBSERVACION','CHECKIN_ID','GPS_SEGUIMIENTO_ACTIVO','SEGUIMIENTO_INICIADO_POR','ULTIMA_UBICACION_EN'],
   NOTIFICACIONES: ['ID','DESTINATARIO_USUARIO_ID','DESTINATARIO_CONDUCTOR_ID','TITULO','MENSAJE','TIPO','PRIORIDAD','RUTA_ID','OPERACION_ID','CLAVE_UNICA','LEIDA','FECHA_ENVIO','FECHA_LECTURA','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
-  CHECKINS: ['ID','VEHICULO_ID','CONDUCTOR_ID','OPERACION_ID','FECHA_HORA','KILOMETRAJE','NIVEL_COMBUSTIBLE','LISTA_CODIFICADA','TOTAL_ITEMS','ITEMS_OK','FALLAS_LEVES','FALLAS_CRITICAS','RESULTADO','ESTADO_REVISION','OBSERVACIONES','FIRMA_CONDUCTOR','REVISADO_POR','FECHA_REVISION','COMENTARIO_REVISION','VIGENTE_HASTA','UTILIZADO','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','SOLICITUD_CLIENTE_ID'],
+  CHECKINS: ['ID','VEHICULO_ID','CONDUCTOR_ID','OPERACION_ID','FECHA_HORA','KILOMETRAJE','NIVEL_COMBUSTIBLE','LISTA_CODIFICADA','TOTAL_ITEMS','ITEMS_OK','FALLAS_LEVES','FALLAS_CRITICAS','RESULTADO','ESTADO_REVISION','OBSERVACIONES','FIRMA_CONDUCTOR','REVISADO_POR','FECHA_REVISION','COMENTARIO_REVISION','VIGENTE_HASTA','UTILIZADO','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','SOLICITUD_CLIENTE_ID','FECHA_OPERATIVA'],
   CONEXIONES: ['ID','USUARIO_ID','CONDUCTOR_ID','DISPOSITIVO_ID','SESION_ID','SESION_CLIENTE_ID','SECCION_ACTUAL','ACTIVIDAD','VEHICULO_ID','OPERACION_ID','RUTA_ID','GPS_ACTIVO','PAGINA_VISIBLE','ESTADO','ULTIMA_CONEXION','PLATAFORMA','NAVEGADOR','TIPO_RED','BATERIA_PORCENTAJE','IP_PUBLICA','IP_VERSION','IP_CAPTURADA_EN','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   SESIONES: ['ID','USUARIO_ID','FICHA_SESION_CIFRADA','FECHA_INICIO','FECHA_EXPIRACION','ULTIMO_USO','ACTIVA','AGENTE_NAVEGADOR','IP_PUBLICA','IP_VERSION','IP_CAPTURADA_EN','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
 });
@@ -155,6 +155,8 @@ function enrutarSolicitud_(request, event) {
     case 'guardarUbicacion': return guardarUbicacion_(request, session);
     case 'ultimasUbicaciones': return ultimasUbicaciones_(request, session);
     case 'asignarRuta': return asignarRuta_(request, session);
+    case 'iniciarRuta': return iniciarRuta_(request, session);
+    case 'completarRuta': return completarRuta_(request, session);
     case 'actualizarEstadoRuta': return actualizarEstadoRuta_(request, session);
     case 'registrarEvidenciaRuta': return registrarEvidenciaRuta_(request, session);
     case 'obtenerImagenEvidenciaRuta': return obtenerImagenEvidenciaRuta_(request, session);
@@ -1141,7 +1143,7 @@ function actualizarSistema() {
   try { repararModuloCheckin(); } catch (error) { Logger.log('Reparación de check-in: ' + error.message); }
   try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
   reiniciarCachesEjecucion_();
-  resultado.message = 'Sistema 3.13.2 actualizado: conexiones en línea, acceso delegado por Administrador, GPS automático, fotografías, alertas, permisos y estructura verificados.';
+  resultado.message = 'Sistema 3.13.3 actualizado: rutas con GPS permanente, check-in diario por vehículo y conductor, operaciones vinculadas, conexiones en línea, fotografías, alertas, permisos y estructura verificados.';
   return resultado;
 }
 
@@ -1569,15 +1571,25 @@ function iniciarOperacion_(request, session) {
   actualizarRegistro_('VEHICULOS', vehicle.ID, { ESTADO:'En ruta' });
   actualizarRegistro_('CONDUCTORES', driver.ID, { ESTADO:'En viaje' });
   consumirCheckinOperacion_(checkin.ID, operation.ID);
+  let routeUpdated = null;
   if (route) {
-    actualizarRegistro_('RUTAS', route.ID, {
+    routeUpdated = actualizarRegistro_('RUTAS', route.ID, {
       OPERACION_ID: operation.ID,
       VEHICULO_ID: vehicle.ID,
       ORIGEN: startOrigin,
       ORIGEN_LATITUD: startLocation.LATITUD,
       ORIGEN_LONGITUD: startLocation.LONGITUD,
       ESTADO: 'En curso',
-      FECHA_INICIO: route.FECHA_INICIO || new Date()
+      FECHA_INICIO: route.FECHA_INICIO || new Date(),
+      CHECKIN_ID: checkin.ID,
+      GPS_SEGUIMIENTO_ACTIVO: 'SI',
+      SEGUIMIENTO_INICIADO_POR: session.user.ID
+    });
+    guardarAsignacionGpsCache_(session.user.ID, {
+      CONDUCTOR_ID:driver.ID,
+      OPERACION_ID:operation.ID,
+      VEHICULO_ID:vehicle.ID,
+      RUTA_ID:route.ID
     });
   }
   encolarTrabajoSegundoPlano_('INICIO_OPERACION', {
@@ -1588,7 +1600,22 @@ function iniciarOperacion_(request, session) {
     conductor:driver.NOMBRE || driver.ID,
     ip:normalizarIpPublica_(session.session.IP_PUBLICA || '')
   });
-  return ok_({ row: limpiarSalidaRecurso_('OPERACIONES', operation), locationValidation:startLocation, base:point, procesamientoSegundoPlano:true });
+  return ok_({
+    row: limpiarSalidaRecurso_('OPERACIONES', operation),
+    route: routeUpdated ? limpiarSalidaRecurso_('RUTAS', routeUpdated) : null,
+    seguimiento: route ? {
+      activo:true,
+      RUTA_ID:route.ID,
+      OPERACION_ID:operation.ID,
+      VEHICULO_ID:vehicle.ID,
+      CONDUCTOR_ID:driver.ID,
+      CHECKIN_ID:checkin.ID,
+      FECHA_OPERATIVA:claveFechaOperativa_(checkin.FECHA_HORA || new Date())
+    } : null,
+    locationValidation:startLocation,
+    base:point,
+    procesamientoSegundoPlano:true
+  });
 }
 
 function finalizarOperacion_(request, session) {
@@ -1668,7 +1695,18 @@ function finalizarOperacion_(request, session) {
   if (operation.RUTA_ID) {
     const route = obtenerRegistro_('RUTAS', operation.RUTA_ID);
     if (route && ['Asignada','En curso'].indexOf(route.ESTADO) >= 0) {
-      actualizarRegistro_('RUTAS', route.ID, { ESTADO:'Completada', FECHA_FIN:now, OPERACION_ID:operation.ID });
+      actualizarRegistro_('RUTAS', route.ID, {
+        ESTADO:'Completada',
+        FECHA_FIN:now,
+        OPERACION_ID:operation.ID,
+        GPS_SEGUIMIENTO_ACTIVO:'NO'
+      });
+      guardarAsignacionGpsCache_(session.user.ID, {
+        CONDUCTOR_ID:operation.CONDUCTOR_ID || '',
+        OPERACION_ID:operation.ID,
+        VEHICULO_ID:operation.VEHICULO_ID || '',
+        RUTA_ID:''
+      });
     }
   }
   const historyDetail = exceptional
@@ -1708,7 +1746,14 @@ function finalizarOperacion_(request, session) {
     cierreExcepcional:exceptional,
     procesamientoSegundoPlano:true,
     notificacionAdministradores:true,
-    autorizadoPor:{ ID:session.user.ID, NOMBRE:session.user.NOMBRE, ROL_ID:role }
+    autorizadoPor:{ ID:session.user.ID, NOMBRE:session.user.NOMBRE, ROL_ID:role },
+    seguimiento:operation.RUTA_ID ? {
+      activo:false,
+      RUTA_ID:operation.RUTA_ID,
+      OPERACION_ID:operation.ID,
+      VEHICULO_ID:operation.VEHICULO_ID || '',
+      CONDUCTOR_ID:operation.CONDUCTOR_ID || ''
+    } : null
   });
 }
 
@@ -1984,21 +2029,44 @@ function guardarUbicacion_(request, session) {
     if (driver) driverId = driver.ID;
   }
   let operationId = data.OPERACION_ID || '';
+  let routeId = data.RUTA_ID || '';
   let vehicleId = data.VEHICULO_ID || '';
+  const contextoRutaExplicito = String(data.CONTEXTO_RUTA_EXPLICITO || '') === 'SI' || Object.prototype.hasOwnProperty.call(data, 'RUTA_ID');
   const cachedAssignment = obtenerAsignacionGpsCache_(session.user.ID, driverId);
-  if (!operationId && cachedAssignment) {
-    operationId = cachedAssignment.OPERACION_ID || '';
+  if (cachedAssignment) {
+    operationId = operationId || cachedAssignment.OPERACION_ID || '';
+    if (!contextoRutaExplicito) routeId = routeId || cachedAssignment.RUTA_ID || '';
     vehicleId = vehicleId || cachedAssignment.VEHICULO_ID || '';
+  }
+  if (routeId) {
+    const rutaActiva = obtenerRegistro_('RUTAS', routeId);
+    if (!rutaActiva || String(rutaActiva.ESTADO || '') !== 'En curso' || String(rutaActiva.GPS_SEGUIMIENTO_ACTIVO || 'SI') === 'NO') routeId = '';
+    else {
+      driverId = driverId || rutaActiva.CONDUCTOR_ID || '';
+      vehicleId = vehicleId || rutaActiva.VEHICULO_ID || '';
+      operationId = operationId || rutaActiva.OPERACION_ID || '';
+    }
   }
   if (!operationId && driverId) {
     const active = listarRegistros_('OPERACIONES', {}).find(function(row) {
       return row.CONDUCTOR_ID === driverId && row.ESTADO === 'Activa';
     });
-    if (active) { operationId = active.ID; vehicleId = active.VEHICULO_ID; }
+    if (active) { operationId = active.ID; vehicleId = vehicleId || active.VEHICULO_ID; }
+  }
+  if (!routeId && driverId) {
+    const activeRoute = listarRegistros_('RUTAS', {}).find(function(row) {
+      return row.CONDUCTOR_ID === driverId && row.ESTADO === 'En curso' && String(row.GPS_SEGUIMIENTO_ACTIVO || 'SI') !== 'NO';
+    });
+    if (activeRoute) {
+      routeId = activeRoute.ID;
+      vehicleId = vehicleId || activeRoute.VEHICULO_ID || '';
+      operationId = operationId || activeRoute.OPERACION_ID || '';
+    }
   }
   const fecha = data.FECHA_HORA ? new Date(data.FECHA_HORA) : new Date();
   const values = {
     OPERACION_ID: operationId,
+    RUTA_ID: routeId,
     CONDUCTOR_ID: driverId,
     VEHICULO_ID: vehicleId,
     LATITUD: latitude,
@@ -2015,6 +2083,9 @@ function guardarUbicacion_(request, session) {
   };
 
   const current = guardarPosicionActual_(values);
+  if (routeId) {
+    try { actualizarRegistro_('RUTAS', routeId, { ULTIMA_UBICACION_EN:fecha, GPS_SEGUIMIENTO_ACTIVO:'SI' }); } catch (_) {}
+  }
   let history = null;
   if (debeGuardarHistorialGps_(values)) history = insertarRegistro_('GPS', values, 'GPS');
 
@@ -2830,21 +2901,101 @@ function registrarEvidenciaRuta_(request, session) {
   return ok_({row:limpiarSalidaRecurso_('RUTAS',updated),evidencias:all,agregadas:additions.length});
 }
 
-function actualizarEstadoRuta_(request, session) {
+function obtenerContextoInicioRuta_(route, session) {
+  const conductorSesion = session.user.ROL_ID === 'ROL-CONDUCTOR' ? obtenerConductorDeUsuario_(session.user.ID) : null;
+  if (session.user.ROL_ID === 'ROL-CONDUCTOR' && (!conductorSesion || String(route.CONDUCTOR_ID || '') !== String(conductorSesion.ID))) {
+    throw new Error('RUTA_NO_COINCIDE_CONDUCTOR');
+  }
+  const conductorId = String(route.CONDUCTOR_ID || (conductorSesion && conductorSesion.ID) || '');
+  if (!conductorId) throw new Error('CONDUCTOR_NO_ASOCIADO');
+  let operaciones = listarRegistros_('OPERACIONES', {}).filter(function(row) {
+    return String(row.CONDUCTOR_ID || '') === conductorId && String(row.ESTADO || '') === 'Activa';
+  });
+  if (route.OPERACION_ID) operaciones.sort(function(a,b) { return String(a.ID) === String(route.OPERACION_ID) ? -1 : String(b.ID) === String(route.OPERACION_ID) ? 1 : 0; });
+  let operacion = null;
+  if (route.VEHICULO_ID) operacion = operaciones.find(function(row) { return String(row.VEHICULO_ID || '') === String(route.VEHICULO_ID); }) || null;
+  if (!operacion && !route.VEHICULO_ID) operacion = operaciones[0] || null;
+  if (route.VEHICULO_ID && operaciones.length && !operacion) throw new Error('RUTA_VEHICULO_NO_COINCIDE_OPERACION');
+  const vehiculoId = String(route.VEHICULO_ID || (operacion && operacion.VEHICULO_ID) || '');
+  if (!vehiculoId) throw new Error('RUTA_VEHICULO_REQUERIDO');
+  const vehiculo = obtenerRegistro_('VEHICULOS', vehiculoId);
+  const conductor = obtenerRegistro_('CONDUCTORES', conductorId);
+  if (!vehiculo) throw new Error('VEHICULO_NO_ENCONTRADO');
+  if (!conductor) throw new Error('CONDUCTOR_NO_ENCONTRADO');
+  const checkin = exigirCheckinDiarioRuta_(vehiculoId, conductorId);
+  return { conductor:conductor, vehiculo:vehiculo, operacion:operacion, checkin:checkin };
+}
+
+function iniciarRuta_(request, session) {
   exigirPermiso_(session.user, 'RUTAS', 'ACTUALIZAR');
-  const routeId = request.identificador || request.RUTA_ID;
+  const data = request.datos || request || {};
+  const routeId = String(request.identificador || request.RUTA_ID || data.RUTA_ID || '').trim();
   const route = obtenerRegistro_('RUTAS', routeId);
   if (!route) throw new Error('RUTA_NO_ENCONTRADA');
   if (!filtrarPorUsuario_('RUTAS', [route], session.user).length) throw new Error('PERMISO_DENEGADO');
-  const state = String(request.ESTADO || (request.datos || {}).ESTADO || '');
-  if (['Asignada','En curso','Completada','Cancelada'].indexOf(state) < 0) throw new Error('ESTADO_RUTA_INVALIDO');
-  if (session.user.ROL_ID === 'ROL-CONDUCTOR' && ['En curso','Completada'].indexOf(state) < 0) throw new Error('PERMISO_DENEGADO');
-  const changes = { ESTADO: state };
-  if (state === 'En curso' && !route.FECHA_INICIO) changes.FECHA_INICIO = new Date();
-  if (state === 'Completada' || state === 'Cancelada') changes.FECHA_FIN = new Date();
-  const updated = actualizarRegistro_('RUTAS', route.ID, changes);
-  registrarBitacora_(session.user, 'CAMBIAR_ESTADO', 'RUTAS', route.ID, 'Estado: ' + state);
-  if (state === 'Completada' && String(route.ESTADO || '') !== 'Completada') {
+  if (['Completada','Cancelada'].indexOf(String(route.ESTADO || '')) >= 0) throw new Error('RUTA_NO_DISPONIBLE');
+  const contexto = obtenerContextoInicioRuta_(route, session);
+  const ahora = new Date();
+  const cambios = {
+    ESTADO:'En curso',
+    FECHA_INICIO:route.FECHA_INICIO || ahora,
+    VEHICULO_ID:contexto.vehiculo.ID,
+    OPERACION_ID:contexto.operacion ? contexto.operacion.ID : (route.OPERACION_ID || ''),
+    CHECKIN_ID:contexto.checkin.ID,
+    GPS_SEGUIMIENTO_ACTIVO:'SI',
+    SEGUIMIENTO_INICIADO_POR:session.user.ID,
+    ULTIMA_UBICACION_EN:route.ULTIMA_UBICACION_EN || ''
+  };
+  const updated = actualizarRegistro_('RUTAS', route.ID, cambios);
+  guardarAsignacionGpsCache_(session.user.ID, {
+    CONDUCTOR_ID:contexto.conductor.ID,
+    OPERACION_ID:cambios.OPERACION_ID,
+    VEHICULO_ID:contexto.vehiculo.ID,
+    RUTA_ID:route.ID
+  });
+  registrarBitacora_(session.user, 'INICIAR_RUTA', 'RUTAS', route.ID,
+    'Seguimiento GPS activado. Check-in diario ' + contexto.checkin.ID + '. Operación vinculada: ' + (cambios.OPERACION_ID || 'sin operación activa') + '.');
+  return ok_({
+    row:limpiarSalidaRecurso_('RUTAS', updated),
+    seguimiento:{
+      activo:true,
+      RUTA_ID:route.ID,
+      OPERACION_ID:cambios.OPERACION_ID,
+      VEHICULO_ID:contexto.vehiculo.ID,
+      CONDUCTOR_ID:contexto.conductor.ID,
+      CHECKIN_ID:contexto.checkin.ID,
+      FECHA_OPERATIVA:claveFechaOperativa_(contexto.checkin.FECHA_HORA || ahora)
+    },
+    checkinReutilizado:String(contexto.checkin.UTILIZADO || '') === 'SI',
+    operacionVinculada:Boolean(contexto.operacion)
+  });
+}
+
+function completarRuta_(request, session) {
+  exigirPermiso_(session.user, 'RUTAS', 'ACTUALIZAR');
+  const data = request.datos || request || {};
+  const routeId = String(request.identificador || request.RUTA_ID || data.RUTA_ID || '').trim();
+  const route = obtenerRegistro_('RUTAS', routeId);
+  if (!route) throw new Error('RUTA_NO_ENCONTRADA');
+  if (!filtrarPorUsuario_('RUTAS', [route], session.user).length) throw new Error('PERMISO_DENEGADO');
+  if (session.user.ROL_ID === 'ROL-CONDUCTOR') {
+    const propio = obtenerConductorDeUsuario_(session.user.ID);
+    if (!propio || String(route.CONDUCTOR_ID || '') !== String(propio.ID)) throw new Error('RUTA_NO_COINCIDE_CONDUCTOR');
+  }
+  const yaCompletada = String(route.ESTADO || '') === 'Completada';
+  const updated = actualizarRegistro_('RUTAS', route.ID, {
+    ESTADO:'Completada',
+    FECHA_FIN:route.FECHA_FIN || new Date(),
+    GPS_SEGUIMIENTO_ACTIVO:'NO'
+  });
+  guardarAsignacionGpsCache_(session.user.ID, {
+    CONDUCTOR_ID:route.CONDUCTOR_ID || '',
+    OPERACION_ID:route.OPERACION_ID || '',
+    VEHICULO_ID:route.VEHICULO_ID || '',
+    RUTA_ID:''
+  });
+  registrarBitacora_(session.user, 'COMPLETAR_RUTA', 'RUTAS', route.ID, 'Seguimiento GPS de ruta desactivado.');
+  if (!yaCompletada) {
     const driver = obtenerRegistro_('CONDUCTORES', route.CONDUCTOR_ID) || {};
     const vehicle = route.VEHICULO_ID ? (obtenerRegistro_('VEHICULOS', route.VEHICULO_ID) || {}) : {};
     encolarTrabajoSegundoPlano_('CIERRE_RUTA', {
@@ -2860,7 +3011,29 @@ function actualizarEstadoRuta_(request, session) {
       finalizadaPorConductor:String(session.user.ROL_ID || '') === 'ROL-CONDUCTOR'
     });
   }
-  return ok_({ row: limpiarSalidaRecurso_('RUTAS', updated), notificacionAdministradores:state === 'Completada' });
+  return ok_({
+    row:limpiarSalidaRecurso_('RUTAS', updated),
+    seguimiento:{ activo:false, RUTA_ID:route.ID, OPERACION_ID:route.OPERACION_ID || '', VEHICULO_ID:route.VEHICULO_ID || '', CONDUCTOR_ID:route.CONDUCTOR_ID || '' },
+    notificacionAdministradores:!yaCompletada
+  });
+}
+
+function actualizarEstadoRuta_(request, session) {
+  const state = String(request.ESTADO || (request.datos || {}).ESTADO || '');
+  if (state === 'En curso') return iniciarRuta_(request, session);
+  if (state === 'Completada') return completarRuta_(request, session);
+  exigirPermiso_(session.user, 'RUTAS', 'ACTUALIZAR');
+  const routeId = request.identificador || request.RUTA_ID || ((request.datos || {}).RUTA_ID);
+  const route = obtenerRegistro_('RUTAS', routeId);
+  if (!route) throw new Error('RUTA_NO_ENCONTRADA');
+  if (!filtrarPorUsuario_('RUTAS', [route], session.user).length) throw new Error('PERMISO_DENEGADO');
+  if (['Asignada','Cancelada'].indexOf(state) < 0) throw new Error('ESTADO_RUTA_INVALIDO');
+  if (session.user.ROL_ID === 'ROL-CONDUCTOR') throw new Error('PERMISO_DENEGADO');
+  const changes = { ESTADO:state, GPS_SEGUIMIENTO_ACTIVO:'NO' };
+  if (state === 'Cancelada') changes.FECHA_FIN = new Date();
+  const updated = actualizarRegistro_('RUTAS', route.ID, changes);
+  registrarBitacora_(session.user, 'CAMBIAR_ESTADO', 'RUTAS', route.ID, 'Estado: ' + state);
+  return ok_({ row:limpiarSalidaRecurso_('RUTAS', updated), seguimiento:{activo:false,RUTA_ID:route.ID} });
 }
 
 function enviarNotificacion_(request, session) {
@@ -3226,6 +3399,38 @@ function repararModuloCheckin() {
   };
 }
 
+function claveFechaOperativa_(valor) {
+  const texto = typeof valor === 'string' ? valor.trim() : '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(texto)) return texto;
+  const fecha = valor instanceof Date ? valor : new Date(valor || Date.now());
+  if (isNaN(fecha.getTime())) return '';
+  return Utilities.formatDate(fecha, CONFIGURACION_APLICACION.ZONA_HORARIA || Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+function finVigenciaCheckinDia_(valor) {
+  const fecha = valor instanceof Date ? valor : new Date(valor || Date.now());
+  return new Date(fecha.getTime() + 26 * 60 * 60 * 1000);
+}
+
+function buscarCheckinDiarioVigente_(vehiculoId, conductorId, fechaReferencia) {
+  const claveDia = claveFechaOperativa_(fechaReferencia || new Date());
+  const rows = listarRegistros_('CHECKINS', {}).filter(function(row) {
+    return String(row.VEHICULO_ID || '') === String(vehiculoId || '')
+      && String(row.CONDUCTOR_ID || '') === String(conductorId || '')
+      && String(row.ESTADO_REVISION || '') === 'Aprobado'
+      && Number(row.FALLAS_CRITICAS || 0) <= 0
+      && claveFechaOperativa_(row.FECHA_OPERATIVA || row.FECHA_HORA || row.CREADO_EN) === claveDia;
+  });
+  rows.sort(function(a,b) { return new Date(b.FECHA_HORA || b.CREADO_EN || 0) - new Date(a.FECHA_HORA || a.CREADO_EN || 0); });
+  return rows[0] || null;
+}
+
+function exigirCheckinDiarioRuta_(vehiculoId, conductorId) {
+  const checkin = buscarCheckinDiarioVigente_(vehiculoId, conductorId, new Date());
+  if (!checkin) throw new Error('CHECKIN_DIARIO_REQUERIDO');
+  return checkin;
+}
+
 function crearCheckinVehicular_(request, session) {
   exigirPermiso_(session.user, 'CHECKIN', 'CREAR');
   asegurarPersistenciaCheckin_();
@@ -3264,7 +3469,7 @@ function crearCheckinVehicular_(request, session) {
   const fallasLeves = lista.filter(function(item) { return item.respuesta === 'FALLA' && !item.critico; }).length;
   const itemsOk = lista.filter(function(item) { return item.respuesta === 'OK'; }).length;
   const ahora = new Date();
-  const vigenteHasta = new Date(ahora.getTime() + 12 * 60 * 60 * 1000);
+  const vigenteHasta = finVigenciaCheckinDia_(ahora);
   const estadoRevision = fallasCriticas > 0 ? 'Bloqueado' : (fallasLeves > 0 ? 'Pendiente' : 'Aprobado');
   const resultado = fallasCriticas > 0 ? 'Falla crítica' : (fallasLeves > 0 ? 'Con observaciones' : 'Conforme');
 
@@ -3292,6 +3497,7 @@ function crearCheckinVehicular_(request, session) {
     CREADO_POR: session.user.ID,
     ELIMINADO: 'NO',
     SOLICITUD_CLIENTE_ID: solicitudClienteId,
+    FECHA_OPERATIVA: claveFechaOperativa_(ahora),
   }, 'CHK');
 
   SpreadsheetApp.flush();
@@ -3346,7 +3552,6 @@ function revisarCheckinVehicular_(request, session) {
   if (['APROBAR','RECHAZAR'].indexOf(decision) < 0) throw new Error('CHECKIN_DECISION_INVALIDA');
   const checkin = obtenerRegistro_('CHECKINS', id);
   if (!checkin) throw new Error('CHECKIN_NO_ENCONTRADO');
-  if (checkin.UTILIZADO === 'SI') throw new Error('CHECKIN_YA_UTILIZADO');
   if (decision === 'APROBAR' && Number(checkin.FALLAS_CRITICAS || 0) > 0) throw new Error('CHECKIN_CRITICO_NO_APROBABLE');
 
   const ahora = new Date();
@@ -3356,7 +3561,8 @@ function revisarCheckinVehicular_(request, session) {
     REVISADO_POR: session.user.ID,
     FECHA_REVISION: ahora,
     COMENTARIO_REVISION: String(data.COMENTARIO_REVISION || '').slice(0, 1000),
-    VIGENTE_HASTA: decision === 'APROBAR' ? new Date(ahora.getTime() + 12 * 60 * 60 * 1000) : checkin.VIGENTE_HASTA,
+    VIGENTE_HASTA: decision === 'APROBAR' ? finVigenciaCheckinDia_(ahora) : checkin.VIGENTE_HASTA,
+    FECHA_OPERATIVA: checkin.FECHA_OPERATIVA || claveFechaOperativa_(checkin.FECHA_HORA || ahora),
   });
 
   const conductor = obtenerRegistro_('CONDUCTORES', checkin.CONDUCTOR_ID);
@@ -3389,30 +3595,37 @@ function checkinsDisponibles_(request, session) {
     conductorId = propio.ID;
   }
   const vehiculoId = String(data.VEHICULO_ID || '');
-  const ahora = Date.now();
+  const claveDia = claveFechaOperativa_(new Date());
   let rows = listarRegistros_('CHECKINS', {}).filter(function(row) {
-    const vigente = new Date(row.VIGENTE_HASTA || 0).getTime();
-    return row.ESTADO_REVISION === 'Aprobado' && row.UTILIZADO !== 'SI' && vigente > ahora &&
-      (!vehiculoId || row.VEHICULO_ID === vehiculoId) && (!conductorId || row.CONDUCTOR_ID === conductorId);
+    return row.ESTADO_REVISION === 'Aprobado'
+      && Number(row.FALLAS_CRITICAS || 0) <= 0
+      && claveFechaOperativa_(row.FECHA_OPERATIVA || row.FECHA_HORA || row.CREADO_EN) === claveDia
+      && (!vehiculoId || row.VEHICULO_ID === vehiculoId)
+      && (!conductorId || row.CONDUCTOR_ID === conductorId);
   });
   rows = filtrarPorUsuario_('CHECKINS', rows, session.user);
   rows.sort(function(a,b) { return new Date(b.FECHA_HORA || 0) - new Date(a.FECHA_HORA || 0); });
-  return ok_({ rows:rows.slice(0, 50), total:rows.length });
+  return ok_({ rows:rows.slice(0, 50), total:rows.length, fechaOperativa:claveDia, reutilizableDuranteElDia:true });
 }
 
 function validarCheckinParaOperacion_(checkinId, vehiculoId, conductorId) {
-  if (!checkinId) throw new Error('CHECKIN_REQUERIDO');
-  const checkin = obtenerRegistro_('CHECKINS', checkinId);
-  if (!checkin) throw new Error('CHECKIN_NO_ENCONTRADO');
+  const checkin = checkinId ? obtenerRegistro_('CHECKINS', checkinId) : buscarCheckinDiarioVigente_(vehiculoId, conductorId, new Date());
+  if (!checkin) throw new Error('CHECKIN_DIARIO_REQUERIDO');
   if (checkin.VEHICULO_ID !== vehiculoId || checkin.CONDUCTOR_ID !== conductorId) throw new Error('CHECKIN_NO_COINCIDE');
   if (checkin.ESTADO_REVISION !== 'Aprobado') throw new Error('CHECKIN_NO_APROBADO');
-  if (checkin.UTILIZADO === 'SI') throw new Error('CHECKIN_YA_UTILIZADO');
-  if (new Date(checkin.VIGENTE_HASTA || 0).getTime() <= Date.now()) throw new Error('CHECKIN_EXPIRADO');
+  if (Number(checkin.FALLAS_CRITICAS || 0) > 0) throw new Error('CHECKIN_CRITICO_NO_APROBABLE');
+  if (claveFechaOperativa_(checkin.FECHA_OPERATIVA || checkin.FECHA_HORA || checkin.CREADO_EN) !== claveFechaOperativa_(new Date())) throw new Error('CHECKIN_EXPIRADO');
   return checkin;
 }
 
 function consumirCheckinOperacion_(checkinId, operacionId) {
-  return actualizarRegistro_('CHECKINS', checkinId, { OPERACION_ID:operacionId, UTILIZADO:'SI' });
+  const checkin = obtenerRegistro_('CHECKINS', checkinId);
+  if (!checkin) return null;
+  return actualizarRegistro_('CHECKINS', checkinId, {
+    OPERACION_ID:operacionId || checkin.OPERACION_ID || '',
+    UTILIZADO:'SI',
+    FECHA_OPERATIVA:checkin.FECHA_OPERATIVA || claveFechaOperativa_(checkin.FECHA_HORA || new Date())
+  });
 }
 
 /** ============================================================

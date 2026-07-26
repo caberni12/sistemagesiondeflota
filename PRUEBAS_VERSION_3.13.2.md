@@ -1,4 +1,4 @@
-# Pruebas 3.13.2
+# Pruebas 3.13.3
 
 - Ejecute dos veces consecutivas el motor de alertas: la segunda ejecución no debe crear filas nuevas para el mismo evento.
 - Verifique que cada Administrador reciba una sola notificación por alerta.

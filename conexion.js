@@ -9,7 +9,7 @@
     create:'crear', update:'actualizar', delete:'eliminar', startOperation:'iniciarOperacion',
     finishOperation:'finalizarOperacion', editOperationAdmin:'editarOperacionAdministrativa', deleteOperationAdmin:'eliminarOperacionAdministrativa', saveLocation:'guardarUbicacion', latestLocations:'ultimasUbicaciones',
     changePassword:'cambiarContrasena', saveUserPermissions:'actualizarPermisosUsuario', saveCompany:'guardarEmpresa', saveOperationalPoint:'guardarPuntoOperacion', getOperationalPoint:'obtenerPuntoOperacion', clearOperationalData:'limpiarDatosOperativos',
-    assignRoute:'asignarRuta', updateRouteStatus:'actualizarEstadoRuta', registerRouteEvidence:'registrarEvidenciaRuta', routeEvidenceImage:'obtenerImagenEvidenciaRuta', sendNotification:'enviarNotificacion',
+    assignRoute:'asignarRuta', startRoute:'iniciarRuta', completeRoute:'completarRuta', updateRouteStatus:'actualizarEstadoRuta', registerRouteEvidence:'registrarEvidenciaRuta', routeEvidenceImage:'obtenerImagenEvidenciaRuta', sendNotification:'enviarNotificacion',
     readNotification:'marcarNotificacionLeida', heartbeat:'actualizarConexion', realtimeSummary:'resumenTiempoReal', connectionsOnline:'resumenConexionesAdministrador',
     diagnoseSystem:'diagnosticoSistema', repairSystem:'repararSistema',
     validateVehicleQr:'validarQrVehiculo', createVehicleCheckin:'crearCheckinVehicular',
@@ -280,6 +280,8 @@
       createVehicleCheckin: { actions:['dashboard'], resources:['checkins','alerts','audit'] },
       reviewVehicleCheckin: { actions:['dashboard'], resources:['checkins','notifications','audit'] },
       assignRoute: { actions:['dashboard','realtimeSummary'], resources:['routes','notifications','audit'] },
+      startRoute: { actions:['dashboard','realtimeSummary'], resources:['routes','checkins','operations','gps','connections','audit'] },
+      completeRoute: { actions:['dashboard','realtimeSummary'], resources:['routes','gps','connections','notifications','audit'] },
       updateRouteStatus: { actions:['dashboard','realtimeSummary'], resources:['routes','notifications','audit'] },
       sendNotification: { actions:['dashboard','realtimeSummary'], resources:['notifications','audit'] },
       readNotification: { actions:['dashboard','realtimeSummary'], resources:['notifications'] },
@@ -545,7 +547,7 @@
   async function localRequest(action, payload) {
     await Promise.resolve();
     switch (action) {
-      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.13.2', now:iso() };
+      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.13.3', now:iso() };
       case 'status': return {
         connected:true, needsSetup:activeRows(localDb.users).length === 0, spreadsheetName:'Base local del navegador',
         rows:{ users:activeRows(localDb.users).length, vehicles:activeRows(localDb.vehicles).length,
@@ -608,6 +610,8 @@
       case 'saveLocation': return localSaveLocation(payload);
       case 'latestLocations': return localLatestLocations(payload);
       case 'assignRoute': return localAssignRoute(payload);
+      case 'startRoute': return localUpdateRouteStatus({...payload,ESTADO:'En curso'});
+      case 'completeRoute': return localUpdateRouteStatus({...payload,ESTADO:'Completada'});
       case 'updateRouteStatus': return localUpdateRouteStatus(payload);
       case 'registerRouteEvidence': return localRegisterRouteEvidence(payload);
       case 'routeEvidenceImage': throw new Error('DRIVE_REQUIERE_CONEXION_CENTRAL');
@@ -996,17 +1000,21 @@
     audit(user,'ASIGNAR','RUTAS',`Ruta asignada a ${driver.NOMBRE}`,route.ID);saveLocal();return{row:route,notification};
   }
   function localUpdateRouteStatus(payload){
-    const user=requireLocalUser(),route=find('routes',payload.id||payload.RUTA_ID);requireLocalPermission(user,'RUTAS','ACTUALIZAR');
+    const user=requireLocalUser(),route=find('routes',payload.id||payload.RUTA_ID||payload.data?.RUTA_ID);requireLocalPermission(user,'RUTAS','ACTUALIZAR');
     if(!route)throw new Error('RUTA_NO_ENCONTRADA');if(!localFilterRows('routes',[route],user).length)throw new Error('PERMISO_DENEGADO');
     const previousState=route.ESTADO,state=payload.ESTADO||payload.data?.ESTADO;if(!['Asignada','En curso','Completada','Cancelada'].includes(state))throw new Error('ESTADO_RUTA_INVALIDO');
     if(user.ROL_ID==='ROL-CONDUCTOR'&&!['En curso','Completada'].includes(state))throw new Error('PERMISO_DENEGADO');
-    const now=iso();route.ESTADO=state;if(state==='En curso'&&!route.FECHA_INICIO)route.FECHA_INICIO=now;if(['Completada','Cancelada'].includes(state))route.FECHA_FIN=now;route.ACTUALIZADO_EN=now;
-    audit(user,'CAMBIAR_ESTADO','RUTAS',`Estado: ${state}`,route.ID);
-    if(state==='Completada'&&previousState!=='Completada'){
-      const driver=find('drivers',route.CONDUCTOR_ID)||{},vehicle=find('vehicles',route.VEHICULO_ID)||{};
-      localNotifyRoles(['ROL-ADMIN'],{TITULO:`Ruta finalizada: ${route.NOMBRE||route.ID}`,MENSAJE:`Enviado por: ${user.NOMBRE||user.ID} (${user.CORREO||'sin correo'}) · usuario ${user.ID}. Conductor: ${driver.NOMBRE||route.CONDUCTOR_ID||'Sin conductor'}. Vehículo: ${vehicle.PATENTE||route.VEHICULO_ID||'Sin vehículo'}. Ruta: ${route.NOMBRE||route.ID}. Recorrido: ${route.ORIGEN||'Sin origen'} → ${route.DESTINO||'Sin destino'}. Fecha y hora: ${now}.`,TIPO:'Ruta finalizada',PRIORIDAD:'Alta',RUTA_ID:route.ID,OPERACION_ID:route.OPERACION_ID||'',CREADO_POR:user.ID});
+    const now=iso();
+    if(state==='En curso'){
+      const driverId=route.CONDUCTOR_ID,operation=activeRows(localDb.operations).find(row=>row.CONDUCTOR_ID===driverId&&row.ESTADO==='Activa'&&(!route.VEHICULO_ID||row.VEHICULO_ID===route.VEHICULO_ID));
+      const vehicleId=route.VEHICULO_ID||operation?.VEHICULO_ID||'';if(!vehicleId)throw new Error('RUTA_VEHICULO_REQUERIDO');
+      const day=now.slice(0,10),checkin=activeRows(localDb.checkins).filter(row=>row.VEHICULO_ID===vehicleId&&row.CONDUCTOR_ID===driverId&&row.ESTADO_REVISION==='Aprobado'&&String(row.FECHA_HORA||row.CREADO_EN).slice(0,10)===day).sort((a,b)=>new Date(b.FECHA_HORA)-new Date(a.FECHA_HORA))[0];
+      if(!checkin)throw new Error('CHECKIN_DIARIO_REQUERIDO');Object.assign(route,{ESTADO:'En curso',FECHA_INICIO:route.FECHA_INICIO||now,VEHICULO_ID:vehicleId,OPERACION_ID:operation?.ID||route.OPERACION_ID||'',CHECKIN_ID:checkin.ID,GPS_SEGUIMIENTO_ACTIVO:'SI',ACTUALIZADO_EN:now});
+      audit(user,'INICIAR_RUTA','RUTAS',`GPS activado · check-in ${checkin.ID}`,route.ID);saveLocal();return{row:route,seguimiento:{activo:true,RUTA_ID:route.ID,OPERACION_ID:route.OPERACION_ID||'',VEHICULO_ID:vehicleId,CONDUCTOR_ID:driverId,CHECKIN_ID:checkin.ID},operacionVinculada:Boolean(operation)};
     }
-    saveLocal();return{row:route,notificacionAdministradores:state==='Completada'};
+    route.ESTADO=state;if(['Completada','Cancelada'].includes(state)){route.FECHA_FIN=now;route.GPS_SEGUIMIENTO_ACTIVO='NO';}route.ACTUALIZADO_EN=now;audit(user,state==='Completada'?'COMPLETAR_RUTA':'CAMBIAR_ESTADO','RUTAS',`Estado: ${state}`,route.ID);
+    if(state==='Completada'&&previousState!=='Completada'){const driver=find('drivers',route.CONDUCTOR_ID)||{},vehicle=find('vehicles',route.VEHICULO_ID)||{};localNotifyRoles(['ROL-ADMIN'],{TITULO:`Ruta finalizada: ${route.NOMBRE||route.ID}`,MENSAJE:`Conductor: ${driver.NOMBRE||route.CONDUCTOR_ID}. Vehículo: ${vehicle.PATENTE||route.VEHICULO_ID}.`,TIPO:'Ruta finalizada',PRIORIDAD:'Alta',RUTA_ID:route.ID,OPERACION_ID:route.OPERACION_ID||'',CREADO_POR:user.ID});}
+    saveLocal();return{row:route,seguimiento:{activo:false,RUTA_ID:route.ID,OPERACION_ID:route.OPERACION_ID||'',VEHICULO_ID:route.VEHICULO_ID||'',CONDUCTOR_ID:route.CONDUCTOR_ID||''},notificacionAdministradores:state==='Completada'};
   }
   function localCreateNotification(data){
     const now=iso(),row={ID:id('NOT'),DESTINATARIO_USUARIO_ID:data.DESTINATARIO_USUARIO_ID||'',DESTINATARIO_CONDUCTOR_ID:data.DESTINATARIO_CONDUCTOR_ID||'',
@@ -1157,7 +1165,7 @@
       alerts:{nombre:'Alertas',estado:'OK',detalle:`${activeRows(localDb.alerts).length} registros`},
       history:{nombre:'Historiales',estado:'OK',detalle:`${activeRows(localDb.history).length} eventos operativos · ${activeRows(localDb.checkins).length} check-ins`}
     };
-    return{version:'3.13.2',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
+    return{version:'3.13.3',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
   }
   function localRepairSystem(){
     const user=requireLocalUser();requireLocalPermission(user,'CONFIGURACION','ACTUALIZAR');

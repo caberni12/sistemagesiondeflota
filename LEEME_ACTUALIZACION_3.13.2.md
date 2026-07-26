@@ -1,4 +1,4 @@
-# Actualización 3.13.2
+# Actualización 3.13.3
 
 1. Reemplace todo el contenido de `Codigo_Completo.gs`.
 2. Ejecute `actualizarSistema()` una vez.

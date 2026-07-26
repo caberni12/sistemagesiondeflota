@@ -1674,69 +1674,39 @@
   }
 
   async function sincronizarSistema(button) {
-    await conCargaBoton(button,'Sincronizando…',async()=>{
-      if(sincronizacionPendiente)return sincronizacionPendiente;
-      const section=currentSection;
-      sincronizacionPendiente=(async()=>{
-        setSave(`Sincronizando ${labels[section]||'módulo'}…`,'saving');
-        actualizarEstadoSincronizacionVisible('Consultando la base central…','syncing');
-        try{
-          const completed=await go(section,{force:true});
-          if(completed===false)throw new Error('SINCRONIZACION_NO_COMPLETADA');
-          if(section==='notifications'||section==='dashboard')await refreshNotificationBadge();
-          setSave('Módulo sincronizado');
-          actualizarEstadoSincronizacionVisible(textoActualizacionSeccion(section));
-          toast('Módulo sincronizado',`${labels[section]||'La información'} fue actualizado desde la base central.`);
-        }catch(error){
-          setSave('Error al sincronizar','error');
-          actualizarEstadoSincronizacionVisible('No se pudo sincronizar · se conservan los datos locales','error');
-          toast('No se pudo sincronizar',translateError(error),'error');
-        }
-      })();
-      try{return await sincronizacionPendiente;}
-      finally{sincronizacionPendiente=null;}
-    });
+    if (sincronizacionPendiente) return sincronizacionPendiente;
+    const section = currentSection;
+    const ejecutar = async () => {
+      setSave(`Sincronizando ${labels[section]||'módulo'}…`,'saving');
+      actualizarEstadoSincronizacionVisible('Consultando la base central…','syncing');
+      // El primer clic debe consultar realmente el servidor. Se marca el módulo
+      // como habilitado para carga y se elimina toda respuesta pendiente o cacheada
+      // antes de renderizarlo, evitando que el primer clic solo prepare el estado.
+      modulosSincronizadosSesion.add(section);
+      api.invalidate();
+      cacheVistasModulo.delete(section);
+      const dependencia = dependenciaSeccion(section);
+      dependencia.resources.forEach(resource => invalidarListasFormulario(resource));
+      try {
+        const completed = await go(section,{force:true,manualSync:true});
+        if (completed === false) throw new Error('SINCRONIZACION_NO_COMPLETADA');
+        if (section==='notifications'||section==='dashboard') await refreshNotificationBadge();
+        setSave('Módulo sincronizado');
+        actualizarEstadoSincronizacionVisible(textoActualizacionSeccion(section));
+        toast('Módulo sincronizado',`${labels[section]||'La información'} fue actualizada desde la base central.`);
+        return true;
+      } catch (error) {
+        modulosSincronizadosSesion.delete(section);
+        setSave('Error al sincronizar','error');
+        actualizarEstadoSincronizacionVisible('No se pudo sincronizar · pulse nuevamente para reintentar','error');
+        toast('No se pudo sincronizar',translateError(error),'error');
+        return false;
+      }
+    };
+    sincronizacionPendiente = conCargaBoton(button,'Sincronizando…',ejecutar);
+    try { return await sincronizacionPendiente; }
+    finally { sincronizacionPendiente = null; }
   }
-
-
-  function fuelName(resource,id,fallback='—'){
-    const row=registroFormulario(resource,id)||(listaFormulario(resource)||[]).find(item=>String(item.ID)===String(id));
-    if(!row)return id||fallback;
-    if(resource==='vehicles')return `${row.PATENTE||row.ID}${row.MARCA?` · ${row.MARCA} ${row.MODELO||''}`:''}`;
-    if(resource==='drivers')return row.NOMBRE||row.RUT||row.ID;
-    return row.ID||fallback;
-  }
-
-  function fuelAuthorizationFor(chargeId,authorizations){
-    return (authorizations||[]).filter(row=>String(row.CARGA_ID)===String(chargeId)).sort((a,b)=>new Date(b.FECHA_SOLICITUD||b.CREADO_EN||0)-new Date(a.FECHA_SOLICITUD||a.CREADO_EN||0))[0]||null;
-  }
-
-  function fuelActionMarkup(row,authorization){
-    const actions=[];
-    if(hasPermission('COMBUSTIBLE','ACTUALIZAR')&&currentUser.ROL_ID!=='ROL-CONDUCTOR')actions.push(`<button class="icon-button" type="button" data-edit-fuel="${esc(row.ID)}" title="Editar">✎</button>`);
-    if(esAdministrador()&&hasPermission('COMBUSTIBLE','ELIMINAR'))actions.push(`<button class="icon-button danger" type="button" data-admin-delete-fuel="${esc(row.ID)}" title="Eliminar con auditoría">⌫</button>`);
-    if(currentUser.ROL_ID==='ROL-SUPERVISOR'&&hasPermission('COMBUSTIBLE','ELIMINAR')){
-      if(authorization?.ESTADO==='APROBADA'&&!authorization.FECHA_EJECUCION)actions.push(`<button class="btn danger small" type="button" data-execute-fuel-delete="${esc(row.ID)}" data-authorization="${esc(authorization.ID)}">Eliminar autorizado</button>`);
-      else if(authorization?.ESTADO==='PENDIENTE')actions.push(status('Autorización pendiente'));
-      else actions.push(`<button class="icon-button danger" type="button" data-request-fuel-delete="${esc(row.ID)}" title="Solicitar autorización para eliminar">⌫</button>`);
-    }
-    return actions.join('')||'<span class="muted">Solo lectura</span>';
-  }
-
-  function filasRespuestaLote(value) {
-    if (Array.isArray(value)) return value;
-    if (value && Array.isArray(value.rows)) return value.rows;
-    return [];
-  }
-
-  async function asegurarContextoCombustible() {
-    const resources=['vehicles','drivers','operations','routes'];
-    const missing=resources.filter(resource=>!cacheListasFormulario.has(resource));
-    if(!missing.length)return;
-    const batch=await api.requestBatch(missing.map(resource=>({key:resource,action:'list',payload:{resource}})));
-    missing.forEach(resource=>guardarListaFormulario(resource,filasRespuestaLote(batch[resource])));
-  }
-
   async function renderFuel(){
     const queries=[
       {key:'loads',action:'list',payload:{resource:'fuel'}},
@@ -1825,7 +1795,7 @@
     $$('[data-delete]').forEach(btn=>btn.addEventListener('click',()=>deleteRecord(btn.dataset.delete,btn)));
     $$('[data-export]').forEach(btn=>btn.addEventListener('click',()=>conCargaBoton(btn,'Exportando…',()=>exportResource(btn.dataset.export))));
     configurarFiltrosAvanzados();
-    $$('[data-sync],[data-refresh],[data-retry]').forEach(btn=>btn.addEventListener('click',()=>sincronizarSistema(btn)));
+    $$('[data-sync],[data-refresh],[data-retry]').forEach(btn=>{if(btn.dataset.syncBound==='1')return;btn.dataset.syncBound='1';btn.addEventListener('click',()=>sincronizarSistema(btn));});
     $$('[data-new-operation]').forEach(btn=>btn.addEventListener('click',()=>openOperationModal()));
     $$('[data-quick-base-setup]').forEach(btn=>btn.addEventListener('click',()=>configurarPuntoOperacionRapido(btn)));
     $$('[data-new-checkin]').forEach(btn=>btn.addEventListener('click',openCheckinModal));

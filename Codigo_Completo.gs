@@ -6,7 +6,7 @@
  * Si el proyecto Apps Script está vinculado a la hoja, instalarSistema() guardará
  * automáticamente el ID. Para un proyecto independiente, pegue el ID aquí.
  */
-const VERSION_APLICACION = '3.13.3';
+const VERSION_APLICACION = '3.13.4';
 
 const CONFIGURACION_APLICACION = Object.freeze({
   ID_HOJA_CALCULO: '1onJJEN1rgz0N9GXOiUqV7ong4-nlbdAjzMyW_rumXCM',
@@ -1143,7 +1143,7 @@ function actualizarSistema() {
   try { repararModuloCheckin(); } catch (error) { Logger.log('Reparación de check-in: ' + error.message); }
   try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
   reiniciarCachesEjecucion_();
-  resultado.message = 'Sistema 3.13.3 actualizado: rutas con GPS permanente, check-in diario por vehículo y conductor, operaciones vinculadas, conexiones en línea, fotografías, alertas, permisos y estructura verificados.';
+  resultado.message = 'Sistema 3.13.4 actualizado: rutas con GPS permanente, check-in diario por vehículo y conductor, operaciones vinculadas, conexiones en línea, fotografías, alertas, permisos y estructura verificados.';
   return resultado;
 }
 

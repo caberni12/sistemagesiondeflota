@@ -3,7 +3,7 @@
  * Pegue en DIRECCION_APLICACION la dirección terminada en /exec del despliegue de Google Apps Script.
  */
 window.CONFIGURACION_FLOTAS = Object.freeze({
-  VERSION: '3.13.3',
+  VERSION: '3.13.4',
   GPS_AUTOMATICO_OBLIGATORIO: true,
   MODO: 'automatico',
   MODO_MODULAR: true,

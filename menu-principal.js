@@ -2,7 +2,7 @@
   'use strict';
   const $=(selector,root=document)=>root.querySelector(selector);
   const api=window.ConexionFlotas;
-  const VERSION='3.12.2';
+  const VERSION='3.13.1';
   const grupos=[
     ['GENERAL',[
       ['dashboard','⌂','Panel principal','panel-principal.html','PANEL_PRINCIPAL'],
@@ -24,6 +24,7 @@
       ['alerts','!','Alertas','alertas.html','ALERTAS']
     ]],
     ['ADMINISTRACIÓN',[
+      ['connections','◎','Conexiones en línea','conexiones-en-linea.html','CONEXIONES'],
       ['users','♚','Usuarios','usuarios.html','USUARIOS'],
       ['company','🏢','Empresa','empresa.html','CONFIGURACION'],
       ['reports','▥','Reportes','reportes.html','REPORTES'],
@@ -62,12 +63,12 @@
   function permitido(modulo){
     if(!usuario)return false;
     const permisos=Array.isArray(usuario.PERMISOS)?usuario.PERMISOS:[];
-    return usuario.ROL_ID==='ROL-ADMIN'||permisos.includes('*:*')||permisos.includes(`${modulo}:LEER`);
+    const rol=String(usuario.ROL_ID||usuario.ROL_NOMBRE||'').trim().toUpperCase();return rol==='ROL-ADMIN'||rol==='ADMINISTRADOR'||permisos.includes('*:*')||permisos.includes(`${modulo}:LEER`);
   }
   function construirMenu(){
     let html='';
     grupos.forEach(([grupo,items])=>{
-      const visibles=items.filter(item=>permitido(item[4]));
+      const visibles=items.filter(item=>permitido(item[4])&&(!item[5]||usuario.ROL_ID===item[5]));
       if(!visibles.length)return;
       html+=`<p class="etiqueta-menu">${grupo}</p>`+visibles.map(([id,icono,etiqueta])=>`<button class="boton-modulo ${id===seccionActual?'activo':''}" type="button" data-modulo="${id}"><i>${icono}</i><span>${etiqueta}</span></button>`).join('');
     });
@@ -134,7 +135,7 @@
   }
   function escapar(texto){return String(texto??'').replace(/[&<>'"]/g,caracter=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[caracter]));}
   function fechaAviso(item){const fecha=new Date(item.FECHA_ENVIO||item.FECHA_HORA||item.CREADO_EN||0);return Number.isNaN(fecha.getTime())?'Sin fecha':new Intl.DateTimeFormat('es-CL',{dateStyle:'short',timeStyle:'short'}).format(fecha);}
-  function puedeAvisos(modulo){if(!usuario)return false;const permisos=Array.isArray(usuario.PERMISOS)?usuario.PERMISOS:[];return usuario.ROL_ID==='ROL-ADMIN'||permisos.includes('*:*')||permisos.includes(`${modulo}:LEER`);}
+  function puedeAvisos(modulo){if(!usuario)return false;const permisos=Array.isArray(usuario.PERMISOS)?usuario.PERMISOS:[];const rol=String(usuario.ROL_ID||usuario.ROL_NOMBRE||'').trim().toUpperCase();return rol==='ROL-ADMIN'||rol==='ADMINISTRADOR'||permisos.includes('*:*')||permisos.includes(`${modulo}:LEER`);}
   function fechaOrdenAviso(item){return new Date(item.FECHA_ENVIO||item.FECHA_HORA||item.CREADO_EN||0).getTime();}
   function mostrarToastAviso(item,tipo){const contenedor=$('#toastAvisosMenu'),nodo=document.createElement('article');nodo.className=`toast-aviso-menu ${tipo}`;nodo.innerHTML=`<i>${tipo==='alerta'?'!':'🔔'}</i><div><b>${escapar(tipo==='alerta'?'Nueva alerta':'Nueva notificación')}</b><small>${escapar(item.TITULO||item.MENSAJE||'Existe un nuevo aviso pendiente.')}</small></div><button type="button" aria-label="Cerrar">×</button>`;contenedor.append(nodo);nodo.querySelector('button').addEventListener('click',()=>nodo.remove());setTimeout(()=>nodo.remove(),5200);}
   function renderizarAvisos(){const notifications=estadoAvisos.notifications||[],alerts=estadoAvisos.alerts||[],mezclados=[...alerts.map(item=>({item,tipo:'alerta'})),...notifications.map(item=>({item,tipo:'notificacion'}))].sort((a,b)=>fechaOrdenAviso(b.item)-fechaOrdenAviso(a.item)).slice(0,14);$('#totalNotificacionesMenu').textContent=notifications.length;$('#totalAlertasMenu').textContent=alerts.length;$('#listaAvisosMenu').innerHTML=mezclados.length?mezclados.map(({item,tipo})=>`<article class="aviso-menu-item ${tipo}" data-modulo-aviso="${tipo==='alerta'?'alerts':'notifications'}"><i>${tipo==='alerta'?'!':'🔔'}</i><div><b>${escapar(item.TITULO|| (tipo==='alerta'?'Alerta':'Notificación'))}</b><span>${escapar(item.MENSAJE||'')}</span><small>${escapar(fechaAviso(item))}</small></div></article>`).join(''):'<p class="sin-avisos-menu">No existen avisos pendientes.</p>';document.querySelectorAll('[data-modulo-aviso]').forEach(item=>item.addEventListener('click',()=>{cerrarPanelAvisos();abrirModulo(item.dataset.moduloAviso);}));}
@@ -240,6 +241,15 @@
       $('#cargandoModulo').classList.add('oculto');
       cambiarEstado(data.actualizadoEn?'Módulo activo · memoria local':'Módulo activo','listo');
       aplicarTema();
+    }
+    if(data.tipo==='flotas:usuario-actualizado'&&data.usuario){
+      aplicarUsuario(data.usuario);
+      const moduloActual=modulos.get(seccionActual);
+      if(!moduloActual||!permitido(moduloActual[4])){
+        seccionActual='dashboard';
+        localStorage.setItem('flotas_modulo_actual_v1',seccionActual);
+        abrirModulo('dashboard',{forzar:true});
+      }
     }
     if(data.tipo==='flotas:navegar'&&modulos.has(data.seccion))abrirModulo(data.seccion);
     if(data.tipo==='flotas:sesion-cerrada'){api.setAuth({});irAcceso('cerrada');}

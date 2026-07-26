@@ -1,0 +1,11 @@
+VALIDACION TECNICA 3.13.1
+
+version: OK
+route_connections: OK
+function_connections: OK
+admin_helper: OK
+admin_wildcard: OK
+all_modules_embedded: OK
+
+Modulos integrados en Codigo_Completo.gs: 28
+Tamano maestro: 237997 bytes

@@ -1,4 +1,4 @@
-# Actualización 3.12.2
+# Actualización 3.13.1
 
 1. Reemplace los archivos web.
 2. Copie `Codigo_Completo.gs` completo en Google Apps Script.

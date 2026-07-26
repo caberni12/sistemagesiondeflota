@@ -37,6 +37,10 @@
   let gpsLocationsPaintKey = '';
   let gpsDevicesPaintKey = '';
   let gpsTotalsPaintKey = '';
+  let connectionsRefreshTimer = null;
+  let connectionsRefreshPending = null;
+  let ultimoResumenConexiones = { equipos:[], ubicaciones:[], totales:{}, opciones:{} };
+  const filtrosConexiones = { FECHA_DESDE:'', FECHA_HASTA:'', USUARIO_ID:'', ESTADO:'TODOS', GPS:'TODOS', VEHICULO_ID:'', DISPOSITIVO_ID:'', TIPO_RED:'', PLATAFORMA:'', PRECISION_MAXIMA:'', BUSCAR:'' };
   let realtimeTimer = null;
   let heartbeatTimer = null;
   let notificationTimer = null;
@@ -73,6 +77,7 @@
     checkinHistory:{ actions:['dashboard'], resources:['checkins','vehicles','drivers','operations'] },
     operations:{ actions:['dashboard','operationsSummary','realtimeSummary','getOperationalPoint'], resources:['operations','routes','vehicles','drivers','checkins','companies'] },
     gps:{ actions:['realtimeSummary','getOperationalPoint'], resources:['gps','connections','vehicles','drivers','operations','routes','companies'] },
+    connections:{ actions:['connectionsOnline'], resources:['gps','connections','vehicles','drivers','users'] },
     notifications:{ actions:['dashboard','realtimeSummary'], resources:['notifications','drivers','users'] },
     vehicles:{ actions:['dashboard'], resources:['vehicles'] },
     drivers:{ actions:['dashboard'], resources:['drivers','users'] },
@@ -131,7 +136,7 @@
       ['documents','▤','Documentos'], ['history','↻','Historial'], ['alerts','!','Alertas']
     ]],
     ['ADMINISTRACIÓN', [
-      ['users','♚','Usuarios'], ['company','🏢','Empresa'], ['reports','▥','Reportes'], ['audit','☷','Auditoría'], ['settings','⚒','Configuración']
+      ['connections','◎','Conexiones en línea'], ['users','♚','Usuarios'], ['company','🏢','Empresa'], ['reports','▥','Reportes'], ['audit','☷','Auditoría'], ['settings','⚒','Configuración']
     ]]
   ];
 
@@ -191,13 +196,13 @@
 
   const labels = {
     dashboard:'Panel principal',routes:'Rutas asignadas',vehicles:'Vehículos',drivers:'Conductores',checkin:'Check-in vehicular',checkinApprovals:'Aprobación de check-ins',checkinHistory:'Historial de check-in',operations:'Operaciones',gps:'GPS en tiempo real',maintenance:'Mantenciones',fuel:'Combustible',
-    notifications:'Notificaciones',documents:'Documentos',history:'Historial',alerts:'Alertas',users:'Usuarios',reports:'Reportes',audit:'Auditoría',company:'Empresa',settings:'Configuración'
+    notifications:'Notificaciones',documents:'Documentos',history:'Historial',alerts:'Alertas',connections:'Conexiones en línea',users:'Usuarios',reports:'Reportes',audit:'Auditoría',company:'Empresa',settings:'Configuración'
   };
 
   const navPermission = {
     dashboard:'PANEL_PRINCIPAL',routes:'RUTAS',checkin:'CHECKIN',checkinApprovals:'CHECKIN_APROBACIONES',checkinHistory:'CHECKIN',operations:'OPERACIONES',gps:'GPS',notifications:'NOTIFICACIONES',
     vehicles:'VEHICULOS',drivers:'CONDUCTORES',maintenance:'MANTENCIONES',fuel:'COMBUSTIBLE',documents:'DOCUMENTOS',history:'HISTORIAL',
-    alerts:'ALERTAS',users:'USUARIOS',company:'CONFIGURACION',reports:'REPORTES',audit:'BITACORA',settings:'CONFIGURACION'
+    alerts:'ALERTAS',connections:'CONEXIONES',users:'USUARIOS',company:'CONFIGURACION',reports:'REPORTES',audit:'BITACORA',settings:'CONFIGURACION'
   };
   const resourcePermission={vehicles:'VEHICULOS',drivers:'CONDUCTORES',maintenance:'MANTENCIONES',fuel:'COMBUSTIBLE',documents:'DOCUMENTOS',alerts:'ALERTAS',users:'USUARIOS'};
   const permissionCatalog = Object.freeze([
@@ -205,7 +210,7 @@
     ['OPERACIONES','Operaciones'],['CHECKIN','Check-in'],['CHECKIN_APROBACIONES','Aprobar check-ins'],['GPS','Ubicación en tiempo real'],
     ['HISTORIAL','Historial'],['MANTENCIONES','Mantenciones'],['COMBUSTIBLE','Combustible'],['DOCUMENTOS','Documentos'],['ALERTAS','Alertas'],
     ['REPORTES','Reportes'],['BITACORA','Auditoría'],['CONFIGURACION','Configuración'],['QR','QR'],['RUTAS','Rutas'],
-    ['NOTIFICACIONES','Notificaciones'],['CONEXIONES','Conexiones']
+    ['NOTIFICACIONES','Notificaciones'],['CONEXIONES','Conexiones en línea · acceso delegado']
   ]);
   const permissionActions = Object.freeze([['LEER','Ver'],['CREAR','Crear'],['ACTUALIZAR','Editar'],['ELIMINAR','Eliminar']]);
 
@@ -229,11 +234,11 @@
   ]);
   function hasPermission(module,action='LEER'){
     const permissions=currentUser?.PERMISOS||[];
-    return currentUser?.ROL_ID==='ROL-ADMIN'||permissions.includes('*:*')||permissions.includes(`${module}:${action}`);
+    return esAdministrador()||permissions.includes('*:*')||permissions.includes(`${module}:${action}`);
   }
   function puedeAdministrarPuntoOperacion(){return ['ROL-ADMIN','ROL-SUPERVISOR'].includes(String(currentUser?.ROL_ID||''));}
   function puedeCierreExcepcional(){return ['ROL-ADMIN','ROL-SUPERVISOR'].includes(String(currentUser?.ROL_ID||''));}
-  function esAdministrador(){return String(currentUser?.ROL_ID||'')==='ROL-ADMIN';}
+  function esAdministrador(){const rol=String(currentUser?.ROL_ID||currentUser?.ROL_NOMBRE||'').trim().toUpperCase();return rol==='ROL-ADMIN'||rol==='ADMINISTRADOR'||(Array.isArray(currentUser?.PERMISOS)&&currentUser.PERMISOS.includes('*:*'));}
   function puedeFinalizarOperacion(){return ['ROL-ADMIN','ROL-SUPERVISOR','ROL-CONDUCTOR'].includes(String(currentUser?.ROL_ID||''));}
   function postParent(message){
     if(!embeddedMode||window.parent===window)return;
@@ -316,7 +321,7 @@
       RUTA_NO_DISPONIBLE:'La ruta seleccionada ya no está disponible.', RUTA_NO_COINCIDE_CONDUCTOR:'La ruta no corresponde al conductor seleccionado.', RUTA_NO_COINCIDE_VEHICULO:'La ruta no corresponde al vehículo seleccionado.', RUTA_YA_VINCULADA:'La ruta ya está vinculada a otra operación activa.',
       PUNTO_OPERACION_ROL_NO_AUTORIZADO:'Solo un Administrador o Supervisor puede configurar o cambiar el punto base.', CIERRE_EXCEPCIONAL_NO_AUTORIZADO:'Solo un Administrador o Supervisor puede cerrar una operación fuera de la base.',
       CIERRE_EXCEPCIONAL_CONFIRMACION_REQUERIDA:'Active la opción de cierre excepcional para continuar fuera de la base.', CIERRE_EXCEPCIONAL_MOTIVO_REQUERIDO:'Explique el motivo del cierre excepcional con al menos 10 caracteres.',
-      KILOMETRAJE_FINAL_INVALIDO:'El kilometraje será guardado para revisión, pero no impedirá finalizar.', SOLO_ADMINISTRADOR:'Solo el Administrador puede editar o eliminar operaciones.', MOTIVO_EDICION_REQUERIDO:'Indique un motivo de al menos 5 caracteres para registrar la edición.', FECHA_OPERACION_INVALIDA:'La fecha indicada no es válida.', RECURSO_IMPORTACION_NO_PERMITIDO:'Este módulo no admite importación masiva.',
+      KILOMETRAJE_FINAL_INVALIDO:'El kilometraje será guardado para revisión, pero no impedirá finalizar.', SOLO_ADMINISTRADOR:'Solo un Administrador puede realizar esta acción.', ACCESO_CONEXIONES_NO_AUTORIZADO:'El Administrador no ha habilitado el acceso a Conexiones en línea para este usuario.', MOTIVO_EDICION_REQUERIDO:'Indique un motivo de al menos 5 caracteres para registrar la edición.', FECHA_OPERACION_INVALIDA:'La fecha indicada no es válida.', RECURSO_IMPORTACION_NO_PERMITIDO:'Este módulo no admite importación masiva.',
       COMBUSTIBLE_VEHICULO_REQUERIDO:'Seleccione el vehículo de la carga.', COMBUSTIBLE_CONDUCTOR_REQUERIDO:'Seleccione el conductor relacionado.',
       COMBUSTIBLE_LITROS_INVALIDO:'Ingrese una cantidad de litros mayor que cero.', COMBUSTIBLE_PRECIO_LITRO_INVALIDO:'Ingrese un precio por litro válido.', COMBUSTIBLE_KILOMETRAJE_INVALIDO:'Ingrese un kilometraje válido.',
       COMBUSTIBLE_FECHA_INVALIDA:'La fecha y hora de la carga no son válidas.', COMBUSTIBLE_OPERACION_NO_COINCIDE:'La operación seleccionada no corresponde al vehículo y conductor.',
@@ -436,8 +441,21 @@
   function connectionType(){return navigator.connection?.effectiveType||navigator.connection?.type||'';}
   async function sendHeartbeat(state='En línea'){
     if(!currentUser)return;
-    try{await api.request('heartbeat',{data:{DISPOSITIVO_ID:deviceId,SESION_CLIENTE_ID:clientSessionId,SECCION_ACTUAL:currentSection,GPS_ACTIVO:gpsWatchId===null?'NO':'SI',PAGINA_VISIBLE:document.hidden?'NO':'SI',ESTADO:state,PLATAFORMA:navigator.platform||'',NAVEGADOR:navigator.userAgent,TIPO_RED:connectionType(),BATERIA_PORCENTAJE:batteryLevel,IP_PUBLICA:clientPublicIp}});setConnection(navigator.onLine!==false,api.isRemote()?'Servicio conectado':'Modo local activo');}
-    catch(error){setConnection(false,'Sin conexión con el servicio');}
+    try{
+      const result=await api.request('heartbeat',{data:{DISPOSITIVO_ID:deviceId,SESION_CLIENTE_ID:clientSessionId,SECCION_ACTUAL:currentSection,GPS_ACTIVO:gpsWatchId===null?'NO':'SI',PAGINA_VISIBLE:document.hidden?'NO':'SI',ESTADO:state,PLATAFORMA:navigator.platform||'',NAVEGADOR:navigator.userAgent,TIPO_RED:connectionType(),BATERIA_PORCENTAJE:batteryLevel,IP_PUBLICA:clientPublicIp}});
+      if(result?.user){
+        const previousVersion=Number(currentUser.VERSION_PERMISOS||0),nextVersion=Number(result.user.VERSION_PERMISOS||0);
+        const previousRole=String(currentUser.ROL_ID||''),nextRole=String(result.user.ROL_ID||'');
+        if(previousVersion!==nextVersion||previousRole!==nextRole){
+          currentUser=result.user;
+          const auth=api.getAuth();api.setAuth({...auth,user:result.user});
+          postParent({tipo:'flotas:usuario-actualizado',usuario:result.user,seccion:currentSection});
+          buildNav();
+          if(!hasPermission(navPermission[currentSection]||'PANEL_PRINCIPAL','LEER'))navigateSection('dashboard');
+        }
+      }
+      setConnection(navigator.onLine!==false,api.isRemote()?'Servicio conectado':'Modo local activo');
+    }catch(error){setConnection(false,'Sin conexión con el servicio');}
   }
   function alertItemDate(item){return new Date(item.FECHA_ENVIO||item.FECHA_HORA||item.CREADO_EN||0).getTime();}
   function showIncomingNotice(item,kind){
@@ -570,7 +588,13 @@
     $('#backendName').textContent=api.backendLabel(); $('#backendDetail').textContent=api.isRemote()?'Carga manual de módulos · conexión bajo demanda':'Información guardada en este dispositivo';
     if(currentCompany)applyBranding(currentCompany);
     setConnection(true, api.isRemote()?'Listo para sincronizar':'Base de datos local activa'); buildNav();
-    go(initialSection).finally(() => startRealtimeServices());
+    go(initialSection).finally(() => {
+      startRealtimeServices();
+      if(config.GPS_AUTOMATICO_OBLIGATORIO){
+        localStorage.setItem(trackingPreferenceKey,'1');
+        setTimeout(()=>startTracking({silent:true}),250);
+      }
+    });
   }
 
   function buildNav() {
@@ -662,6 +686,7 @@
   }
 
   async function go(section, options = {}) {
+    if(section==='connections'&&!esAdministrador()){toast('Acceso restringido','Este módulo está disponible únicamente para Administradores.','error');return false;}
     if (!renderers[section]) section = 'dashboard';
     const sequence = ++secuenciaNavegacion;
     cleanupSection(); currentSection=section; buildNav();
@@ -673,7 +698,7 @@
     $('#pageTitle').textContent=labels[section]; $('#breadcrumb').textContent=`Sistema / ${labels[section]}`;
     closeSidebar();
 
-    const cargaAutomaticaPermitida = section === 'gps';
+    const cargaAutomaticaPermitida = section === 'gps' || section === 'connections';
     if (cargaManualModulos && !cargaAutomaticaPermitida && !options.force && !modulosSincronizadosSesion.has(section)) {
       $('#content').innerHTML=moduloVacioSinSincronizar(section);
       bindSection();
@@ -701,6 +726,7 @@
       registrarSincronizacionSeccion(section,'SERVIDOR');
       bindSection();
       if (section==='gps') setTimeout(initMap,80);
+      if (section==='connections') setTimeout(initConnectionsMap,80);
       actualizarEstadoSincronizacionVisible(textoActualizacionSeccion(section));
       if(embeddedMode)postParent({tipo:'flotas:modulo-listo',usuario:currentUser,seccion:section,actualizadoEn:estadoSincronizacionModulos[section]?.time||0});
     } catch (error) {
@@ -733,6 +759,7 @@
         if(currentSection===section){
           $('#content').innerHTML=decorated;bindSection();
           if(section==='gps')setTimeout(initMap,60);
+          if(section==='connections')setTimeout(initConnectionsMap,60);
           actualizarEstadoSincronizacionVisible(textoActualizacionSeccion(section));
         }
         setSave(`${labels[section]||'Módulo'} actualizado`);
@@ -748,6 +775,7 @@
 
   function cleanupSection() {
     if (gpsRefreshTimer) clearTimeout(gpsRefreshTimer); gpsRefreshTimer=null;
+    if (connectionsRefreshTimer) clearTimeout(connectionsRefreshTimer); connectionsRefreshTimer=null;
     gpsRefreshQueued=false;gpsLocationsPaintKey='';gpsDevicesPaintKey='';gpsTotalsPaintKey='';
     document.body.classList.remove('mapa-pantalla-completa');$('#mapCard')?.classList.remove('map-fullscreen');
     if (mapaFlota) { mapaFlota.eliminar(); mapaFlota=null; }
@@ -787,6 +815,7 @@
     async operations(){return renderOperations();},
     async routes(){return renderRoutes();},
     async gps(){return renderGps();},
+    async connections(){return renderConnectionsOnline();},
     async notifications(){return renderNotifications();},
     async history(){return renderHistory();},
     async reports(){return renderReports();},
@@ -977,7 +1006,7 @@
   function maintenanceRows(m){return `<tr data-filter-date="${esc(m.FECHA_PROGRAMADA||m.FECHA_REALIZADA||m.CREADO_EN||'')}" data-search-row="${esc(`${m.TITULO} ${m.VEHICULO_ID} ${m.ESTADO}`.toLowerCase())}"><td><strong>${esc(m.TITULO)}</strong><span class="muted">${esc(m.DESCRIPCION||'')}</span></td><td>${esc(m.VEHICULO_ID)}</td><td>${esc(m.TIPO)}</td><td>${fmtDate(m.FECHA_PROGRAMADA)}</td><td>$${number(m.COSTO)}</td><td>${status(m.ESTADO)}</td><td>${actions('maintenance',m.ID)}</td></tr>`;}
   function documentRows(d){return `<tr data-filter-date="${esc(d.FECHA_VENCIMIENTO||d.FECHA_EMISION||d.CREADO_EN||'')}" data-search-row="${esc(`${d.TIPO} ${d.IDENTIFICACION} ${d.ESTADO}`.toLowerCase())}"><td><strong>${esc(d.TIPO)}</strong><span class="muted">${esc(d.ID)}</span></td><td>${esc(d.ASOCIADO_TIPO)}</td><td>${esc(d.IDENTIFICACION)}</td><td>${fmtDate(d.FECHA_VENCIMIENTO)}</td><td>${status(d.ESTADO)}</td><td>${d.DIRECCION_ARCHIVO?`<a class="link-button" href="${esc(d.DIRECCION_ARCHIVO)}" target="_blank" rel="noopener">Abrir</a>`:'—'}</td><td>${actions('documents',d.ID)}</td></tr>`;}
   function alertRows(a){return `<tr data-filter-date="${esc(a.FECHA_HORA||a.CREADO_EN||'')}" data-search-row="${esc(`${a.NIVEL} ${a.TITULO} ${a.MODULO}`.toLowerCase())}"><td>${status(a.NIVEL)}</td><td><strong>${esc(a.TITULO)}</strong><span class="muted">${esc(a.MENSAJE)}</span></td><td>${esc(a.MODULO||'—')}</td><td>${fmtDate(a.FECHA_HORA||a.CREADO_EN,true)}</td><td>${status(a.LEIDA||'NO')}</td><td>${actions('alerts',a.ID)}</td></tr>`;}
-  function userRows(u){const mode=u.ROL_ID==='ROL-ADMIN'?'Completo':u.MODO_PERMISOS==='PERSONALIZADO'?'Personalizados':'Según rol';const permissionButton=hasPermission('USUARIOS','ACTUALIZAR')?`<button data-user-permissions="${esc(u.ID)}" title="Configurar permisos">⚿</button>`:'';const actionHtml=actions('users',u.ID),baseActions=actionHtml==='—'?(permissionButton?`<div class="row-actions">${permissionButton}</div>`:'—'):actionHtml.replace('</div>',permissionButton+'</div>');return `<tr data-filter-date="${esc(u.ULTIMO_ACCESO||u.ACTUALIZADO_EN||u.CREADO_EN||'')}" data-search-row="${esc(`${u.NOMBRE} ${u.CORREO} ${u.ROL_ID} ${mode}`.toLowerCase())}"><td><div class="entity"><span class="avatar">${initials(u.NOMBRE)}</span><strong>${esc(u.NOMBRE)}</strong></div></td><td>${esc(u.CORREO)}</td><td>${esc(u.ROL_NOMBRE||u.ROL_ID)}</td><td>${status(mode)}</td><td>${fmtDate(u.ULTIMO_ACCESO,true)}</td><td>${status(u.ESTADO)}</td><td>${baseActions}</td></tr>`;}
+  function userRows(u){const mode=String(u.ROL_ID||u.ROL_NOMBRE||'').toUpperCase()==='ROL-ADMIN'||String(u.ROL_NOMBRE||'').toUpperCase()==='ADMINISTRADOR'?'Completo':u.MODO_PERMISOS==='PERSONALIZADO'?'Personalizados':'Según rol';const permissionButton=hasPermission('USUARIOS','ACTUALIZAR')?`<button data-user-permissions="${esc(u.ID)}" title="Configurar permisos">⚿</button>`:'';const actionHtml=actions('users',u.ID),baseActions=actionHtml==='—'?(permissionButton?`<div class="row-actions">${permissionButton}</div>`:'—'):actionHtml.replace('</div>',permissionButton+'</div>');return `<tr data-filter-date="${esc(u.ULTIMO_ACCESO||u.ACTUALIZADO_EN||u.CREADO_EN||'')}" data-search-row="${esc(`${u.NOMBRE} ${u.CORREO} ${u.ROL_ID} ${mode}`.toLowerCase())}"><td><div class="entity"><span class="avatar">${initials(u.NOMBRE)}</span><strong>${esc(u.NOMBRE)}</strong></div></td><td>${esc(u.CORREO)}</td><td>${esc(u.ROL_NOMBRE||u.ROL_ID)}</td><td>${status(mode)}</td><td>${fmtDate(u.ULTIMO_ACCESO,true)}</td><td>${status(u.ESTADO)}</td><td>${baseActions}</td></tr>`;}
   function actions(resource,id){const module=resourcePermission[resource];const buttons=[];if(hasPermission(module,'ACTUALIZAR'))buttons.push(`<button data-edit="${resource}:${id}" title="Editar">✎</button>`);if(hasPermission(module,'ELIMINAR'))buttons.push(`<button data-delete="${resource}:${id}" title="Eliminar">×</button>`);return buttons.length?`<div class="row-actions">${buttons.join('')}</div>`:'—';}
 
   function parseCheckinItems(row) {
@@ -1412,6 +1441,44 @@
       `<div class="live-strip"><article class="live-stat"><i>⌖</i><div><span>Ubicaciones visibles</span><b id="gpsVisibleCount">${locations.total}</b></div></article><article class="live-stat online"><i>●</i><div><span>Sesiones abiertas</span><b id="gpsOnlineCount">${realtime.totals?.onlineDevices||0}</b></div></article><article class="live-stat online"><i>🚐</i><div><span>Conduciendo</span><b id="gpsDrivingCount">${realtime.totals?.drivingSessions||0}</b></div></article><article class="live-stat ${(realtime.totals?.sessionsWithoutGps||0)?'warning':''}"><i>!</i><div><span>Operación sin GPS</span><b id="gpsWithoutCount">${realtime.totals?.sessionsWithoutGps||0}</b></div></article></div>`+
       `<div class="gps-layout"><article class="card map-card" id="mapCard"><div class="map-fullscreen-bar"><button class="btn soft small" type="button" data-map-fullscreen>⛶ Pantalla completa</button></div><div id="fleetMap" class="fleet-map"></div><div class="map-toolbar"><span class="gps-live"><i></i> Consulta rápida cada ${Math.round(config.INTERVALO_TIEMPO_REAL_MILISEGUNDOS/1000)} segundos</span><span class="map-status-legend"><b class="active"></b> Activo <b class="inactive"></b> Inactivo <b class="geofence"></b> Radio base</span><span class="muted" id="gpsLastSync">Datos iniciales cargados</span><span class="muted push">Mapa © OpenStreetMap, CARTO o Esri</span></div></article><article class="card"><div class="card-header"><div><h3>Últimas posiciones</h3><p id="locationCount">${locations.total} vehículos visibles</p></div></div><div class="driver-location-list" id="driverLocationList">${locationList(locations.rows)}</div><div class="card-header" style="margin-top:18px"><div><h3>Sesiones y conductores</h3><p>Usuario, actividad y sección abierta</p></div></div><div class="device-list" id="deviceList">${(realtime.devices||[]).map(deviceCard).join('')||empty('○','Sin sesiones','Esperando señales de los dispositivos.')}</div></article></div>`;
   }
+
+  function connectionFilterPayload(){return {...filtrosConexiones};}
+  function connectionOption(value,label,selected){return `<option value="${esc(value)}" ${String(selected||'')===String(value)?'selected':''}>${esc(label)}</option>`;}
+  function connectionFilterForm(result){
+    const options=result.opciones||{},f=filtrosConexiones;
+    const users=(options.usuarios||[]).map(row=>connectionOption(row.ID,`${row.NOMBRE||row.ID}${row.CORREO?` · ${row.CORREO}`:''}`,f.USUARIO_ID)).join('');
+    const vehicles=(options.vehiculos||[]).map(row=>connectionOption(row.ID,`${row.PATENTE||row.ID}${row.NOMBRE?` · ${row.NOMBRE}`:''}`,f.VEHICULO_ID)).join('');
+    const devices=(options.dispositivos||[]).map(value=>connectionOption(value,value,f.DISPOSITIVO_ID)).join('');
+    const networks=(options.redes||[]).map(value=>connectionOption(value,value,f.TIPO_RED)).join('');
+    const platforms=(options.plataformas||[]).map(value=>connectionOption(value,value,f.PLATAFORMA)).join('');
+    return `<article class="card connections-filter-card"><div class="card-header"><div><h3>Filtros administrativos</h3><p>Consulte conexiones por fecha de última señal, usuario, equipo, vehículo, GPS, red, plataforma y precisión.</p></div></div><form id="connectionsFilterForm" class="connections-filter-form"><label class="field"><span>Desde</span><input type="date" name="FECHA_DESDE" value="${esc(f.FECHA_DESDE)}"></label><label class="field"><span>Hasta</span><input type="date" name="FECHA_HASTA" value="${esc(f.FECHA_HASTA)}"></label><label class="field"><span>Usuario</span><select name="USUARIO_ID"><option value="">Todos los usuarios</option>${users}</select></label><label class="field"><span>Estado</span><select name="ESTADO"><option value="TODOS" ${f.ESTADO==='TODOS'?'selected':''}>Todos</option><option value="ACTIVOS" ${f.ESTADO==='ACTIVOS'?'selected':''}>Activos</option><option value="DESCONECTADOS" ${f.ESTADO==='DESCONECTADOS'?'selected':''}>Desconectados</option><option value="SEGUNDO_PLANO" ${f.ESTADO==='SEGUNDO_PLANO'?'selected':''}>En segundo plano</option></select></label><label class="field"><span>GPS</span><select name="GPS"><option value="TODOS" ${f.GPS==='TODOS'?'selected':''}>Todos</option><option value="ACTIVO" ${f.GPS==='ACTIVO'?'selected':''}>GPS activo</option><option value="INACTIVO" ${f.GPS==='INACTIVO'?'selected':''}>GPS inactivo</option><option value="SIN_UBICACION" ${f.GPS==='SIN_UBICACION'?'selected':''}>Sin ubicación</option></select></label><label class="field"><span>Vehículo</span><select name="VEHICULO_ID"><option value="">Todos los vehículos</option>${vehicles}</select></label><label class="field"><span>Dispositivo</span><select name="DISPOSITIVO_ID"><option value="">Todos los equipos</option>${devices}</select></label><label class="field"><span>Tipo de red</span><select name="TIPO_RED"><option value="">Todas las redes</option>${networks}</select></label><label class="field"><span>Plataforma</span><select name="PLATAFORMA"><option value="">Todas las plataformas</option>${platforms}</select></label><label class="field"><span>Precisión máxima</span><select name="PRECISION_MAXIMA"><option value="" ${!f.PRECISION_MAXIMA?'selected':''}>Cualquier precisión</option><option value="25" ${String(f.PRECISION_MAXIMA)==='25'?'selected':''}>Hasta 25 m</option><option value="50" ${String(f.PRECISION_MAXIMA)==='50'?'selected':''}>Hasta 50 m</option><option value="100" ${String(f.PRECISION_MAXIMA)==='100'?'selected':''}>Hasta 100 m</option><option value="200" ${String(f.PRECISION_MAXIMA)==='200'?'selected':''}>Hasta 200 m</option></select></label><label class="field connections-search-field"><span>Buscar en todos los campos</span><input type="search" name="BUSCAR" value="${esc(f.BUSCAR)}" placeholder="Nombre, correo, patente, IP, dispositivo, módulo…"></label><div class="form-actions"><button class="btn soft" type="button" data-connections-reset>Limpiar filtros</button><button class="btn primary" type="submit">Aplicar filtros</button></div></form></article>`;
+  }
+  function connectionRows(rows){
+    return (rows||[]).map(row=>`<tr><td><span class="connection-state ${row.EN_LINEA?'online':'offline'}"><i></i>${row.EN_LINEA?'Activo':'Desconectado'}</span></td><td><strong>${esc(row.USUARIO_NOMBRE||row.USUARIO_ID)}</strong><span class="muted">${esc(row.USUARIO_CORREO||row.ROL_ID||'')}</span></td><td><strong>${esc(row.DISPOSITIVO_ID||'Sin ID')}</strong><span class="muted">${esc(row.PLATAFORMA||'Plataforma no informada')}</span></td><td>${esc(row.VEHICULO_PATENTE||'—')}<span class="muted">${esc(row.CONDUCTOR_NOMBRE||row.VEHICULO_NOMBRE||'')}</span></td><td>${row.GPS_ACTIVO==='SI'&&row.GPS_RECIENTE?status('Activo'):status('Sin GPS')}<span class="muted">${row.PRECISION_METROS!==''?`±${number(row.PRECISION_METROS)} m`:'Sin posición'}</span></td><td>${esc(row.SECCION_ACTUAL||'—')}<span class="muted">${esc(row.ACTIVIDAD||'')}</span></td><td>${esc(row.TIPO_RED||'—')}<span class="muted">${row.BATERIA_GPS!==''?`${esc(row.BATERIA_GPS)}% batería`:''}</span></td><td>${fmtDate(row.ULTIMA_CONEXION,true)}</td><td>${row.LATITUD!==''?`<button class="btn soft small" data-connection-focus="${row.LATITUD},${row.LONGITUD}">Ver mapa</button>`:'—'}</td></tr>`).join('')||`<tr><td colspan="9">${empty('○','Sin equipos para los filtros aplicados','Cambie el período o quite filtros para ampliar la búsqueda.')}</td></tr>`;
+  }
+  function connectionQuickList(rows){return (rows||[]).slice(0,14).map(row=>`<button class="connection-quick-item ${row.EN_LINEA?'online':'offline'}" ${row.LATITUD!==''?`data-connection-focus="${row.LATITUD},${row.LONGITUD}"`:''}><i></i><span><b>${esc(row.USUARIO_NOMBRE||'Usuario')}</b><small>${esc(row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo')}</small></span><em>${row.EN_LINEA?'Activo':'Desconectado'}</em></button>`).join('')||empty('○','Sin conexiones','Los equipos aparecerán cuando registren una señal.');}
+  function connectionsResultsHtml(result){
+    const totals=result.totales||{},rows=result.equipos||[];
+    return `<div class="live-strip connections-live-strip"><article class="live-stat"><i>▣</i><div><span>Equipos encontrados</span><b id="connectionsTotal">${totals.equipos||0}</b></div></article><article class="live-stat online"><i>●</i><div><span>Activos</span><b id="connectionsOnline">${totals.activos||0}</b></div></article><article class="live-stat warning"><i>●</i><div><span>Desconectados</span><b id="connectionsOffline">${totals.desconectados||0}</b></div></article><article class="live-stat online"><i>⌖</i><div><span>GPS activos</span><b id="connectionsGps">${totals.gpsActivos||0}</b></div></article><article class="live-stat ${(totals.sinGps||0)?'warning':''}"><i>!</i><div><span>Sin GPS</span><b id="connectionsNoGps">${totals.sinGps||0}</b></div></article></div><div class="connections-dashboard-grid"><article class="card map-card" id="mapCard"><div class="card-header"><div><h3>Mapa de equipos conectados</h3><p>Verde: conexión activa · Rojo: desconectado o sin señal reciente.</p></div><button class="btn soft small" type="button" data-map-fullscreen>⛶ Pantalla completa</button></div><div class="fleet-map connections-map" id="connectionsMap"></div><small class="muted" id="connectionsLastSync">Última consulta: ${fmtDate(result.serverTime||new Date(),true)}</small></article><article class="card"><div class="card-header"><div><h3>Estado rápido</h3><p>Usuarios y equipos ordenados por última señal.</p></div></div><div class="connections-quick-list" id="connectionsQuickList">${connectionQuickList(rows)}</div></article></div><article class="card"><div class="card-header"><div><h3>Detalle de conexiones</h3><p>Información administrativa de usuarios, equipos, GPS, red y última actividad.</p></div><span class="status-badge">${rows.length} registro(s)</span></div><div class="table-wrap"><table><thead><tr><th>Estado</th><th>Usuario</th><th>Equipo</th><th>Vehículo / conductor</th><th>GPS</th><th>Módulo / actividad</th><th>Red / batería</th><th>Última señal</th><th>Mapa</th></tr></thead><tbody id="connectionsTableBody">${connectionRows(rows)}</tbody></table></div></article>`;
+  }
+  async function renderConnectionsOnline(){
+    if(!hasPermission('CONEXIONES','LEER'))throw new Error('ACCESO_CONEXIONES_NO_AUTORIZADO');
+    const result=await api.request('connectionsOnline',{...connectionFilterPayload(),force:true});ultimoResumenConexiones=result;
+    return heading('ADMINISTRACIÓN','Conexiones en línea','Mapa y control en tiempo real de usuarios y equipos conectados. El acceso es otorgado y retirado únicamente por un Administrador.',`<button class="btn soft" data-connections-refresh>↻ Actualizar ahora</button>`)+`<div class="automatic-alert-banner"><i>⌖</i><div><b>Supervisión activa</b><span>Un equipo se muestra en verde cuando envía señal dentro de ${number(result.intervaloActivoSegundos||90)} segundos; después cambia a rojo automáticamente.</span></div></div>`+connectionFilterForm(result)+`<section id="connectionsResults" aria-live="polite">${connectionsResultsHtml(result)}</section>`;
+  }
+  function paintConnectionsOnline(result,adjust=false){
+    ultimoResumenConexiones=result||ultimoResumenConexiones;const rows=ultimoResumenConexiones.equipos||[],totals=ultimoResumenConexiones.totales||{};
+    const set=(id,value)=>{const node=$(id);if(node)node.textContent=value;};set('#connectionsTotal',totals.equipos||0);set('#connectionsOnline',totals.activos||0);set('#connectionsOffline',totals.desconectados||0);set('#connectionsGps',totals.gpsActivos||0);set('#connectionsNoGps',totals.sinGps||0);
+    const tbody=$('#connectionsTableBody');if(tbody)tbody.innerHTML=connectionRows(rows);const quick=$('#connectionsQuickList');if(quick)quick.innerHTML=connectionQuickList(rows);const sync=$('#connectionsLastSync');if(sync)sync.textContent=`Última consulta: ${fmtDate(ultimoResumenConexiones.serverTime||new Date(),true)}`;
+    const markers=(ultimoResumenConexiones.ubicaciones||[]).map(row=>({id:row.DISPOSITIVO_ID||row.ID,latitud:Number(row.LATITUD),longitud:Number(row.LONGITUD),nombre:`${row.USUARIO_NOMBRE||'Usuario'} · ${row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo'}`,activo:Boolean(row.EN_LINEA),detalle:`<b>${esc(row.USUARIO_NOMBRE||'Usuario')}</b><span>${esc(row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo')}</span><span>${esc(row.DIRECCION||`${Number(row.LATITUD).toFixed(5)}, ${Number(row.LONGITUD).toFixed(5)}`)}</span><span>${row.GPS_ACTIVO==='SI'?'GPS declarado activo':'GPS inactivo'} · precisión ${row.PRECISION_METROS!==''?`±${number(row.PRECISION_METROS)} m`:'sin dato'}</span><small>${row.EN_LINEA?'Activo':'Desconectado'} · ${fmtDate(row.FECHA_GPS||'',true)}</small>`}));mapaFlota?.actualizarMarcadores(markers,adjust);
+    $$('[data-connection-focus]').forEach(btn=>btn.addEventListener('click',()=>{const [lat,lng]=btn.dataset.connectionFocus.split(',').map(Number);mapaFlota?.establecerVista(lat,lng,16);}));
+  }
+  async function initConnectionsMap(){const container=$('#connectionsMap');if(!container||!window.MapaFlotas||currentSection!=='connections')return;await esperarTamanoMapa(container);if(currentSection!=='connections'||!container.isConnected)return;mapaFlota?.eliminar?.();mapaFlota=new MapaFlotas(container,{centro:config.CENTRO_MAPA,nivel:config.NIVEL_ACERCAMIENTO_MAPA});paintConnectionsOnline(ultimoResumenConexiones,true);scheduleConnectionsRefresh(250);}
+  function scheduleConnectionsRefresh(delay=Number(config.INTERVALO_TIEMPO_REAL_MILISEGUNDOS||4000)){if(connectionsRefreshTimer)clearTimeout(connectionsRefreshTimer);connectionsRefreshTimer=null;if(currentSection!=='connections'||!currentUser||!esAdministrador())return;connectionsRefreshTimer=setTimeout(()=>refreshConnectionsOnline(false),Math.max(500,delay));}
+  async function refreshConnectionsOnline(showToast=false,adjust=false){if(connectionsRefreshPending)return connectionsRefreshPending;connectionsRefreshPending=(async()=>{try{const result=await api.request('connectionsOnline',{...connectionFilterPayload(),force:true,marcaTiempo:Date.now()});paintConnectionsOnline(result,adjust);if(showToast)toast('Conexiones actualizadas',`${result.totales?.activos||0} equipos activos y ${result.totales?.desconectados||0} desconectados.`);return result;}catch(error){if(showToast)toast('No se pudieron actualizar las conexiones',translateError(error),'error');return null;}finally{connectionsRefreshPending=null;if(currentSection==='connections')scheduleConnectionsRefresh();}})();return connectionsRefreshPending;}
+  function applyConnectionsFilters(form){const values=Object.fromEntries(new FormData(form).entries());Object.keys(filtrosConexiones).forEach(key=>{filtrosConexiones[key]=String(values[key]||'').trim();});return refreshConnectionsOnline(true,true);}
+  function resetConnectionsFilters(){Object.keys(filtrosConexiones).forEach(key=>{filtrosConexiones[key]=['ESTADO','GPS'].includes(key)?'TODOS':'';});return go('connections',{force:true});}
+
   function locationList(rows){return rows.length?rows.map(row=>{const active=antiguedadUbicacion(row.FECHA_HORA)<=config.ANTIGUEDAD_UBICACION_ACTIVA_MILISEGUNDOS;return `<button class="driver-location ${active?'active':'inactive'}" data-focus-location="${row.LATITUD},${row.LONGITUD}"><i>●</i><div><b>${esc(row.CONDUCTOR_NOMBRE||row.CONDUCTOR_ID||'Sin conductor')}</b><span>${esc(row.VEHICULO_PATENTE||row.VEHICULO_ID||'Sin vehículo')} · ${Number(row.VELOCIDAD_KMH||0).toFixed(0)} km/h · ${active?'Activo':'Inactivo'}</span><span class="address-line">${esc(row.DIRECCION||`${Number(row.LATITUD).toFixed(5)}, ${Number(row.LONGITUD).toFixed(5)}`)}</span></div><time>${fmtDate(row.FECHA_HORA,true)}</time></button>`;}).join(''):empty('⌖','Sin ubicaciones','Cuando un conductor autorice y envíe su GPS, aparecerá aquí.');}
 
   async function renderHistory(){
@@ -1595,7 +1662,7 @@
     const tema=window.TemaFlotas?.normalizar?.(company)||company;
     return heading('PARÁMETROS','Configuración','Defina la conexión, el modo de visualización y la identidad cromática de todo el sistema.')+
     `<div class="settings-grid"><article class="card"><div class="card-header"><div><h3>Base de datos</h3><p>Estado de la información del sistema</p></div>${status(remote?'Central conectada':'Local activa')}</div><div class="info-grid"><div class="info-item"><span>Tipo</span><b>${remote?'Base de datos central':'Base de datos local'}</b></div><div class="info-item"><span>Sincronización</span><b>${remote?'Activa entre dispositivos':'Solo en este dispositivo'}</b></div></div></article><article class="card"><div class="card-header"><div><h3>Modo de pantalla</h3><p>Preferencia individual de este dispositivo</p></div></div><div class="setting-row"><div><b>Modo oscuro</b><span>Puede cambiarlo sin modificar la paleta guardada</span></div><label class="switch"><input id="darkSwitch" type="checkbox" ${document.body.classList.contains('dark')?'checked':''}><i></i></label></div><button class="btn soft" data-nav="company">Abrir datos de empresa</button></article></div>`+
-    `<section class="system-health-shell"><article class="card system-health-card"><div class="card-header"><div><h3>Diagnóstico y reparación</h3><p>Comprueba hojas, columnas, permisos y requisitos de los módulos críticos.</p></div><span class="status" id="systemHealthStatus">Sin ejecutar</span></div><div id="systemHealthResult" class="system-health-result"><div class="module-diagnostic"><i>✓</i><div><b>Herramienta de mantenimiento disponible</b><span>Ejecute el diagnóstico después de actualizar Google Apps Script. La reparación no elimina registros.</span></div></div></div><div class="form-actions"><button class="btn soft" type="button" data-diagnose-system>Revisar sistema</button>${currentUser?.ROL_ID==='ROL-ADMIN'?'<button class="btn primary" type="button" data-repair-system>Reparar estructura</button>':''}</div></article></section>`+
+    `<section class="system-health-shell"><article class="card system-health-card"><div class="card-header"><div><h3>Diagnóstico y reparación</h3><p>Comprueba hojas, columnas, permisos y requisitos de los módulos críticos.</p></div><span class="status" id="systemHealthStatus">Sin ejecutar</span></div><div id="systemHealthResult" class="system-health-result"><div class="module-diagnostic"><i>✓</i><div><b>Herramienta de mantenimiento disponible</b><span>Ejecute el diagnóstico después de actualizar Google Apps Script. La reparación no elimina registros.</span></div></div></div><div class="form-actions"><button class="btn soft" type="button" data-diagnose-system>Revisar sistema</button>${esAdministrador()?'<button class="btn primary" type="button" data-repair-system>Reparar estructura</button>':''}</div></article></section>`+
     `<section class="theme-settings-shell"><article class="card theme-editor-card"><div class="theme-intro"><div><span class="eyebrow">IDENTIDAD VISUAL GLOBAL</span><h3>Colores del sistema</h3><p>Los colores se guardan en la base central y se aplican automáticamente al inicio de sesión, al menú principal y a cada módulo independiente.</p></div>${status('Vista previa automática')}</div><div class="theme-presets">${preajustesTemaMarkup()}</div><form id="themeForm"><div class="theme-mode-row"><label class="field"><span>Tema predeterminado para nuevos dispositivos</span><select name="TEMA_PREDETERMINADO"><option ${tema.TEMA_PREDETERMINADO==='Sistema'?'selected':''}>Sistema</option><option ${tema.TEMA_PREDETERMINADO==='Claro'?'selected':''}>Claro</option><option ${tema.TEMA_PREDETERMINADO==='Oscuro'?'selected':''}>Oscuro</option></select></label><p class="helper">Cada usuario puede alternar temporalmente entre claro y oscuro desde el botón superior.</p></div><div class="theme-config-layout"><div class="theme-color-sections"><section class="theme-color-group"><h4>Marca y acciones</h4><p>Botones, enlaces, indicadores y estados del sistema.</p><div class="theme-color-grid">${campoColorTema('COLOR_PRINCIPAL','Color principal',tema.COLOR_PRINCIPAL)}${campoColorTema('COLOR_SECUNDARIO','Color principal intenso',tema.COLOR_SECUNDARIO)}${campoColorTema('COLOR_ACENTO','Color de acento',tema.COLOR_ACENTO)}${campoColorTema('COLOR_EXITO','Éxito y conectado',tema.COLOR_EXITO)}${campoColorTema('COLOR_ADVERTENCIA','Advertencias',tema.COLOR_ADVERTENCIA)}${campoColorTema('COLOR_PELIGRO','Errores y bloqueos',tema.COLOR_PELIGRO)}</div></section><section class="theme-color-group"><h4>Modo claro</h4><p>Fondos, tarjetas, textos y bordes de la interfaz clara.</p><div class="theme-color-grid">${campoColorTema('COLOR_FONDO','Fondo general',tema.COLOR_FONDO)}${campoColorTema('COLOR_SUPERFICIE','Tarjetas y paneles',tema.COLOR_SUPERFICIE)}${campoColorTema('COLOR_TEXTO','Texto principal',tema.COLOR_TEXTO)}${campoColorTema('COLOR_TEXTO_SECUNDARIO','Texto secundario',tema.COLOR_TEXTO_SECUNDARIO)}${campoColorTema('COLOR_BORDE','Bordes',tema.COLOR_BORDE)}${campoColorTema('COLOR_MENU','Menú lateral',tema.COLOR_MENU)}${campoColorTema('COLOR_MENU_SECUNDARIO','Degradado del menú',tema.COLOR_MENU_SECUNDARIO)}</div></section><section class="theme-color-group"><h4>Modo oscuro</h4><p>Colores usados cuando el usuario activa el modo oscuro.</p><div class="theme-color-grid">${campoColorTema('COLOR_FONDO_OSCURO','Fondo oscuro',tema.COLOR_FONDO_OSCURO)}${campoColorTema('COLOR_SUPERFICIE_OSCURO','Tarjetas oscuras',tema.COLOR_SUPERFICIE_OSCURO)}${campoColorTema('COLOR_TEXTO_OSCURO','Texto oscuro',tema.COLOR_TEXTO_OSCURO)}${campoColorTema('COLOR_TEXTO_SECUNDARIO_OSCURO','Texto secundario oscuro',tema.COLOR_TEXTO_SECUNDARIO_OSCURO)}${campoColorTema('COLOR_BORDE_OSCURO','Bordes oscuros',tema.COLOR_BORDE_OSCURO)}</div></section></div><aside class="theme-preview-panel"><div class="theme-preview-window"><div class="theme-preview-top"><i></i><b>Vista previa del sistema</b></div><div class="theme-preview-body"><div class="theme-preview-menu"><span class="active"></span><span></span><span></span><span></span></div><div class="theme-preview-content"><h4>Panel principal</h4><div class="theme-preview-kpis"><div><b>24</b><small>Vehículos</small></div><div><b>18</b><small>En operación</small></div><div><b>6</b><small>Disponibles</small></div><div><b>2</b><small>Alertas</small></div></div><button class="theme-preview-button" type="button">Acción principal</button></div></div></div><article class="card"><div class="card-header"><div><h3>Contraste</h3><p>Lectura recomendada: 4.5:1 o superior</p></div></div><div class="theme-contrast-list" id="themeContrastList">${contrasteTemaMarkup(tema)}</div></article></aside></div><div class="theme-form-actions"><button class="btn soft" type="button" data-theme-discard>Descartar vista previa</button><button class="btn soft" type="button" data-theme-defaults>Restaurar colores originales</button><button class="btn primary" type="submit">Guardar colores del sistema</button></div></form></article></section>`+
     `<section class="operation-location-settings"><article class="card"><div class="card-header"><div><span class="eyebrow">CONTROL GEOGRÁFICO</span><h3>Punto de inicio y finalización</h3><p>Esta ubicación bloquea el inicio y el cierre fuera del perímetro autorizado.</p></div>${configuracionPuntoOperacion(company).configurada?status('Configurado'):status('Pendiente')}</div><form id="operationLocationForm" class="form-grid"><input type="hidden" name="VALIDAR_UBICACION_OPERACION" value="SI"><div class="operation-policy-fixed full"><i>🔒</i><div><b>Validación GPS obligatoria</b><span>Se aplica al inicio y al cierre. El inicio exige precisión suficiente; al finalizar, una señal imprecisa puede aceptarse con tolerancia limitada, dejando evidencia completa.</span></div></div><label class="field"><span>Nombre del punto base</span><input name="PUNTO_OPERACION_NOMBRE" value="${companyValue(company,'PUNTO_OPERACION_NOMBRE','Base operacional')}" required></label><label class="field full"><span>Dirección del punto base</span><input name="PUNTO_OPERACION_DIRECCION" value="${companyValue(company,'PUNTO_OPERACION_DIRECCION',company.DIRECCION||'')}" data-address-autocomplete data-lat-target="PUNTO_OPERACION_LATITUD" data-lng-target="PUNTO_OPERACION_LONGITUD" required placeholder="Seleccione una dirección exacta"></label><label class="field"><span>Latitud</span><input name="PUNTO_OPERACION_LATITUD" type="number" step="any" value="${companyValue(company,'PUNTO_OPERACION_LATITUD')}" required></label><label class="field"><span>Longitud</span><input name="PUNTO_OPERACION_LONGITUD" type="number" step="any" value="${companyValue(company,'PUNTO_OPERACION_LONGITUD')}" required></label><label class="field"><span>Radio para iniciar</span><div class="input-suffix"><input name="RADIO_INICIO_METROS" type="number" min="10" max="5000" value="${companyValue(company,'RADIO_INICIO_METROS','150')}" required><span>metros</span></div></label><label class="field"><span>Radio para finalizar</span><div class="input-suffix"><input name="RADIO_FIN_METROS" type="number" min="10" max="5000" value="${companyValue(company,'RADIO_FIN_METROS','150')}" required><span>metros</span></div></label><label class="field"><span>Precisión GPS máxima</span><div class="input-suffix"><input name="PRECISION_GPS_MAXIMA_METROS" type="number" min="10" max="5000" value="${companyValue(company,'PRECISION_GPS_MAXIMA_METROS','120')}" required><span>metros</span></div></label><input type="hidden" name="RETORNO_BASE_OBLIGATORIO" value="SI"><div class="operation-location-status full" data-settings-location-status><i>⌖</i><div><b>${configuracionPuntoOperacion(company).configurada?'Punto guardado':'Ubicación pendiente'}</b><span>${configuracionPuntoOperacion(company).configurada?`${esc(configuracionPuntoOperacion(company).direccion)} · ${number(configuracionPuntoOperacion(company).radioInicio)} m al iniciar · ${number(configuracionPuntoOperacion(company).radioFin)} m al finalizar · guardado en este dispositivo`:'Seleccione una dirección o capture la ubicación actual.'}</span></div></div><div class="form-actions"><button class="btn soft" type="button" data-capture-base-location>⌖ Usar mi ubicación actual</button><button class="btn primary" type="submit">Guardar punto operacional</button></div></form></article></section>`+
     `<div class="danger-zone" style="margin-top:18px"><h3>Limpiar datos operativos</h3><p>Elimina vehículos, conductores, operaciones, check-ins, GPS, rutas, conexiones, mantenciones, documentos, notificaciones, alertas, reportes y bitácora. Conserva usuarios, roles, empresa y colores.</p><button class="btn danger" data-clear-data>Limpiar datos operativos</button></div>`;
@@ -1642,7 +1709,7 @@
   function fuelActionMarkup(row,authorization){
     const actions=[];
     if(hasPermission('COMBUSTIBLE','ACTUALIZAR')&&currentUser.ROL_ID!=='ROL-CONDUCTOR')actions.push(`<button class="icon-button" type="button" data-edit-fuel="${esc(row.ID)}" title="Editar">✎</button>`);
-    if(currentUser.ROL_ID==='ROL-ADMIN'&&hasPermission('COMBUSTIBLE','ELIMINAR'))actions.push(`<button class="icon-button danger" type="button" data-admin-delete-fuel="${esc(row.ID)}" title="Eliminar con auditoría">⌫</button>`);
+    if(esAdministrador()&&hasPermission('COMBUSTIBLE','ELIMINAR'))actions.push(`<button class="icon-button danger" type="button" data-admin-delete-fuel="${esc(row.ID)}" title="Eliminar con auditoría">⌫</button>`);
     if(currentUser.ROL_ID==='ROL-SUPERVISOR'&&hasPermission('COMBUSTIBLE','ELIMINAR')){
       if(authorization?.ESTADO==='APROBADA'&&!authorization.FECHA_EJECUCION)actions.push(`<button class="btn danger small" type="button" data-execute-fuel-delete="${esc(row.ID)}" data-authorization="${esc(authorization.ID)}">Eliminar autorizado</button>`);
       else if(authorization?.ESTADO==='PENDIENTE')actions.push(status('Autorización pendiente'));
@@ -1682,7 +1749,7 @@
       return `<tr data-filter-date="${esc(row.FECHA_HORA||row.CREADO_EN||'')}" data-search-row="${esc(`${row.ID} ${fuelName('vehicles',row.VEHICULO_ID)} ${fuelName('drivers',row.CONDUCTOR_ID)} ${row.ESTACION_SERVICIO||''} ${row.NUMERO_DOCUMENTO||''}`.toLowerCase())}"><td><strong>${fmtDate(row.FECHA_HORA,true)}</strong><small>${esc(row.ID)}</small></td><td>${esc(fuelName('vehicles',row.VEHICULO_ID))}</td><td>${esc(fuelName('drivers',row.CONDUCTOR_ID))}</td><td><strong>${decimal(row.LITROS,3)} L</strong><small>${esc(row.TIPO_COMBUSTIBLE||'')}</small></td><td>${clp(row.PRECIO_LITRO)}<small>por litro</small></td><td><strong>${clp(row.COSTO_TOTAL)}</strong></td><td>${number(row.KILOMETRAJE||0)} km<small>${Number(row.DISTANCIA_DESDE_ULTIMA_CARGA_KM||0)>0?`${decimal(row.DISTANCIA_DESDE_ULTIMA_CARGA_KM,1)} km recorridos`:'Primera referencia'}</small></td><td><strong>${consumption}</strong><small>${Number(row.CONSUMO_L_100KM||0)>0?`${decimal(row.CONSUMO_L_100KM)} L/100 km`:''}</small></td><td>${esc(row.ESTACION_SERVICIO||'—')}<small>${esc(row.MEDIO_PAGO||'')}</small></td><td><div class="fuel-actions">${fuelActionMarkup(row,auth)}</div></td></tr>`;
     }).join('');
     const pending=authorizations.filter(row=>row.ESTADO==='PENDIENTE');
-    const approvals=currentUser.ROL_ID==='ROL-ADMIN'&&pending.length?`<article class="card"><div class="card-header"><div><span class="eyebrow">AUTORIZACIONES</span><h3>Eliminaciones pendientes</h3><p>El Supervisor no puede eliminar hasta que un Administrador resuelva la solicitud.</p></div>${status(`${pending.length} pendiente${pending.length===1?'':'s'}`)}</div>${table(['Solicitud','Carga','Supervisor','Motivo','Fecha','Decisión'],pending.map(row=>`<tr><td><strong>${esc(row.ID)}</strong></td><td>${esc(row.CARGA_ID)}</td><td>${esc(row.SOLICITANTE_NOMBRE||row.SOLICITADO_POR)}</td><td>${esc(row.MOTIVO)}</td><td>${fmtDate(row.FECHA_SOLICITUD,true)}</td><td><div class="fuel-actions"><button class="btn primary small" type="button" data-approve-fuel-delete="${esc(row.ID)}">Aprobar</button><button class="btn soft small" type="button" data-reject-fuel-delete="${esc(row.ID)}">Rechazar</button></div></td></tr>`).join(''))}</article>`:'';
+    const approvals=esAdministrador()&&pending.length?`<article class="card"><div class="card-header"><div><span class="eyebrow">AUTORIZACIONES</span><h3>Eliminaciones pendientes</h3><p>El Supervisor no puede eliminar hasta que un Administrador resuelva la solicitud.</p></div>${status(`${pending.length} pendiente${pending.length===1?'':'s'}`)}</div>${table(['Solicitud','Carga','Supervisor','Motivo','Fecha','Decisión'],pending.map(row=>`<tr><td><strong>${esc(row.ID)}</strong></td><td>${esc(row.CARGA_ID)}</td><td>${esc(row.SOLICITANTE_NOMBRE||row.SOLICITADO_POR)}</td><td>${esc(row.MOTIVO)}</td><td>${fmtDate(row.FECHA_SOLICITUD,true)}</td><td><div class="fuel-actions"><button class="btn primary small" type="button" data-approve-fuel-delete="${esc(row.ID)}">Aprobar</button><button class="btn soft small" type="button" data-reject-fuel-delete="${esc(row.ID)}">Rechazar</button></div></td></tr>`).join(''))}</article>`:'';
     const supervisorRequests=currentUser.ROL_ID==='ROL-SUPERVISOR'&&authorizations.length?`<article class="card"><div class="card-header"><div><h3>Mis solicitudes de eliminación</h3><p>Seguimiento de autorizaciones administrativas.</p></div></div>${table(['Solicitud','Carga','Motivo','Estado','Respuesta','Fecha'],[...authorizations].sort((a,b)=>new Date(b.FECHA_SOLICITUD||0)-new Date(a.FECHA_SOLICITUD||0)).map(row=>`<tr><td><strong>${esc(row.ID)}</strong></td><td>${esc(row.CARGA_ID)}</td><td>${esc(row.MOTIVO)}</td><td>${status(row.ESTADO)}</td><td>${esc(row.COMENTARIO_AUTORIZACION||'—')}<small>${esc(row.AUTORIZADOR_NOMBRE||'')}</small></td><td>${fmtDate(row.FECHA_SOLICITUD,true)}</td></tr>`).join(''))}</article>`:'';
     const create=hasPermission('COMBUSTIBLE','CREAR')&&currentUser.ROL_ID!=='ROL-CONDUCTOR'?'<button class="btn primary" type="button" data-new-fuel>＋ Registrar carga</button>':'';
     return heading('CONTROL DE GASTOS','Carga de combustible',currentUser.ROL_ID==='ROL-CONDUCTOR'?'Consulte su historial personal de consumo, costo y rendimiento.':'Registre cargas, mida el rendimiento y mantenga trazabilidad completa por vehículo y conductor.',`<a class="btn soft" href="${esc(carpetasDrive.boletasCombustible)}" target="_blank" rel="noopener">▧ Carpeta boletas</a><button class="btn soft" data-export="fuel">⇩ Exportar historial</button><button class="btn soft" data-sync>↻ Sincronizar</button>${create}`)+
@@ -1796,6 +1863,9 @@
     $('[data-gps-vehicle-search]')?.addEventListener('input',event=>filterGpsVehicleOptions(event.target.value));
     $$('[data-focus-location]').forEach(btn=>btn.addEventListener('click',()=>{const [lat,lng]=btn.dataset.focusLocation.split(',').map(Number);mapaFlota?.establecerVista(lat,lng,16);}));
     $('[data-map-fullscreen]')?.addEventListener('click',()=>toggleMapFullscreen());
+    $('[data-connections-refresh]')?.addEventListener('click',event=>conCargaBoton(event.currentTarget,'Actualizando…',()=>refreshConnectionsOnline(true,false)));
+    const connectionsForm=$('#connectionsFilterForm');if(connectionsForm){connectionsForm.addEventListener('submit',event=>{event.preventDefault();const button=$('button[type="submit"]',connectionsForm);conCargaBoton(button,'Aplicando…',()=>applyConnectionsFilters(connectionsForm));});$('[data-connections-reset]',connectionsForm)?.addEventListener('click',()=>resetConnectionsFilters());}
+    $$('[data-connection-focus]').forEach(btn=>btn.addEventListener('click',()=>{const [lat,lng]=btn.dataset.connectionFocus.split(',').map(Number);mapaFlota?.establecerVista(lat,lng,16);}));
     const kpiForm=$('#kpiFilterForm');if(kpiForm){const repaint=()=>pintarKpisReportes();kpiForm.addEventListener('change',repaint);$('[data-kpi-apply]',kpiForm)?.addEventListener('click',repaint);$('[data-kpi-reset]',kpiForm)?.addEventListener('click',()=>{const today=new Date(),start=new Date();start.setDate(today.getDate()-30);kpiForm.elements.FECHA_DESDE.value=fechaInputIso(start);kpiForm.elements.FECHA_HASTA.value=fechaInputIso(today);kpiForm.elements.CONDUCTOR_ID.value='';kpiForm.elements.VEHICULO_ID.value='';repaint();});pintarKpisReportes();}
     const operationLocationForm=$('#operationLocationForm');if(operationLocationForm){
       bindAddressAutocomplete(operationLocationForm);
@@ -2011,9 +2081,9 @@
   function filterTable(input){aplicarFiltrosTabla(tablaRelacionadaFiltro(input));}
 
   function permissionMatrixMarkup(user){
-    const custom=new Set(Array.isArray(user.PERMISOS_PERSONALIZADOS)?user.PERMISOS_PERSONALIZADOS:[]),admin=user.ROL_ID==='ROL-ADMIN';
+    const baseSelection=user.MODO_PERMISOS==='PERSONALIZADO'?(Array.isArray(user.PERMISOS_PERSONALIZADOS)?user.PERMISOS_PERSONALIZADOS:[]):(Array.isArray(user.PERMISOS)?user.PERMISOS.filter(item=>item!=='*:*'):[]),custom=new Set(baseSelection),admin=String(user.ROL_ID||user.ROL_NOMBRE||'').toUpperCase()==='ROL-ADMIN'||String(user.ROL_NOMBRE||'').toUpperCase()==='ADMINISTRADOR';
     const mandatory=new Set(['PANEL_PRINCIPAL:LEER','CONEXIONES:CREAR','CONEXIONES:ACTUALIZAR']);
-    return `<div class="permission-help"><b>${admin?'Administrador con acceso completo':'Permisos de '+esc(user.NOMBRE)}</b><span>${admin?'Los permisos del administrador no pueden reducirse para evitar perder el control del sistema.':'Puede mantener los permisos del rol o definir una selección personalizada. Los permisos técnicos mínimos aparecen bloqueados y permanecen activos para no interrumpir la sesión.'}</span></div><form id="userPermissionsForm" class="permission-form"><input type="hidden" name="USUARIO_ID" value="${esc(user.ID)}"><div class="permission-mode"><label><input type="radio" name="MODO_PERMISOS" value="ROL" ${user.MODO_PERMISOS!=='PERSONALIZADO'||admin?'checked':''} ${admin?'disabled':''}><span>Usar permisos del rol</span></label><label><input type="radio" name="MODO_PERMISOS" value="PERSONALIZADO" ${user.MODO_PERMISOS==='PERSONALIZADO'&&!admin?'checked':''} ${admin?'disabled':''}><span>Personalizar permisos</span></label></div><div class="permission-matrix ${user.MODO_PERMISOS==='PERSONALIZADO'&&!admin?'enabled':''}" data-permission-matrix><div class="permission-row permission-head"><b>Módulo</b>${permissionActions.map(([,label])=>`<b>${label}</b>`).join('')}</div>${permissionCatalog.map(([module,label])=>`<div class="permission-row"><span>${esc(label)}</span>${permissionActions.map(([action])=>{const value=`${module}:${action}`,required=mandatory.has(value);return `<label title="${required?'Permiso técnico obligatorio':''}"><input type="checkbox" name="PERMISOS" value="${value}" ${custom.has(value)||required?'checked':''} ${admin||required?'disabled':''}><i></i></label>`;}).join('')}</div>`).join('')}</div><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit" ${admin?'disabled':''}>Guardar permisos sin cerrar sesión</button></div></form>`;
+    return `<div class="permission-help"><b>${admin?'Administrador con acceso completo':'Permisos de '+esc(user.NOMBRE)}</b><span>${admin?'Los permisos del administrador no pueden reducirse para evitar perder el control del sistema.':'Puede mantener los permisos del rol o definir una selección personalizada. Solo un Administrador puede habilitar “Conexiones en línea”; al marcar Ver, el módulo aparecerá automáticamente en el entorno del usuario. Los permisos técnicos mínimos permanecen activos para registrar su propia conexión.'}</span></div><form id="userPermissionsForm" class="permission-form"><input type="hidden" name="USUARIO_ID" value="${esc(user.ID)}"><div class="permission-mode"><label><input type="radio" name="MODO_PERMISOS" value="ROL" ${user.MODO_PERMISOS!=='PERSONALIZADO'||admin?'checked':''} ${admin?'disabled':''}><span>Usar permisos del rol</span></label><label><input type="radio" name="MODO_PERMISOS" value="PERSONALIZADO" ${user.MODO_PERMISOS==='PERSONALIZADO'&&!admin?'checked':''} ${admin?'disabled':''}><span>Personalizar permisos</span></label></div><div class="permission-matrix ${user.MODO_PERMISOS==='PERSONALIZADO'&&!admin?'enabled':''}" data-permission-matrix><div class="permission-row permission-head"><b>Módulo</b>${permissionActions.map(([,label])=>`<b>${label}</b>`).join('')}</div>${permissionCatalog.map(([module,label])=>`<div class="permission-row"><span>${esc(label)}</span>${permissionActions.map(([action])=>{const value=`${module}:${action}`,required=mandatory.has(value);return `<label title="${required?'Permiso técnico obligatorio':''}"><input type="checkbox" name="PERMISOS" value="${value}" ${custom.has(value)||required?'checked':''} ${admin||required?'disabled':''}><i></i></label>`;}).join('')}</div>`).join('')}</div><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit" ${admin?'disabled':''}>Guardar permisos sin cerrar sesión</button></div></form>`;
   }
 
   function openUserPermissionsModal(userId){
@@ -2537,7 +2607,7 @@
     $$('[data-tracking-permission]').forEach(node=>{node.textContent=permissionLabel();});
     $$('[data-tracking-preference]').forEach(node=>{node.textContent=trackingPreferenceEnabled()?'Activada':'Desactivada';});
     $$('[data-wake-lock]').forEach(node=>{node.textContent=wakeLockLabel();});
-    $$('[data-toggle-tracking]').forEach(button=>{if(button.dataset.loading!=='1')button.textContent=active?'Detener ubicación continua':'Activar ubicación continua';button.classList.toggle('primary',!active);button.classList.toggle('danger',active);});
+    $$('[data-toggle-tracking]').forEach(button=>{if(button.dataset.loading!=='1')button.textContent=active?(config.GPS_AUTOMATICO_OBLIGATORIO?'GPS obligatorio activo':'Detener ubicación continua'):'Activar GPS obligatorio';button.classList.toggle('primary',!active);button.classList.toggle('danger',active&&!config.GPS_AUTOMATICO_OBLIGATORIO);button.disabled=Boolean(active&&config.GPS_AUTOMATICO_OBLIGATORIO);});
   }
   async function monitorGeolocationPermission(){
     if(!navigator.permissions?.query){geolocationPermissionState='desconocido';updateTrackingUi();return geolocationPermissionState;}
@@ -2627,6 +2697,7 @@
   }
   async function toggleTracking() {
     if(gpsWatchId===null)await startTracking();
+    else if(config.GPS_AUTOMATICO_OBLIGATORIO){toast('GPS obligatorio','La ubicación permanece activa durante toda la sesión web.');return;}
     else{stopTracking();sendHeartbeat();}
     if(currentSection!=='gps')navigateSection('gps');else updateTrackingUi();
   }
@@ -2653,7 +2724,7 @@
     await api.request('saveLocation',{data:{LATITUD:c.latitude,LONGITUD:c.longitude,PRECISION_METROS:c.accuracy||0,VELOCIDAD_KMH:c.speed==null?0:c.speed*3.6,RUMBO:c.heading||0,DIRECCION:cachedAddress,BATERIA_PORCENTAJE:batteryLevel,DISPOSITIVO_ID:deviceId,SESION_CLIENTE_ID:clientSessionId,SECCION_ACTUAL:currentSection,PAGINA_VISIBLE:document.hidden?'NO':'SI',TIPO_RED:connectionType(),PLATAFORMA:navigator.platform||'',NAVEGADOR:navigator.userAgent,FECHA_HORA:new Date(position.timestamp).toISOString(),FUENTE:source}});
     ultimaUbicacionEnviada={tiempo:ahora,latitud:c.latitude,longitud:c.longitude};setSave('Ubicación sincronizada');
     resolveAddress(c.latitude,c.longitude).catch(()=>{});
-    if(currentSection==='gps')refreshLocations(false,false);
+    if(currentSection==='gps')refreshLocations(false,false);if(currentSection==='connections')refreshConnectionsOnline(false,false);
   }
   async function sendPosition(position,source,forzar=false) {
     if(position?.coords)guardarUltimaUbicacionDispositivo({latitud:position.coords.latitude,longitud:position.coords.longitude,precision:position.coords.accuracy||9999,fecha:position.timestamp||Date.now(),fuente:source||'GPS del dispositivo'});
@@ -2726,7 +2797,7 @@
       if(data.tipo==='flotas:tema')setTheme(Boolean(data.oscuro));
     });
     document.addEventListener('keydown',event=>{if(event.key==='Escape'&&document.body.classList.contains('mapa-pantalla-completa'))toggleMapFullscreen(false);});
-    document.addEventListener('visibilitychange',()=>{if(document.hidden){if(currentUser)sendHeartbeat('En segundo plano');releaseWakeLock();return;}if(currentUser){sendHeartbeat('En línea');resumeTrackingIfAllowed();if(gpsWatchId!==null)requestWakeLock();if(currentSection==='gps')refreshLocations(false,false);}});
+    document.addEventListener('visibilitychange',()=>{if(document.hidden){if(currentUser)sendHeartbeat('En segundo plano');releaseWakeLock();return;}if(currentUser){sendHeartbeat('En línea');resumeTrackingIfAllowed();if(gpsWatchId!==null)requestWakeLock();if(currentSection==='gps')refreshLocations(false,false);if(currentSection==='connections')refreshConnectionsOnline(false,false);}});
   }
 
   function init(){bindGlobal();setTheme(window.TemaFlotas?.modoOscuroInicial?.()??localStorage.getItem('flotas_tema')==='dark');checkSystem();}

@@ -1,0 +1,9 @@
+VALIDACIÓN TÉCNICA 3.13.6
+- aplicacion.js: sintaxis validada con node --check.
+- menu-principal.js: sintaxis validada con node --check.
+- mapa.js: sintaxis validada con node --check.
+- Todos los módulos que cargan aplicacion.js precargan mapa.js.
+- Existe carga dinámica de respaldo de mapa.js.
+- El panel envía flotas:modulo-visible después de ocultar el cargador.
+- GPS y Conexiones reinicializan/redibujan al mostrarse, restaurarse o cambiar orientación.
+- Codigo_Completo.gs permanece autosuficiente y sin cambios funcionales de datos.

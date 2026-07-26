@@ -2,7 +2,7 @@
   'use strict';
   const $=(selector,root=document)=>root.querySelector(selector);
   const api=window.ConexionFlotas;
-  const VERSION='3.13.4';
+  const VERSION='3.13.6';
   const grupos=[
     ['GENERAL',[
       ['dashboard','⌂','Panel principal','panel-principal.html','PANEL_PRINCIPAL'],
@@ -172,9 +172,10 @@
     const boton=$('#cerrarSesionMenu');
     boton.disabled=true;
     boton.textContent='Cerrando sesión…';
-    try{await api.request('logout',{data:{}});}catch(_){ }
+    const cierre=api.request('logout',{data:{}}).catch(()=>{});
     api.setAuth({});
     irAcceso('cerrada');
+    void cierre;
   }
   async function confirmarInvalidezSesion(){
     await esperar(800);
@@ -241,6 +242,7 @@
       $('#cargandoModulo').classList.add('oculto');
       cambiarEstado(data.actualizadoEn?'Módulo activo · memoria local':'Módulo activo','listo');
       aplicarTema();
+      requestAnimationFrame(()=>requestAnimationFrame(()=>enviar({tipo:'flotas:modulo-visible',seccion:seccionActual})));
     }
     if(data.tipo==='flotas:usuario-actualizado'&&data.usuario){
       aplicarUsuario(data.usuario);

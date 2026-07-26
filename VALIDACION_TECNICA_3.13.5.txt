@@ -1,0 +1,7 @@
+Sistema de Gestión de Flotas 3.13.6
+- Sintaxis JavaScript: validada
+- Sintaxis Codigo_Completo.gs: validada
+- Pruebas de asociación de documentos: aprobadas
+- Pruebas de visibilidad por conductor: aprobadas
+- Prueba de vínculo de combustible: aprobada
+- Archivo maestro autosuficiente: confirmado

@@ -1,0 +1,10 @@
+Sistema de Gestión de Flotas · Validación final web 3.13.6
+
+- JavaScript: sintaxis validada en todos los archivos .js.
+- Codigo_Completo.gs: sintaxis validada y prueba lógica superada.
+- Combustible: filasRespuestaLote y auxiliares presentes; creación habilitada para Conductor con asignación propia.
+- Notificación de combustible: clave única por carga y destinatario Administrador.
+- Documentos: asociación por usuario, correo y conductor; cuenta sin ficha permitida.
+- Visibilidad: Conductor limitado a documentos propios; Administrador sin restricciones.
+- Cierre de sesión: salida visual inmediata y solicitud remota con keepalive.
+- Versión: 3.13.6.

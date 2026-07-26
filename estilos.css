@@ -381,3 +381,16 @@ body.dark .operation-location-status.valid.imprecise{background:#3d3218;color:#f
 @media(max-width:1180px){.connections-filter-form{grid-template-columns:repeat(3,minmax(150px,1fr))}.connections-filter-form .connections-search-field{grid-column:span 2}.connections-filter-form .form-actions{grid-column:span 1}.connections-live-strip{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:860px){.connections-dashboard-grid{grid-template-columns:1fr}.connections-filter-form{grid-template-columns:repeat(2,minmax(0,1fr))}.connections-filter-form .connections-search-field,.connections-filter-form .form-actions{grid-column:1/-1}.connections-map{min-height:430px}.connections-live-strip{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:560px){.connections-filter-form{grid-template-columns:1fr}.connections-filter-form .connections-search-field,.connections-filter-form .form-actions{grid-column:auto}.connections-filter-form .form-actions{display:grid;grid-template-columns:1fr}.connections-live-strip{grid-template-columns:1fr 1fr}.connections-map{min-height:380px}}
+
+/* Filtros de ubicación para el rol Conductor */
+.gps-driver-filter-card{margin-bottom:16px;overflow:visible}.gps-driver-filter-form{display:grid;grid-template-columns:repeat(6,minmax(135px,1fr));gap:12px;align-items:end}.gps-driver-filter-form .field{margin:0}.gps-driver-filter-form .form-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:9px;margin:0}.gps-driver-filter-form input,.gps-driver-filter-form select{min-width:0}
+@media(max-width:1180px){.gps-driver-filter-form{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:760px){.gps-driver-filter-form{grid-template-columns:repeat(2,minmax(0,1fr))}.gps-driver-filter-form .form-actions{display:grid;grid-template-columns:1fr 1fr}}
+@media(max-width:480px){.gps-driver-filter-form{grid-template-columns:1fr}.gps-driver-filter-form .form-actions{grid-template-columns:1fr}}
+
+/* Documentos del Conductor: acceso administrable y revisión */
+.document-upload-blocked{margin:0 0 16px;border-color:rgba(220,38,38,.28);background:rgba(220,38,38,.08)}
+.document-upload-blocked i{background:rgba(220,38,38,.14)}
+.tracking-notice.blocked b{color:var(--color-peligro,#b91c1c)}
+
+.permission-boolean-legend{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin:0 0 12px;color:var(--muted);font-size:.84rem}.permission-boolean-legend span{display:inline-flex;align-items:center;gap:6px}.permission-legend-check,.permission-legend-empty{width:18px;height:18px;border:1px solid var(--border);border-radius:4px;display:inline-grid;place-items:center;font-style:normal}.permission-legend-check{background:var(--primary);color:#fff;border-color:var(--primary)}.permission-row input[type=checkbox]{accent-color:var(--primary);cursor:pointer}.permission-row input[type=checkbox]:checked{outline:2px solid color-mix(in srgb,var(--primary) 28%,transparent);outline-offset:1px}.permission-row input[type=checkbox][disabled]{cursor:not-allowed}

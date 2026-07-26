@@ -6,7 +6,7 @@
  * Si el proyecto Apps Script está vinculado a la hoja, instalarSistema() guardará
  * automáticamente el ID. Para un proyecto independiente, pegue el ID aquí.
  */
-const VERSION_APLICACION = '3.13.4';
+const VERSION_APLICACION = '3.14.0';
 
 const CONFIGURACION_APLICACION = Object.freeze({
   ID_HOJA_CALCULO: '1onJJEN1rgz0N9GXOiUqV7ong4-nlbdAjzMyW_rumXCM',
@@ -51,7 +51,7 @@ const ESQUEMAS_APLICACION = Object.freeze({
   MANTENCIONES: ['ID','VEHICULO_ID','TIPO','TITULO','DESCRIPCION','FECHA_PROGRAMADA','FECHA_REALIZADA','KILOMETRAJE','COSTO','ESTADO','TALLER','OBSERVACIONES','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   CARGAS_COMBUSTIBLE: ['ID','VEHICULO_ID','CONDUCTOR_ID','OPERACION_ID','RUTA_ID','FECHA_HORA','TIPO_COMBUSTIBLE','LITROS','PRECIO_LITRO','COSTO_TOTAL','KILOMETRAJE','KILOMETRAJE_ANTERIOR','DISTANCIA_DESDE_ULTIMA_CARGA_KM','CONSUMO_KM_L','CONSUMO_L_100KM','ESTACION_SERVICIO','NUMERO_DOCUMENTO','MEDIO_PAGO','TANQUE_LLENO','COMPROBANTE_URL','OBSERVACIONES','CREADO_POR','CREADO_EN','ACTUALIZADO_POR','ACTUALIZADO_EN','ESTADO_REGISTRO','ELIMINADO'],
   AUTORIZACIONES_ELIMINACION_COMBUSTIBLE: ['ID','CARGA_ID','SOLICITADO_POR','SOLICITANTE_NOMBRE','MOTIVO','ESTADO','AUTORIZADO_POR','AUTORIZADOR_NOMBRE','COMENTARIO_AUTORIZACION','FECHA_SOLICITUD','FECHA_AUTORIZACION','FECHA_EJECUCION','IP_SOLICITUD','IP_AUTORIZACION','EJECUTADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
-  DOCUMENTOS: ['ID','TIPO','ASOCIADO_TIPO','ASOCIADO_ID','IDENTIFICACION','FECHA_EMISION','FECHA_VENCIMIENTO','ESTADO','DIRECCION_ARCHIVO','OBSERVACIONES','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
+  DOCUMENTOS: ['ID','TIPO','ASOCIADO_TIPO','ASOCIADO_ID','CONDUCTOR_ASOCIADO_ID','USUARIO_ASOCIADO_ID','CORREO_ASOCIADO','IDENTIFICACION','FECHA_EMISION','FECHA_VENCIMIENTO','ESTADO','DIRECCION_ARCHIVO','OBSERVACIONES','CARGADO_POR_USUARIO_ID','CARGADO_POR_CORREO','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   ALERTAS: ['ID','TIPO','NIVEL','TITULO','MENSAJE','MODULO','REGISTRO_ID','CLAVE_UNICA','LEIDA','USUARIO_ID','FECHA_HORA','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   REPORTES: ['ID','TIPO','PARAMETROS_CODIFICADOS','DIRECCION_ARCHIVO','GENERADO_POR','FECHA_HORA','ESTADO','CREADO_EN','ELIMINADO'],
   BITACORA: ['ID','USUARIO_ID','USUARIO_NOMBRE','ACCION','MODULO','REGISTRO_ID','DETALLE','IP_CLIENTE','FECHA_HORA','CREADO_EN','ELIMINADO'],
@@ -229,6 +229,11 @@ function servicioListar_(request, session) {
   let rows = listarRegistros_(resource.sheet, request.filtros || {});
   if (resource.sheet === 'EMPRESAS') rows = ordenarEmpresasPrincipal_(rows);
   rows = filtrarPorUsuario_(resource.sheet, rows, session.user);
+  // Los usuarios deben salir en formato público. Devolver la fila cruda dejaba
+  // PERMISOS_PERSONALIZADOS como texto JSON y la matriz aparecía vacía al reabrirla.
+  if (resource.sheet === 'USUARIOS') {
+    rows = rows.map(function(row) { return usuarioPublico_(row); }).filter(Boolean);
+  }
   const limit = Math.min(Number(request.limite || CONFIGURACION_APLICACION.MAXIMO_FILAS_LISTADO), CONFIGURACION_APLICACION.MAXIMO_FILAS_LISTADO);
   return ok_({ rows: rows.slice(0, limit), total: rows.length });
 }
@@ -240,15 +245,19 @@ function servicioObtener_(request, session) {
   if (!row) throw new Error('REGISTRO_NO_ENCONTRADO');
   const visible = filtrarPorUsuario_(resource.sheet, [row], session.user);
   if (!visible.length) throw new Error('PERMISO_DENEGADO');
-  return ok_({ row: visible[0] });
+  return ok_({ row: resource.sheet === 'USUARIOS' ? usuarioPublico_(row) : visible[0] });
 }
 
 function servicioCrear_(request, session) {
   const resource = obtenerRecurso_(request.recurso);
+  if (resource.sheet === 'DOCUMENTOS' && session.user.ROL_ID === 'ROL-CONDUCTOR' && !tienePermiso_(session.user, 'DOCUMENTOS', 'CREAR')) {
+    throw new Error('CARGA_DOCUMENTOS_BLOQUEADA_ADMIN');
+  }
   exigirPermiso_(session.user, resource.module, 'CREAR');
   if (resource.sheet === 'USUARIOS') return crearUsuarioServicio_(request.datos || {}, session);
   if (resource.sheet === 'CHECKINS') return crearCheckinVehicular_({ datos:request.datos || {} }, session);
   if (resource.sheet === 'CARGAS_COMBUSTIBLE') return crearCargaCombustible_(request, session);
+  if (resource.sheet === 'DOCUMENTOS') return crearDocumentoServicio_(request, session);
   if (resource.sheet === 'AUTORIZACIONES_ELIMINACION_COMBUSTIBLE') throw new Error('ACCION_ESPECIAL_REQUERIDA');
   if (session.user.ROL_ID === 'ROL-CONDUCTOR') {
     if (resource.sheet === 'OPERACIONES') return iniciarOperacion_({ datos:request.datos || {} }, session);
@@ -270,6 +279,7 @@ function servicioActualizar_(request, session) {
   if (!filtrarPorUsuario_(resource.sheet, [existing], session.user).length) throw new Error('PERMISO_DENEGADO');
   if (resource.sheet === 'CHECKINS' || resource.sheet === 'AUTORIZACIONES_ELIMINACION_COMBUSTIBLE') throw new Error('ACCION_ESPECIAL_REQUERIDA');
   if (resource.sheet === 'CARGAS_COMBUSTIBLE') return actualizarCargaCombustible_(request, session);
+  if (resource.sheet === 'DOCUMENTOS') return actualizarDocumentoServicio_(request, session);
   if (session.user.ROL_ID === 'ROL-CONDUCTOR') {
     const driverData = request.datos || {};
     if (resource.sheet === 'RUTAS') {
@@ -420,17 +430,9 @@ function iniciarSesion_(request) {
 
 function cerrarSesion_(token, session) {
   actualizarRegistro_('SESIONES', session.session.ID, { ACTIVA: 'NO', ULTIMO_USO: new Date() });
-  listarRegistros_('CONEXIONES', {}).filter(function(row) {
-    return row.SESION_ID === session.session.ID;
-  }).forEach(function(row) {
-    actualizarRegistro_('CONEXIONES', row.ID, {
-      ESTADO:'Desconectado',
-      ACTIVIDAD:'Inactivo',
-      PAGINA_VISIBLE:'NO',
-      ULTIMA_CONEXION:new Date(),
-    });
-  });
-  registrarBitacora_(session.user, 'CIERRE_SESION', 'SEGURIDAD', session.user.ID, 'Cierre de sesión');
+  try {
+    encolarTrabajoSegundoPlano_('CIERRE_SESION', { sesionId:session.session.ID, usuario:resumenUsuarioSegundoPlano_(session.user), fechaHora:fechaIso_() });
+  } catch (_) {}
   return ok_({ loggedOut: true });
 }
 
@@ -574,6 +576,44 @@ function normalizarListaPermisos_(value) {
   return Object.keys(validos).sort();
 }
 
+function catalogoClavesPermisosUsuario_() {
+  const modulos = ['PANEL_PRINCIPAL','USUARIOS','VEHICULOS','CONDUCTORES','OPERACIONES','CHECKIN','CHECKIN_APROBACIONES','GPS','HISTORIAL','MANTENCIONES','COMBUSTIBLE','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','CONFIGURACION','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
+  const acciones = ['LEER','CREAR','ACTUALIZAR','ELIMINAR'];
+  const claves = [];
+  modulos.forEach(function(modulo) {
+    acciones.forEach(function(accion) { claves.push(modulo + ':' + accion); });
+  });
+  return claves;
+}
+
+function crearMatrizBooleanaPermisos_(permisos) {
+  const activos = {};
+  const lista = Array.isArray(permisos) ? permisos : normalizarListaPermisos_(permisos);
+  lista.forEach(function(permiso) { activos[String(permiso || '').toUpperCase()] = true; });
+  const accesoTotal = Boolean(activos['*:*']);
+  const matriz = {};
+  catalogoClavesPermisosUsuario_().forEach(function(clave) {
+    matriz[clave] = accesoTotal || Boolean(activos[clave]);
+  });
+  return matriz;
+}
+
+function matricesPermisosUsuario_(user) {
+  const esAdmin = esAdministradorSistema_(user);
+  const modo = esAdmin ? 'ROL' : String(user && user.MODO_PERMISOS || 'ROL').toUpperCase();
+  const personalizados = esAdmin ? ['*:*'] : normalizarListaPermisos_(user && user.PERMISOS_PERSONALIZADOS || []);
+  const baseRol = esAdmin ? ['*:*'] : permisosBaseRol_(user);
+  const obligatorios = esAdmin ? [] : PERMISOS_TECNICOS_OBLIGATORIOS_;
+  const permisosRol = baseRol.concat(obligatorios);
+  const permisosPersonalizados = personalizados.concat(obligatorios);
+  const efectivos = modo === 'PERSONALIZADO' ? permisosPersonalizados : permisosRol;
+  return {
+    actual: crearMatrizBooleanaPermisos_(efectivos),
+    rol: crearMatrizBooleanaPermisos_(permisosRol),
+    personalizados: crearMatrizBooleanaPermisos_(permisosPersonalizados)
+  };
+}
+
 function permisosBaseRol_(user) {
   if (!user) return [];
   if (esAdministradorSistema_(user)) return ['*:*'];
@@ -601,6 +641,7 @@ function usuarioPublico_(user) {
   const role = obtenerRegistro_('ROLES', rolId);
   const driver = listarRegistros_('CONDUCTORES', {}).find(function(row) { return row.USUARIO_ID === user.ID; });
   const personalizados = esAdmin ? [] : normalizarListaPermisos_(user.PERMISOS_PERSONALIZADOS);
+  const matrices = matricesPermisosUsuario_(user);
   return {
     ID: user.ID,
     NOMBRE: user.NOMBRE,
@@ -615,6 +656,9 @@ function usuarioPublico_(user) {
     PERMISOS_PERSONALIZADOS: personalizados,
     VERSION_PERMISOS: Number(user.VERSION_PERMISOS || 0),
     PERMISOS: permisosEfectivosUsuario_(user),
+    MATRIZ_PERMISOS: matrices.actual,
+    MATRIZ_PERMISOS_ROL: matrices.rol,
+    MATRIZ_PERMISOS_PERSONALIZADOS: matrices.personalizados,
   };
 }
 
@@ -883,6 +927,112 @@ function obtenerRecurso_(resourceName) {
   return resource;
 }
 
+function conductorDeUsuario_(usuarioId) {
+  return listarRegistros_('CONDUCTORES', {}).find(function(row) {
+    return String(row.USUARIO_ID || '') === String(usuarioId || '');
+  }) || null;
+}
+
+function normalizarDocumentoSegunSesion_(datos, session, existente) {
+  const input = Object.assign({}, datos || {});
+  const user = session.user;
+  const admin = esAdministradorSistema_(user);
+  const driver = conductorDeUsuario_(user.ID);
+  let type = String(input.ASOCIADO_TIPO !== undefined ? input.ASOCIADO_TIPO : (existente && existente.ASOCIADO_TIPO) || '').trim();
+  let associatedId = String(input.ASOCIADO_ID !== undefined ? input.ASOCIADO_ID : (existente && existente.ASOCIADO_ID) || '').trim();
+  let driverId = String(input.CONDUCTOR_ASOCIADO_ID !== undefined ? input.CONDUCTOR_ASOCIADO_ID : (existente && existente.CONDUCTOR_ASOCIADO_ID) || '').trim();
+  let userId = String(input.USUARIO_ASOCIADO_ID !== undefined ? input.USUARIO_ASOCIADO_ID : (existente && existente.USUARIO_ASOCIADO_ID) || '').trim();
+  let email = normalizarEmail_(input.CORREO_ASOCIADO !== undefined ? input.CORREO_ASOCIADO : (existente && existente.CORREO_ASOCIADO) || '');
+
+  if (user.ROL_ID === 'ROL-CONDUCTOR') {
+    userId = user.ID;
+    email = normalizarEmail_(user.CORREO || '');
+    if (driver) {
+      type = 'Conductor';
+      driverId = driver.ID;
+      associatedId = driver.ID;
+      if (!input.IDENTIFICACION) input.IDENTIFICACION = driver.RUT || email;
+    } else {
+      type = 'Usuario';
+      driverId = '';
+      associatedId = user.ID;
+      if (!input.IDENTIFICACION) input.IDENTIFICACION = email || user.ID;
+    }
+  } else if (!admin && !type) {
+    type = driver ? 'Conductor' : 'Usuario';
+    driverId = driver ? driver.ID : '';
+    userId = user.ID;
+    associatedId = driver ? driver.ID : user.ID;
+    email = normalizarEmail_(user.CORREO || '');
+  } else if (type === 'Conductor') {
+    driverId = driverId || associatedId;
+    const selectedDriver = obtenerRegistro_('CONDUCTORES', driverId);
+    if (!selectedDriver) throw new Error('DOCUMENTO_CONDUCTOR_NO_ENCONTRADO');
+    associatedId = selectedDriver.ID;
+    userId = selectedDriver.USUARIO_ID || userId;
+    const selectedUser = userId ? obtenerRegistro_('USUARIOS', userId) : null;
+    email = normalizarEmail_((selectedUser && selectedUser.CORREO) || selectedDriver.CORREO || email);
+    if (!input.IDENTIFICACION) input.IDENTIFICACION = selectedDriver.RUT || email;
+  } else if (type === 'Usuario') {
+    userId = userId || associatedId || (!admin ? user.ID : '');
+    const selectedUser = userId ? obtenerRegistro_('USUARIOS', userId) : null;
+    if (!selectedUser) throw new Error('DOCUMENTO_USUARIO_NO_ENCONTRADO');
+    associatedId = selectedUser.ID;
+    driverId = '';
+    email = normalizarEmail_(selectedUser.CORREO || email);
+    if (!input.IDENTIFICACION) input.IDENTIFICACION = email || selectedUser.ID;
+  } else {
+    if (!type) type = 'Usuario';
+    if (!associatedId && !admin) associatedId = user.ID;
+  }
+
+  input.ASOCIADO_TIPO = type;
+  input.ASOCIADO_ID = associatedId;
+  input.CONDUCTOR_ASOCIADO_ID = driverId;
+  input.USUARIO_ASOCIADO_ID = userId;
+  input.CORREO_ASOCIADO = email;
+  input.CARGADO_POR_USUARIO_ID = existente && existente.CARGADO_POR_USUARIO_ID ? existente.CARGADO_POR_USUARIO_ID : user.ID;
+  input.CARGADO_POR_CORREO = existente && existente.CARGADO_POR_CORREO ? existente.CARGADO_POR_CORREO : normalizarEmail_(user.CORREO || '');
+  return input;
+}
+
+function crearDocumentoServicio_(request, session) {
+  if (session.user.ROL_ID === 'ROL-CONDUCTOR' && !tienePermiso_(session.user, 'DOCUMENTOS', 'CREAR')) {
+    throw new Error('CARGA_DOCUMENTOS_BLOQUEADA_ADMIN');
+  }
+  const entrada = normalizarDocumentoSegunSesion_(request.datos || {}, session, null);
+  if (session.user.ROL_ID === 'ROL-CONDUCTOR') entrada.ESTADO = 'Pendiente de revisión';
+  const data = normalizarEntradaRecurso_('DOCUMENTOS', entrada, session.user);
+  const row = insertarRegistro_('DOCUMENTOS', data, 'DOC');
+  registrarBitacora_(session.user, 'CREAR_DOCUMENTO', 'DOCUMENTOS', row.ID, 'Documento asociado a ' + row.ASOCIADO_TIPO + ' ' + row.ASOCIADO_ID + ' · correo ' + (row.CORREO_ASOCIADO || 'sin correo') + (session.user.ROL_ID === 'ROL-CONDUCTOR' ? ' · pendiente de revisión administrativa' : ''));
+  let notificaciones = [];
+  if (session.user.ROL_ID === 'ROL-CONDUCTOR') {
+    const conductor = conductorDeUsuario_(session.user.ID);
+    const nombreConductor = (conductor && conductor.NOMBRE) || session.user.NOMBRE || 'Conductor';
+    const mensaje = nombreConductor + ' (' + (session.user.CORREO || 'sin correo') + ') cargó el documento "' + (row.TIPO || 'Documento') + '" identificado como ' + (row.IDENTIFICACION || row.ID) + '. Revíselo en el módulo Documentos.';
+    notificaciones = notificarRolesInterno_(['ROL-ADMIN'], {
+      TITULO:'Documento pendiente de revisión',
+      MENSAJE:mensaje,
+      TIPO:'Documento',
+      PRIORIDAD:'Alta',
+      CREADO_POR:session.user.ID,
+      CLAVE_UNICA:'DOCUMENTO-REVISION-' + row.ID
+    });
+  }
+  try { solicitarRevisionAlertasSegundoPlano_('Creación en DOCUMENTOS'); } catch (_) {}
+  return ok_({ row:limpiarSalidaRecurso_('DOCUMENTOS', row), revisionPendiente:session.user.ROL_ID === 'ROL-CONDUCTOR', notificacionesAdministradores:notificaciones.length });
+}
+
+function actualizarDocumentoServicio_(request, session) {
+  const existing = obtenerRegistro_('DOCUMENTOS', request.identificador);
+  if (!existing) throw new Error('REGISTRO_NO_ENCONTRADO');
+  const data = normalizarEntradaRecurso_('DOCUMENTOS', normalizarDocumentoSegunSesion_(request.datos || {}, session, existing), session.user);
+  const row = actualizarRegistro_('DOCUMENTOS', request.identificador, data);
+  registrarBitacora_(session.user, 'ACTUALIZAR_DOCUMENTO', 'DOCUMENTOS', row.ID, 'Documento actualizado para ' + row.ASOCIADO_TIPO + ' ' + row.ASOCIADO_ID + ' · correo ' + (row.CORREO_ASOCIADO || 'sin correo'));
+  try { solicitarRevisionAlertasSegundoPlano_('Actualización en DOCUMENTOS'); } catch (_) {}
+  return ok_({ row:limpiarSalidaRecurso_('DOCUMENTOS', row) });
+}
+
 function normalizarEntradaRecurso_(sheetName, data, user) {
   const clean = {};
   const headers = ESQUEMAS_APLICACION[sheetName];
@@ -946,7 +1096,7 @@ function filtrarPorUsuario_(sheetName, rows, user) {
     });
   } else if (sheetName === 'CONEXIONES') {
     rows = rows.filter(function(row) { return row.USUARIO_ID === user.ID; });
-  } else if (!driver && ['CONDUCTORES','VEHICULOS','OPERACIONES','GPS','GPS_ACTUAL','RUTAS','HISTORIAL','DOCUMENTOS','MANTENCIONES','CHECKINS','CARGAS_COMBUSTIBLE'].indexOf(sheetName) >= 0) {
+  } else if (!driver && ['CONDUCTORES','VEHICULOS','OPERACIONES','GPS','GPS_ACTUAL','RUTAS','HISTORIAL','MANTENCIONES','CHECKINS','CARGAS_COMBUSTIBLE'].indexOf(sheetName) >= 0) {
     rows = [];
   } else if (sheetName === 'CONDUCTORES') {
     rows = rows.filter(function(row) { return row.ID === driver.ID; });
@@ -965,12 +1115,13 @@ function filtrarPorUsuario_(sheetName, rows, user) {
     listarRegistros_('OPERACIONES', {}).forEach(function(row) { if (row.CONDUCTOR_ID === driver.ID) operationIds[row.ID] = true; });
     rows = rows.filter(function(row) { return operationIds[row.OPERACION_ID]; });
   } else if (sheetName === 'DOCUMENTOS') {
-    const associatedVehicles = {};
-    listarRegistros_('OPERACIONES', {}).forEach(function(row) { if (row.CONDUCTOR_ID === driver.ID) associatedVehicles[row.VEHICULO_ID] = true; });
-    listarRegistros_('RUTAS', {}).forEach(function(row) { if (row.CONDUCTOR_ID === driver.ID) associatedVehicles[row.VEHICULO_ID] = true; });
     rows = rows.filter(function(row) {
-      return (row.ASOCIADO_TIPO === 'Conductor' && row.ASOCIADO_ID === driver.ID) ||
-        (row.ASOCIADO_TIPO === 'Vehículo' && associatedVehicles[row.ASOCIADO_ID]);
+      const propioUsuario = String(row.USUARIO_ASOCIADO_ID || '') === String(user.ID) ||
+        (row.ASOCIADO_TIPO === 'Usuario' && String(row.ASOCIADO_ID || '') === String(user.ID)) ||
+        (String(row.CORREO_ASOCIADO || '').toLowerCase() === String(user.CORREO || '').toLowerCase());
+      const propioConductor = driver && (String(row.CONDUCTOR_ASOCIADO_ID || '') === String(driver.ID) ||
+        (row.ASOCIADO_TIPO === 'Conductor' && String(row.ASOCIADO_ID || '') === String(driver.ID)));
+      return propioUsuario || propioConductor;
     });
   } else if (sheetName === 'MANTENCIONES') {
     const maintenanceVehicles = {};
@@ -1143,7 +1294,7 @@ function actualizarSistema() {
   try { repararModuloCheckin(); } catch (error) { Logger.log('Reparación de check-in: ' + error.message); }
   try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
   reiniciarCachesEjecucion_();
-  resultado.message = 'Sistema 3.13.4 actualizado: rutas con GPS permanente, check-in diario por vehículo y conductor, operaciones vinculadas, conexiones en línea, fotografías, alertas, permisos y estructura verificados.';
+  resultado.message = 'Sistema 3.14.0 actualizado: carga de documentos del Conductor habilitada por defecto, revisión administrativa, notificaciones únicas y bloqueo administrable por permisos; filtros GPS y demás módulos verificados.';
   return resultado;
 }
 
@@ -1178,7 +1329,7 @@ function asegurarCatalogos_() {
   });
   const driverRules = {
     PANEL_PRINCIPAL:['LEER'], VEHICULOS:['LEER'], CONDUCTORES:['LEER'], OPERACIONES:['LEER','CREAR','ACTUALIZAR'], CHECKIN:['LEER','CREAR'],
-    GPS:['LEER','CREAR'], HISTORIAL:['LEER'], COMBUSTIBLE:['LEER'], DOCUMENTOS:['LEER'], ALERTAS:['LEER','ACTUALIZAR'],
+    GPS:['LEER','CREAR'], HISTORIAL:['LEER'], COMBUSTIBLE:['LEER','CREAR'], DOCUMENTOS:['LEER','CREAR'], ALERTAS:['LEER','ACTUALIZAR'],
     QR:['LEER','ACTUALIZAR'], RUTAS:['LEER','ACTUALIZAR'], NOTIFICACIONES:['LEER','ACTUALIZAR'],
     CONEXIONES:['CREAR','ACTUALIZAR']
   };
@@ -2005,7 +2156,7 @@ function listarRegistrosCacheadosTiempoReal_(sheetName, secondsOverride) {
 }
 
 function filtroVehiculosTiempoReal_(request, user) {
-  if (user && ['ROL-ADMIN','ROL-SUPERVISOR'].indexOf(user.ROL_ID) < 0) return { activo:false, ids:{} };
+  if (user && ['ROL-ADMIN','ROL-SUPERVISOR','ROL-CONDUCTOR'].indexOf(user.ROL_ID) < 0) return { activo:false, ids:{} };
   const raw = String(request.vehiculos || request.VEHICULOS || '').trim();
   if (!raw) return { activo:false, ids:{} };
   if (raw === '__NINGUNO__') return { activo:true, ids:{} };
@@ -2126,9 +2277,11 @@ function ultimasUbicaciones_(request, session) {
   rows.sort(function(a,b) { return new Date(b.FECHA_HORA).getTime() - new Date(a.FECHA_HORA).getTime(); });
 
   const drivers = listarRegistrosCacheadosTiempoReal_('CONDUCTORES');
+  const visibleDrivers = filtrarPorUsuario_('CONDUCTORES', drivers, session.user);
   const allVehicles = listarRegistrosCacheadosTiempoReal_('VEHICULOS');
   const visibleVehicles = filtrarPorUsuario_('VEHICULOS', allVehicles, session.user);
   const vehicleFilter = filtroVehiculosTiempoReal_(request, session.user);
+  const filtrosGps = filtrosGpsTiempoReal_(request);
   const enrichedRows = rows.map(function(row) {
     const driver = drivers.find(function(item) { return item.ID === row.CONDUCTOR_ID; });
     const vehicle = allVehicles.find(function(item) { return item.ID === row.VEHICULO_ID; });
@@ -2144,12 +2297,15 @@ function ultimasUbicaciones_(request, session) {
     if (row.VEHICULO_ID && !latestByVehicle[row.VEHICULO_ID]) latestByVehicle[row.VEHICULO_ID] = row;
   });
   const output = enrichedRows.filter(function(row) {
-    return !vehicleFilter.activo || Boolean(vehicleFilter.ids[row.VEHICULO_ID]);
-  });
+    return (!vehicleFilter.activo || Boolean(vehicleFilter.ids[row.VEHICULO_ID])) && coincideFiltrosGpsUbicacion_(row, filtrosGps);
+  }).slice(0, filtrosGps.limitePuntos);
 
   return ok_({
     rows: output,
     total: output.length,
+    trackingDrivers: visibleDrivers.map(function(driver) {
+      return { ID:driver.ID, NOMBRE:driver.NOMBRE || driver.ID };
+    }).sort(function(a,b) { return String(a.NOMBRE).localeCompare(String(b.NOMBRE)); }),
     trackingVehicles: visibleVehicles.map(function(vehicle) {
       const latest = latestByVehicle[vehicle.ID] || {};
       return {
@@ -2209,6 +2365,7 @@ function subirArchivoDrive_(request, session) {
   };
   const configDestino=destinos[destino];
   if(!configDestino)throw new Error('DESTINO_ARCHIVO_INVALIDO');
+  if(configDestino.module==='DOCUMENTOS'&&session.user.ROL_ID==='ROL-CONDUCTOR'&&!tienePermiso_(session.user,'DOCUMENTOS','CREAR'))throw new Error('CARGA_DOCUMENTOS_BLOQUEADA_ADMIN');
   if(!tienePermiso_(session.user,configDestino.module,'CREAR')&&!tienePermiso_(session.user,configDestino.module,'ACTUALIZAR'))throw new Error('PERMISO_DENEGADO');
   let base64=String(data.ARCHIVO_BASE64||'').trim(),tipoMime=String(data.TIPO_MIME||'').trim().toLowerCase();
   const match=base64.match(/^data:([^;,]+);base64,(.+)$/s);if(match){tipoMime=String(match[1]||tipoMime).toLowerCase();base64=match[2];}
@@ -2232,6 +2389,7 @@ function actualizarEstadosDocumentos_() {
   const today = new Date();
   const warning = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
   listarRegistros_('DOCUMENTOS', {}).forEach(function(row) {
+    if (['Pendiente de revisión','Rechazado','Anulado'].indexOf(String(row.ESTADO || '')) >= 0) return;
     if (!row.FECHA_VENCIMIENTO) return;
     const expiry = new Date(row.FECHA_VENCIMIENTO);
     const status = expiry < today ? 'Vencido' : expiry <= warning ? 'Por vencer' : 'Vigente';
@@ -3211,12 +3369,63 @@ function coincideEstadoConexionTiempoReal_(row, filter) {
   return true;
 }
 
+function fechaInicioFiltroGps_(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const parts = text.split('-').map(Number);
+  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) return null;
+  return new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0).getTime();
+}
+
+function fechaFinFiltroGps_(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const parts = text.split('-').map(Number);
+  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) return null;
+  return new Date(parts[0], parts[1] - 1, parts[2], 23, 59, 59, 999).getTime();
+}
+
+function filtrosGpsTiempoReal_(request) {
+  const estado = String(request.estadoGps || request.ESTADO_GPS || 'TODOS').toUpperCase();
+  const limite = Math.max(1, Math.min(100, Number(request.limitePuntos || request.LIMITE_PUNTOS || 25)));
+  return {
+    conductorId: String(request.conductorId || request.CONDUCTOR_ID || '').trim(),
+    fechaDesde: fechaInicioFiltroGps_(request.fechaDesde || request.FECHA_DESDE),
+    fechaHasta: fechaFinFiltroGps_(request.fechaHasta || request.FECHA_HASTA),
+    estadoGps: ['TODOS','ACTIVO','INACTIVO'].indexOf(estado) >= 0 ? estado : 'TODOS',
+    limitePuntos: limite,
+  };
+}
+
+function coincideFiltrosGpsUbicacion_(row, filtros) {
+  if (filtros.conductorId && String(row.CONDUCTOR_ID || '') !== filtros.conductorId) return false;
+  const time = new Date(row.FECHA_HORA || 0).getTime();
+  if (filtros.fechaDesde !== null && time < filtros.fechaDesde) return false;
+  if (filtros.fechaHasta !== null && time > filtros.fechaHasta) return false;
+  const activa = Number.isFinite(time) && Date.now() - time <= Number(CONFIGURACION_APLICACION.ANTIGUEDAD_UBICACION_ACTIVA_MILISEGUNDOS || 120000);
+  if (filtros.estadoGps === 'ACTIVO' && !activa) return false;
+  if (filtros.estadoGps === 'INACTIVO' && activa) return false;
+  return true;
+}
+
+function coincideFiltrosGpsConexion_(row, filtros) {
+  if (filtros.conductorId && String(row.CONDUCTOR_ID || '') !== filtros.conductorId) return false;
+  const time = new Date(row.ULTIMA_CONEXION || 0).getTime();
+  if (filtros.fechaDesde !== null && time < filtros.fechaDesde) return false;
+  if (filtros.fechaHasta !== null && time > filtros.fechaHasta) return false;
+  const gpsActivo = String(row.GPS_ACTIVO || '') === 'SI' && Boolean(row.EN_LINEA);
+  if (filtros.estadoGps === 'ACTIVO' && !gpsActivo) return false;
+  if (filtros.estadoGps === 'INACTIVO' && gpsActivo) return false;
+  return true;
+}
+
 function resumenTiempoReal_(request, session) {
   exigirPermiso_(session.user, 'PANEL_PRINCIPAL', 'LEER');
   try { solicitarRevisionAlertasSegundoPlano_('Consulta de seguimiento en tiempo real'); } catch (error) { console.log('Cola de alertas: ' + error.message); }
   const onlyGps = String(request.soloGps || request.SOLO_GPS || '') === 'SI';
   const vehicleFilter = filtroVehiculosTiempoReal_(request, session.user);
   const connectionFilter = filtroEstadoConexionTiempoReal_(request);
+  const filtrosGps = filtrosGpsTiempoReal_(request);
   const locations = tienePermiso_(session.user, 'GPS', 'LEER')
     ? ultimasUbicaciones_(request, session).data : { rows:[], total:0, trackingVehicles:[] };
   let connections = tienePermiso_(session.user, 'CONEXIONES', 'LEER')
@@ -3276,7 +3485,7 @@ function resumenTiempoReal_(request, session) {
     });
   });
   if (vehicleFilter.activo) devices = devices.filter(function(row) { return Boolean(vehicleFilter.ids[row.VEHICULO_ID]); });
-  devices = devices.filter(function(row) { return coincideEstadoConexionTiempoReal_(row, connectionFilter); });
+  devices = devices.filter(function(row) { return coincideEstadoConexionTiempoReal_(row, connectionFilter) && coincideFiltrosGpsConexion_(row, filtrosGps); });
   const visibleVehicleIds = {};
   devices.forEach(function(row) { if (row.VEHICULO_ID) visibleVehicleIds[row.VEHICULO_ID] = true; });
   let visibleLocations = locations.rows || [];
@@ -3299,7 +3508,8 @@ function resumenTiempoReal_(request, session) {
   return ok_({
     locations: visibleLocations,
     trackingVehicles: locations.trackingVehicles || [],
-    devices: devices.slice(0, 100),
+    trackingDrivers: locations.trackingDrivers || [],
+    devices: devices.slice(0, Math.min(100, filtrosGps.limitePuntos)),
     routes: routes,
     notifications: notifications.slice(-50).reverse(),
     totals: {
@@ -3504,6 +3714,9 @@ function crearCheckinVehicular_(request, session) {
   invalidarCacheHoja_('CHECKINS');
   const confirmado = obtenerRegistro_('CHECKINS', row.ID);
   if (!confirmado) throw new Error('CHECKIN_NO_CONFIRMADO_EN_BASE_CENTRAL');
+  if (String(confirmado.VEHICULO_ID || '') !== String(vehiculo.ID) || String(confirmado.CONDUCTOR_ID || '') !== String(conductor.ID)) {
+    throw new Error('CHECKIN_DATOS_NO_CONFIRMADOS_EN_BASE_CENTRAL');
+  }
 
   const advertencias = [];
   if (fallasCriticas > 0 || fallasLeves > 0) {
@@ -3632,6 +3845,21 @@ function consumirCheckinOperacion_(checkinId, operacionId) {
  * ARCHIVO: 23_Permisos_Usuario.gs
  * ============================================================ */
 /** Permisos personalizados por usuario sin invalidar su sesión. */
+function confirmarPermisosUsuarioGuardados_(usuarioId, modoEsperado, permisosEsperados) {
+  SpreadsheetApp.flush();
+  invalidarCacheHoja_('USUARIOS');
+  const confirmado = obtenerRegistro_('USUARIOS', usuarioId);
+  if (!confirmado) throw new Error('PERMISOS_USUARIO_NO_CONFIRMADOS');
+  const modoReal = String(confirmado.MODO_PERMISOS || 'ROL').toUpperCase();
+  const permisosReales = normalizarListaPermisos_(confirmado.PERMISOS_PERSONALIZADOS || []);
+  const esperados = normalizarListaPermisos_(permisosEsperados || []);
+  if (modoReal !== String(modoEsperado || 'ROL').toUpperCase()) throw new Error('MODO_PERMISOS_NO_CONFIRMADO');
+  if (modoReal === 'PERSONALIZADO' && JSON.stringify(permisosReales) !== JSON.stringify(esperados)) {
+    throw new Error('PERMISOS_PERSONALIZADOS_NO_CONFIRMADOS');
+  }
+  return confirmado;
+}
+
 function actualizarPermisosUsuario_(request, session) {
   if (!session || !session.user || !esAdministradorSistema_(session.user)) throw new Error('SOLO_ADMINISTRADOR');
   exigirPermiso_(session.user, 'USUARIOS', 'ACTUALIZAR');
@@ -3641,26 +3869,30 @@ function actualizarPermisosUsuario_(request, session) {
   const user = obtenerRegistro_('USUARIOS', userId);
   if (!user) throw new Error('REGISTRO_NO_ENCONTRADO');
   if (esAdministradorSistema_(user)) {
-    const updatedAdmin = actualizarRegistro_('USUARIOS', user.ID, {
+    actualizarRegistro_('USUARIOS', user.ID, {
       MODO_PERMISOS:'ROL',
       PERMISOS_PERSONALIZADOS:'[]',
       VERSION_PERMISOS:Number(user.VERSION_PERMISOS || 0) + 1,
     });
-    registrarBitacora_(session.user, 'ACTUALIZAR_PERMISOS', 'USUARIOS', user.ID, 'Respaldo anterior: ' + respaldoAuditoria_(user) + '. Datos posteriores: ' + respaldoAuditoria_(updatedAdmin));
-    return ok_({ row:usuarioPublico_(updatedAdmin), admin:true });
+    const updatedAdmin = confirmarPermisosUsuarioGuardados_(user.ID, 'ROL', []);
+    registrarBitacora_(session.user, 'ACTUALIZAR_PERMISOS', 'USUARIOS', user.ID, 'Respaldo anterior: ' + respaldoAuditoria_(user) + '. Datos posteriores confirmados: ' + respaldoAuditoria_(updatedAdmin));
+    return ok_({ row:usuarioPublico_(updatedAdmin), admin:true, persistenciaConfirmada:true });
   }
   const accesoConexionesAnterior = permisosEfectivosUsuario_(user).indexOf('CONEXIONES:LEER') >= 0;
+  const accesoDocumentosAnterior = permisosEfectivosUsuario_(user).indexOf('DOCUMENTOS:CREAR') >= 0;
   const modo = String(data.MODO_PERMISOS || 'ROL').toUpperCase() === 'PERSONALIZADO' ? 'PERSONALIZADO' : 'ROL';
   const permisos = modo === 'PERSONALIZADO' ? normalizarListaPermisos_(data.PERMISOS || data.PERMISOS_PERSONALIZADOS || []) : [];
-  const updated = actualizarRegistro_('USUARIOS', user.ID, {
+  actualizarRegistro_('USUARIOS', user.ID, {
     MODO_PERMISOS:modo,
     PERMISOS_PERSONALIZADOS:JSON.stringify(permisos),
     VERSION_PERMISOS:Number(user.VERSION_PERMISOS || 0) + 1,
   });
+  const updated = confirmarPermisosUsuarioGuardados_(user.ID, modo, permisos);
   registrarBitacora_(session.user, 'ACTUALIZAR_PERMISOS', 'USUARIOS', user.ID,
-    (modo === 'PERSONALIZADO' ? 'Permisos personalizados actualizados sin cerrar sesiones. ' : 'Permisos restaurados al rol. ') +
-    'Respaldo anterior: ' + respaldoAuditoria_(user) + '. Datos posteriores: ' + respaldoAuditoria_(updated));
+    (modo === 'PERSONALIZADO' ? 'Permisos personalizados actualizados y confirmados en la base central. ' : 'Permisos restaurados al rol y confirmados. ') +
+    'Respaldo anterior: ' + respaldoAuditoria_(user) + '. Datos posteriores confirmados: ' + respaldoAuditoria_(updated));
   const accesoConexionesNuevo = permisosEfectivosUsuario_(updated).indexOf('CONEXIONES:LEER') >= 0;
+  const accesoDocumentosNuevo = permisosEfectivosUsuario_(updated).indexOf('DOCUMENTOS:CREAR') >= 0;
   if (accesoConexionesAnterior !== accesoConexionesNuevo) {
     registrarBitacora_(session.user,
       accesoConexionesNuevo ? 'OTORGAR_ACCESO_CONEXIONES' : 'RETIRAR_ACCESO_CONEXIONES',
@@ -3669,7 +3901,15 @@ function actualizarPermisosUsuario_(request, session) {
       ' al módulo Conexiones en línea para ' + (user.NOMBRE || user.CORREO || user.ID) +
       '. Ejecutado por ' + (session.user.NOMBRE || session.user.CORREO || session.user.ID) + '.');
   }
-  return ok_({ row:usuarioPublico_(updated), sessionPreserved:true, accesoConexiones:accesoConexionesNuevo });
+  if (user.ROL_ID === 'ROL-CONDUCTOR' && accesoDocumentosAnterior !== accesoDocumentosNuevo) {
+    registrarBitacora_(session.user,
+      accesoDocumentosNuevo ? 'HABILITAR_CARGA_DOCUMENTOS' : 'BLOQUEAR_CARGA_DOCUMENTOS',
+      'DOCUMENTOS', user.ID,
+      (accesoDocumentosNuevo ? 'Carga de documentos habilitada' : 'Carga de documentos bloqueada') +
+      ' para ' + (user.NOMBRE || user.CORREO || user.ID) +
+      '. Ejecutado por ' + (session.user.NOMBRE || session.user.CORREO || session.user.ID) + '.');
+  }
+  return ok_({ row:usuarioPublico_(updated), sessionPreserved:true, persistenciaConfirmada:true, accesoConexiones:accesoConexionesNuevo, cargaDocumentos:accesoDocumentosNuevo });
 }
 
 /** ============================================================
@@ -4064,6 +4304,8 @@ function resolverVinculoCombustible_(data, existing, session, isCreate) {
   let driverId = String(data.CONDUCTOR_ID !== undefined ? data.CONDUCTOR_ID : (existing && existing.CONDUCTOR_ID) || '').trim();
   let operation = null;
   let route = null;
+  const driverSession = session && session.user && session.user.ROL_ID === 'ROL-CONDUCTOR' ? conductorDeUsuario_(session.user.ID) : null;
+  if (session && session.user && session.user.ROL_ID === 'ROL-CONDUCTOR' && !driverSession) throw new Error('CONDUCTOR_NO_ASOCIADO_USUARIO');
 
   if (operationId) {
     operation = obtenerRegistro_('OPERACIONES', operationId);
@@ -4097,6 +4339,12 @@ function resolverVinculoCombustible_(data, existing, session, isCreate) {
   } else if (route) {
     vehicleId = String(route.VEHICULO_ID || '').trim();
     driverId = String(route.CONDUCTOR_ID || '').trim();
+  }
+
+  if (driverSession) {
+    driverId = driverSession.ID;
+    if (operation && String(operation.CONDUCTOR_ID || '') !== String(driverSession.ID)) throw new Error('COMBUSTIBLE_OPERACION_NO_AUTORIZADA');
+    if (route && String(route.CONDUCTOR_ID || '') !== String(driverSession.ID)) throw new Error('COMBUSTIBLE_RUTA_NO_AUTORIZADA');
   }
 
   if (!isAdmin && isCreate) {
@@ -4179,7 +4427,6 @@ function recalcularConsumosVehiculo_(vehicleId) {
 
 function crearCargaCombustible_(request, session) {
   exigirPermiso_(session.user, 'COMBUSTIBLE', 'CREAR');
-  if (session.user.ROL_ID === 'ROL-CONDUCTOR') throw new Error('PERMISO_DENEGADO');
   const clean = validarCargaCombustible_(request.datos || {}, null, session, true);
   clean.CREADO_POR = session.user.ID;
   clean.ACTUALIZADO_POR = session.user.ID;
@@ -4188,8 +4435,16 @@ function crearCargaCombustible_(request, session) {
   recalcularConsumosVehiculo_(row.VEHICULO_ID);
   const updated = obtenerRegistro_('CARGAS_COMBUSTIBLE', row.ID);
   registrarBitacora_(session.user, 'CREAR_CARGA', 'COMBUSTIBLE', row.ID, 'Carga registrada. Datos: ' + respaldoAuditoria_(updated), ipSolicitudCombustible_(request));
-  if (session.user.ROL_ID === 'ROL-SUPERVISOR') {
-    notificarRolesInterno_(['ROL-ADMIN'], { TITULO:'Nueva carga de combustible', MENSAJE:session.user.NOMBRE + ' registró ' + clean.LITROS + ' L para el vehículo ' + clean.VEHICULO_ID + '.', TIPO:'Combustible', PRIORIDAD:'Normal', OPERACION_ID:clean.OPERACION_ID, CREADO_POR:session.user.ID });
+  if (session.user.ROL_ID === 'ROL-CONDUCTOR') {
+    const vehicle = obtenerRegistro_('VEHICULOS', clean.VEHICULO_ID) || {};
+    const driver = obtenerRegistro_('CONDUCTORES', clean.CONDUCTOR_ID) || {};
+    notificarRolesInterno_(['ROL-ADMIN'], {
+      TITULO:'Combustible informado por conductor',
+      MENSAJE:(driver.NOMBRE || session.user.NOMBRE || clean.CONDUCTOR_ID) + ' (' + (session.user.CORREO || 'sin correo') + ') informó ' + clean.LITROS + ' L para ' + (vehicle.PATENTE || clean.VEHICULO_ID) + ' · costo ' + clean.COSTO_TOTAL + ' · ' + fechaIso_() + '.',
+      TIPO:'Combustible', PRIORIDAD:'Normal', OPERACION_ID:clean.OPERACION_ID, RUTA_ID:clean.RUTA_ID, CREADO_POR:session.user.ID, CLAVE_UNICA:'COMBUSTIBLE-CONDUCTOR-' + row.ID
+    });
+  } else if (session.user.ROL_ID === 'ROL-SUPERVISOR') {
+    notificarRolesInterno_(['ROL-ADMIN'], { TITULO:'Nueva carga de combustible', MENSAJE:session.user.NOMBRE + ' registró ' + clean.LITROS + ' L para el vehículo ' + clean.VEHICULO_ID + '.', TIPO:'Combustible', PRIORIDAD:'Normal', OPERACION_ID:clean.OPERACION_ID, RUTA_ID:clean.RUTA_ID, CREADO_POR:session.user.ID, CLAVE_UNICA:'COMBUSTIBLE-SUPERVISOR-' + row.ID });
   }
   return ok_({ row:limpiarSalidaRecurso_('CARGAS_COMBUSTIBLE', updated) });
 }
@@ -4398,6 +4653,13 @@ function procesarTrabajoSegundoPlano_(job) {
     ].join(' ');
     registrarBitacora_(senderRoute, 'FINALIZAR', 'RUTAS', data.rutaId || '', routeMessage, data.ip || '');
     notificarRolesInterno_(['ROL-ADMIN'], { TITULO:'Ruta finalizada: ' + (data.nombreRuta || data.rutaId || ''), MENSAJE:routeMessage, TIPO:'Ruta finalizada', PRIORIDAD:'Alta', RUTA_ID:data.rutaId || '', OPERACION_ID:data.operacionId || '', CREADO_POR:senderRoute.ID || '' });
+    return;
+  }
+  if (job.tipo === 'CIERRE_SESION') {
+    listarRegistros_('CONEXIONES', {}).filter(function(row) { return String(row.SESION_ID || '') === String(data.sesionId || ''); }).forEach(function(row) {
+      actualizarRegistro_('CONEXIONES', row.ID, { ESTADO:'Desconectado', ACTIVIDAD:'Inactivo', PAGINA_VISIBLE:'NO', ULTIMA_CONEXION:new Date(data.fechaHora || Date.now()) });
+    });
+    registrarBitacora_(data.usuario || {}, 'CIERRE_SESION', 'SEGURIDAD', data.usuario && data.usuario.ID || '', 'Cierre de sesión');
     return;
   }
   if (job.tipo !== 'CIERRE_OPERACION') return;

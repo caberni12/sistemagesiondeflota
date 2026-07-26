@@ -22,6 +22,7 @@
   let currentCompany = cargarPuntoOperacionDispositivo() || null;
   let reconocimientoVoz = null;
   let vozEscuchando = false;
+  let dictadoNativoPendiente = null;
   let currentSection = initialSection;
   let mapaFlota = null;
   let ultimaUbicacionEnviada = null;
@@ -805,7 +806,14 @@
     return `https://www.google.com/maps/dir/?${params.toString()}`;
   }
   function evidenciasRuta(route){try{const list=JSON.parse(String(route?.EVIDENCIAS_FOTOS_CODIFICADAS||'[]'));return Array.isArray(list)?list:[];}catch(_){return route?.ULTIMA_EVIDENCIA_URL?[{url:route.ULTIMA_EVIDENCIA_URL,fecha:route.ULTIMA_EVIDENCIA_FECHA}]:[];}}
-  function evidenciaRutaResumen(route){const items=evidenciasRuta(route);return items.length?`<div class="route-evidence-summary"><i>▧</i><span><b>${items.length} fotografía(s) de respaldo</b><small>Última: ${fmtDate(items[items.length-1]?.fecha||route.ULTIMA_EVIDENCIA_FECHA,true)}</small></span><a href="${esc(items[items.length-1]?.url||route.ULTIMA_EVIDENCIA_URL||'#')}" target="_blank" rel="noopener">Ver última</a></div>`:'';}
+  function botonImagenRuta(url,label='Ver imagen'){return `<button type="button" class="link-button" data-route-image-url="${esc(url||'')}">${esc(label)}</button>`;}
+  function botonGaleriaRuta(route,label='Ver fotografías'){const total=evidenciasRuta(route).length;return `<button type="button" class="link-button" data-route-gallery-id="${esc(route?.ID||'')}">${esc(label||`Ver ${total} foto(s)`)}</button>`;}
+  function miniaturaEvidenciaRuta(url){const value=String(url||'');const match=value.match(/(?:\/d\/|[?&]id=)([a-zA-Z0-9_-]{10,})/);return match?`https://drive.google.com/thumbnail?id=${encodeURIComponent(match[1])}&sz=w600`:value;}
+  function abrirImagenRutaSegura(url,titulo='Respaldo fotográfico de la ruta'){const destino=String(url||'').trim();if(!destino)return toast('Imagen no disponible','El respaldo no tiene un enlace válido.','error');try{if(window.AndroidConfig&&typeof window.AndroidConfig.abrirImagenRuta==='function'){window.AndroidConfig.abrirImagenRuta(destino,titulo);return;}}catch(_){}const ventana=window.open(destino,'_blank','noopener');if(!ventana)location.href=destino;}
+  function enlazarVisoresRuta(root=document){$$('[data-route-image-url]',root).forEach(btn=>{if(btn.dataset.routeImageBound==='1')return;btn.dataset.routeImageBound='1';btn.addEventListener('click',()=>abrirImagenRutaSegura(btn.dataset.routeImageUrl,btn.dataset.routeImageTitle||'Respaldo fotográfico de la ruta'));});}
+  function abrirGaleriaRuta(routeId){const route=registroFormulario('routes',routeId)||(cacheListasFormulario.get('routes')||[]).find(row=>String(row.ID)===String(routeId));if(!route)return toast('Ruta no disponible','Sincronice e intente nuevamente.','error');const items=evidenciasRuta(route).filter(item=>String(item?.url||'').trim());if(!items.length)return toast('Sin fotografías','Esta ruta todavía no tiene respaldos fotográficos.','error');$('#modalEyebrow').textContent='GALERÍA DE RESPALDOS';$('#modalTitle').textContent=`${items.length} fotografía(s) · ${route.NOMBRE||route.ID}`;$('#modalBody').innerHTML=`<div class="route-evidence-gallery">${items.slice().reverse().map((item,index)=>{const numero=items.length-index,titulo=`Foto ${numero} de ${items.length}`;return `<article class="route-evidence-gallery-item"><button type="button" class="route-evidence-thumb" data-route-image-url="${esc(item.url)}" data-route-image-title="${esc(titulo)}"><img src="${esc(miniaturaEvidenciaRuta(item.url))}" alt="${esc(titulo)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'"><span class="route-evidence-thumb-fallback">📷</span></button><div><b>${esc(titulo)}</b><small>${fmtDate(item.fecha||route.ULTIMA_EVIDENCIA_FECHA,true)}</small>${item.usuarioNombre?`<small>Cargada por ${esc(item.usuarioNombre)}</small>`:''}${item.observacion?`<p>${esc(item.observacion)}</p>`:''}${botonImagenRuta(item.url,'Abrir fotografía')}</div></article>`;}).join('')}</div><div class="form-actions"><button class="btn primary" type="button" data-cancel-modal>Cerrar galería</button></div>`;openModal();const body=$('#modalBody');enlazarVisoresRuta(body);$('[data-cancel-modal]',body).onclick=closeModal;}
+  function enlazarGaleriasRuta(root=document){$$('[data-route-gallery-id]',root).forEach(btn=>{if(btn.dataset.routeGalleryBound==='1')return;btn.dataset.routeGalleryBound='1';btn.addEventListener('click',()=>abrirGaleriaRuta(btn.dataset.routeGalleryId));});}
+  function evidenciaRutaResumen(route){const items=evidenciasRuta(route),ultima=items[items.length-1];return items.length?`<div class="route-evidence-summary"><i>▧</i><span><b>${items.length} fotografía(s) de respaldo</b><small>Última: ${fmtDate(ultima?.fecha||route.ULTIMA_EVIDENCIA_FECHA,true)}</small></span>${botonGaleriaRuta(route,`Ver ${items.length} foto(s)`)}</div>`:'';}
   function routeCard(route,hero=false){
     const canUpdate=hasPermission('RUTAS','ACTUALIZAR'),driver=currentUser?.ROL_ID==='ROL-CONDUCTOR';
     const actions=[`<a class="btn primary small" href="${esc(navigationUrl(route))}" target="_blank" rel="noopener">Navegar con ${esc(route.PROVEEDOR_NAVEGACION||'Google Maps')}</a>`];
@@ -1293,7 +1301,7 @@
     if(!base.configurada)prerequisites.push(`<div class="module-diagnostic warning"><i>⌖</i><div><b>La ruta puede asignarse sin geocerca</b><span>Defina manualmente el origen y el destino. El punto operacional solo será obligatorio cuando se intente iniciar o finalizar una operación.</span></div>${puedeAdministrarPuntoOperacion()?'<button class="btn soft" data-nav="settings">Configurar punto para operaciones</button>':''}</div>`);
     if(hasPermission('RUTAS','CREAR')&&!driversResult.rows.length)prerequisites.push(`<div class="module-diagnostic warning"><i>♙</i><div><b>No existen conductores disponibles</b><span>Registre un conductor antes de crear la primera asignación.</span></div><button class="btn soft" data-nav="drivers">Abrir conductores</button></div>`);
     if(hasPermission('RUTAS','CREAR')&&!vehiclesResult.rows.length)prerequisites.push(`<div class="module-diagnostic warning"><i>▣</i><div><b>No existen vehículos registrados</b><span>Registre una unidad para asociarla a la ruta.</span></div><button class="btn soft" data-nav="vehicles">Abrir vehículos</button></div>`);
-    const routeRows=routes.slice().sort((a,b)=>new Date(b.FECHA_ASIGNACION||0)-new Date(a.FECHA_ASIGNACION||0)).map(route=>`<tr data-filter-date="${esc(route.FECHA_ASIGNACION||route.CREADO_EN||'')}" data-search-row="${esc(`${route.ID} ${route.NOMBRE} ${route.CONDUCTOR_NOMBRE} ${route.VEHICULO_PATENTE} ${route.DESTINO} ${route.ESTADO}`.toLowerCase())}"><td><strong>${esc(route.ID)}</strong><span class="muted">${esc(route.NOMBRE||'Ruta')}</span></td><td>${esc(route.CONDUCTOR_NOMBRE||'Sin conductor')}</td><td>${esc(route.VEHICULO_PATENTE||'Sin vehículo')}</td><td>${esc(route.ORIGEN||base.direccion)} → ${esc(route.DESTINO||'Sin destino')}</td><td>${fmtDate(route.FECHA_ASIGNACION,true)}</td><td>${status(route.ESTADO)}</td><td>${evidenciasRuta(route).length?`<a class="link-button" href="${esc(route.ULTIMA_EVIDENCIA_URL||evidenciasRuta(route).slice(-1)[0]?.url||'#')}" target="_blank" rel="noopener">${evidenciasRuta(route).length} foto(s)</a>`:'Sin fotos'}</td><td><div class="row-button-stack"><a class="btn soft small" href="${esc(navigationUrl(route))}" target="_blank" rel="noopener">Navegar</a><button class="btn soft small" data-route-evidence="${route.ID}">📷 Respaldo</button>${driverMap[route.CONDUCTOR_ID]?.TELEFONO?`<button class="btn whatsapp small" data-whatsapp-driver="${esc(route.CONDUCTOR_ID)}">WhatsApp</button>`:''}</div></td></tr>`).join('');
+    const routeRows=routes.slice().sort((a,b)=>new Date(b.FECHA_ASIGNACION||0)-new Date(a.FECHA_ASIGNACION||0)).map(route=>`<tr data-filter-date="${esc(route.FECHA_ASIGNACION||route.CREADO_EN||'')}" data-search-row="${esc(`${route.ID} ${route.NOMBRE} ${route.CONDUCTOR_NOMBRE} ${route.VEHICULO_PATENTE} ${route.DESTINO} ${route.ESTADO}`.toLowerCase())}"><td><strong>${esc(route.ID)}</strong><span class="muted">${esc(route.NOMBRE||'Ruta')}</span></td><td>${esc(route.CONDUCTOR_NOMBRE||'Sin conductor')}</td><td>${esc(route.VEHICULO_PATENTE||'Sin vehículo')}</td><td>${esc(route.ORIGEN||base.direccion)} → ${esc(route.DESTINO||'Sin destino')}</td><td>${fmtDate(route.FECHA_ASIGNACION,true)}</td><td>${status(route.ESTADO)}</td><td>${evidenciasRuta(route).length?botonGaleriaRuta(route,`Ver ${evidenciasRuta(route).length} foto(s)`):'Sin fotos'}</td><td><div class="row-button-stack"><a class="btn soft small" href="${esc(navigationUrl(route))}" target="_blank" rel="noopener">Navegar</a><button class="btn soft small" data-route-evidence="${route.ID}">📷 Respaldo</button>${driverMap[route.CONDUCTOR_ID]?.TELEFONO?`<button class="btn whatsapp small" data-whatsapp-driver="${esc(route.CONDUCTOR_ID)}">WhatsApp</button>`:''}</div></td></tr>`).join('');
     return heading('PLANIFICACIÓN OPERACIONAL','Asignación de rutas','Cree, supervise y cierre rutas vinculadas al conductor, vehículo y punto base.',actions)+
       prerequisites.join('')+
       `<div class="live-strip">${liveStat('➜','Asignadas',assigned.length,assigned.length?'warning':'')}${liveStat('●','En curso',running.length,running.length?'online':'')}${liveStat('✓','Completadas',completed.length,'online')}${liveStat('×','Canceladas',cancelled.length,cancelled.length?'warning':'')}</div>`+
@@ -1384,8 +1392,13 @@
   }
 
   async function renderGps() {
-    let realtime=ultimoResumenGps||{locations:[],devices:[],trackingVehicles:[],totals:{}};
-    try{const request=api.request('realtimeSummary',{...gpsFilterPayload(),force:true});const fast=await Promise.race([request,new Promise(resolve=>setTimeout(()=>resolve(null),900))]);if(fast){realtime=fast;ultimoResumenGps=fast;}else request.then(result=>{ultimoResumenGps=result;if(currentSection==='gps')paintGpsData(result,true);}).catch(()=>{});}catch(_){ }
+    const realtime=ultimoResumenGps&&Array.isArray(ultimoResumenGps.locations)
+      ? ultimoResumenGps
+      : {locations:[],devices:[],trackingVehicles:[],totals:{}};
+    ultimoResumenGps=realtime;
+    api.request('realtimeSummary',{...gpsFilterPayload(),force:true})
+      .then(result=>{ultimoResumenGps=result;if(currentSection==='gps')paintGpsData(result,true);})
+      .catch(()=>{});
     const locations={rows:realtime.locations||[],total:realtime.totals?.locations||0};
     return heading('MONITOREO','GPS en tiempo real','Posición, dirección escrita, velocidad y conexión de los teléfonos autorizados.',`<button class="btn soft" data-refresh-locations>↻ Sincronizar</button><button class="btn soft" data-capture-gps>⌖ Enviar ahora</button><button class="btn ${gpsWatchId===null?'primary':'danger'}" data-toggle-tracking>${gpsWatchId===null?'Activar ubicación continua':'Detener ubicación continua'}</button>`)+
       gpsFilterControls(realtime)+
@@ -1746,6 +1759,8 @@
     $$('[data-new-route]').forEach(btn=>btn.addEventListener('click',openRouteModal));
     $$('[data-route-state]').forEach(btn=>btn.addEventListener('click',()=>conCargaBoton(btn,'Actualizando…',()=>changeRouteState(btn.dataset.routeState))));
     $$('[data-route-evidence]').forEach(btn=>btn.addEventListener('click',()=>openRouteEvidenceModal(btn.dataset.routeEvidence)));
+    enlazarVisoresRuta($('#content'));
+    enlazarGaleriasRuta($('#content'));
     $$('[data-new-notification]').forEach(btn=>btn.addEventListener('click',openNotificationModal));
     $$('[data-read-notification]').forEach(btn=>btn.addEventListener('click',()=>conCargaBoton(btn,'Actualizando…',()=>readNotification(btn.dataset.readNotification))));
     $('[data-read-all-notifications]')?.addEventListener('click',event=>conCargaBoton(event.currentTarget,'Actualizando…',marcarTodasNotificacionesLeidas));
@@ -2004,20 +2019,127 @@
     form.onsubmit=async event=>{event.preventDefault();const button=$('button[type="submit"]',form),mode=form.elements.MODO_PERMISOS.value,permissions=[...form.querySelectorAll('input[name="PERMISOS"]:checked')].map(input=>input.value);await conCargaBoton(button,'Guardando…',async()=>{try{const result=await api.request('saveUserPermissions',{data:{USUARIO_ID:userId,MODO_PERMISOS:mode,PERMISOS:permissions}});guardarRegistro('users',result.row);invalidarListasFormulario('users');cacheVistasModulo.delete('users');if(currentUser.ID===userId){currentUser=result.row;const auth=api.getAuth();api.setAuth({...auth,user:result.row});postParent({tipo:'flotas:modulo-listo',usuario:result.row,seccion:currentSection});}closeModal();toast('Permisos actualizados','La sesión se mantuvo abierta y los nuevos permisos se aplicarán al cambiar de módulo.');actualizarSeccionEnSegundoPlano('users');}catch(error){toast('No se pudieron actualizar los permisos',translateError(error),'error');}});};
   }
 
-  function reconocimientoDisponible(){return window.SpeechRecognition||window.webkitSpeechRecognition||null;}
+  function vozNativaDisponible(){
+    try{return Boolean(window.AndroidConfig&&typeof window.AndroidConfig.esVozNativaDisponible==='function'&&window.AndroidConfig.esVozNativaDisponible());}
+    catch(_){return false;}
+  }
+  function reconocimientoDisponible(){return vozNativaDisponible()?'ANDROID':(window.SpeechRecognition||window.webkitSpeechRecognition||null);}
   function actualizarEstadoVoz(texto){const element=$('#voiceCommandStatus');if(element)element.textContent=texto;}
-  function hablar(texto){if(!('speechSynthesis'in window)){toast('Lectura de voz no disponible','Este navegador no permite reproducir notificaciones por voz.','error');return false;}window.speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(String(texto||''));utterance.lang='es-CL';utterance.rate=1;utterance.pitch=1;window.speechSynthesis.speak(utterance);return true;}
-  function detenerVoz(){try{reconocimientoVoz?.stop();}catch(_){ }if('speechSynthesis'in window)window.speechSynthesis.cancel();vozEscuchando=false;actualizarEstadoVoz('Control de voz detenido.');}
+  function hablar(texto){
+    if(vozNativaDisponible()){
+      try{window.AndroidConfig.hablarTexto(String(texto||''));return true;}catch(_){}
+    }
+    if(!('speechSynthesis'in window)){toast('Lectura de voz no disponible','Este dispositivo no permite reproducir notificaciones por voz.','error');return false;}
+    window.speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(String(texto||''));utterance.lang='es-CL';utterance.rate=1;utterance.pitch=1;window.speechSynthesis.speak(utterance);return true;
+  }
+  function detenerVoz(){
+    try{reconocimientoVoz?.stop();}catch(_){}
+    try{window.AndroidConfig?.detenerVozNativa?.();}catch(_){}
+    if('speechSynthesis'in window)window.speechSynthesis.cancel();
+    if(dictadoNativoPendiente){dictadoNativoPendiente.boton.textContent=dictadoNativoPendiente.original;dictadoNativoPendiente.boton.classList.remove('listening');dictadoNativoPendiente=null;}
+    vozEscuchando=false;actualizarEstadoVoz('Control de voz detenido.');
+  }
   function notificacionesActuales(){return (cacheListasFormulario.get('notifications')||[]).slice().sort((a,b)=>new Date(b.FECHA_ENVIO||0)-new Date(a.FECHA_ENVIO||0));}
   function leerNotificacionesVoz(){const unread=notificacionesActuales().filter(item=>item.LEIDA!=='SI');if(!unread.length){hablar('No tiene notificaciones pendientes.');actualizarEstadoVoz('No hay notificaciones pendientes.');return;}const limit=unread.slice(0,10),text=`Tiene ${unread.length} notificaciones pendientes. `+limit.map((item,index)=>`Notificación ${index+1}. ${item.TITULO}. ${item.MENSAJE}`).join('. ');hablar(text);actualizarEstadoVoz(`Leyendo ${limit.length} de ${unread.length} notificaciones pendientes.`);}
   async function marcarTodasNotificacionesLeidas(){const unread=notificacionesActuales().filter(item=>item.LEIDA!=='SI');if(!unread.length){hablar('No hay notificaciones pendientes.');return;}actualizarEstadoVoz('Marcando notificaciones como leídas…');for(const item of unread){await api.request('readNotification',{id:item.ID});}invalidarListasFormulario('notifications');cacheVistasModulo.delete('notifications');hablar(`${unread.length} notificaciones fueron marcadas como leídas.`);toast('Notificaciones actualizadas',`${unread.length} mensajes marcados como leídos.`);actualizarSeccionEnSegundoPlano('notifications');}
   async function ejecutarComandoVoz(transcript){const command=String(transcript||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();actualizarEstadoVoz(`Comando detectado: “${transcript}”`);if(/detener|parar|silencio/.test(command)){detenerVoz();return;}if(/leer.*(notificacion|pendiente)|notificacion.*leer/.test(command)){leerNotificacionesVoz();return;}if(/marcar.*todas.*leida/.test(command)){await marcarTodasNotificacionesLeidas();return;}if(/crear|nueva|enviar/.test(command)&&/notificacion|mensaje/.test(command)){openNotificationModal();hablar('Formulario de notificación abierto. Puede usar los micrófonos para dictar el título y el mensaje.');return;}hablar('Comando no reconocido. Diga leer notificaciones, marcar todas como leídas, crear notificación o detener lectura.');actualizarEstadoVoz('Comando no reconocido. Revise los ejemplos disponibles.');}
-  function iniciarComandoVoz(){const Recognition=reconocimientoDisponible();if(!Recognition){toast('Reconocimiento de voz no disponible','Use Chrome o un navegador compatible. La lectura en voz alta seguirá disponible.','error');actualizarEstadoVoz('Este navegador no admite reconocimiento de voz.');return;}detenerVoz();reconocimientoVoz=new Recognition();reconocimientoVoz.lang='es-CL';reconocimientoVoz.interimResults=false;reconocimientoVoz.continuous=false;reconocimientoVoz.maxAlternatives=1;reconocimientoVoz.onstart=()=>{vozEscuchando=true;actualizarEstadoVoz('Escuchando… diga un comando.');};reconocimientoVoz.onresult=event=>ejecutarComandoVoz(event.results?.[0]?.[0]?.transcript||'');reconocimientoVoz.onerror=event=>{vozEscuchando=false;const message=event.error==='not-allowed'?'Permiso de micrófono bloqueado.':'No se pudo reconocer el comando.';actualizarEstadoVoz(message);toast('Comando de voz',message,'error');};reconocimientoVoz.onend=()=>{vozEscuchando=false;};try{reconocimientoVoz.start();}catch(error){toast('Comando de voz','No se pudo activar el micrófono.','error');}}
-  function dictarEnCampo(campo,boton){const Recognition=reconocimientoDisponible();if(!Recognition){toast('Dictado no disponible','Este navegador no admite reconocimiento de voz.','error');return;}const recognition=new Recognition();recognition.lang='es-CL';recognition.interimResults=false;recognition.continuous=false;const original=boton.textContent;boton.textContent='●';boton.classList.add('listening');recognition.onresult=event=>{const text=event.results?.[0]?.[0]?.transcript||'';campo.value=(campo.value?campo.value.trim()+' ':'')+text;campo.dispatchEvent(new Event('input',{bubbles:true}));};recognition.onerror=()=>toast('Dictado','No se pudo reconocer la voz.','error');recognition.onend=()=>{boton.textContent=original;boton.classList.remove('listening');};try{recognition.start();}catch(_){boton.textContent=original;boton.classList.remove('listening');}}
+  function iniciarComandoVoz(){
+    const Recognition=reconocimientoDisponible();
+    if(!Recognition){toast('Reconocimiento de voz no disponible','El teléfono no tiene un servicio de reconocimiento de voz habilitado.','error');actualizarEstadoVoz('Reconocimiento de voz no disponible.');return;}
+    detenerVoz();
+    if(Recognition==='ANDROID'){
+      vozEscuchando=true;actualizarEstadoVoz('Solicitando micrófono Android…');
+      try{window.AndroidConfig.iniciarReconocimientoVoz('comando');}catch(error){vozEscuchando=false;toast('Comando de voz','No se pudo activar el micrófono.','error');}
+      return;
+    }
+    reconocimientoVoz=new Recognition();reconocimientoVoz.lang='es-CL';reconocimientoVoz.interimResults=false;reconocimientoVoz.continuous=false;reconocimientoVoz.maxAlternatives=1;reconocimientoVoz.onstart=()=>{vozEscuchando=true;actualizarEstadoVoz('Escuchando… diga un comando.');};reconocimientoVoz.onresult=event=>ejecutarComandoVoz(event.results?.[0]?.[0]?.transcript||'');reconocimientoVoz.onerror=event=>{vozEscuchando=false;const message=event.error==='not-allowed'?'Permiso de micrófono bloqueado.':'No se pudo reconocer el comando.';actualizarEstadoVoz(message);toast('Comando de voz',message,'error');};reconocimientoVoz.onend=()=>{vozEscuchando=false;};try{reconocimientoVoz.start();}catch(error){toast('Comando de voz','No se pudo activar el micrófono.','error');}
+  }
+  function dictarEnCampo(campo,boton){
+    const Recognition=reconocimientoDisponible();if(!Recognition){toast('Dictado no disponible','El teléfono no tiene reconocimiento de voz habilitado.','error');return;}
+    const original=boton.textContent;boton.textContent='●';boton.classList.add('listening');
+    if(Recognition==='ANDROID'){
+      const contexto=`dictado:${Date.now()}`;dictadoNativoPendiente={campo,boton,original,contexto};
+      try{window.AndroidConfig.iniciarReconocimientoVoz(contexto);}catch(_){boton.textContent=original;boton.classList.remove('listening');dictadoNativoPendiente=null;}
+      return;
+    }
+    const recognition=new Recognition();recognition.lang='es-CL';recognition.interimResults=false;recognition.continuous=false;recognition.onresult=event=>{const text=event.results?.[0]?.[0]?.transcript||'';campo.value=(campo.value?campo.value.trim()+' ':'')+text;campo.dispatchEvent(new Event('input',{bubbles:true}));};recognition.onerror=()=>toast('Dictado','No se pudo reconocer la voz.','error');recognition.onend=()=>{boton.textContent=original;boton.classList.remove('listening');};try{recognition.start();}catch(_){boton.textContent=original;boton.classList.remove('listening');}
+  }
+  window.addEventListener('flotas:voz-nativa-estado',event=>{const detalle=event.detail||{};if(String(detalle.contexto||'')==='comando')actualizarEstadoVoz(detalle.mensaje||'Escuchando…');});
+  window.addEventListener('flotas:voz-nativa-error',event=>{const detalle=event.detail||{};vozEscuchando=false;if(dictadoNativoPendiente&&detalle.contexto===dictadoNativoPendiente.contexto){dictadoNativoPendiente.boton.textContent=dictadoNativoPendiente.original;dictadoNativoPendiente.boton.classList.remove('listening');dictadoNativoPendiente=null;}const mensaje=detalle.mensaje||'No se pudo reconocer la voz.';actualizarEstadoVoz(mensaje);toast('Comando de voz',mensaje,'error');});
+  window.addEventListener('flotas:voz-nativa-resultado',event=>{const detalle=event.detail||{},contexto=String(detalle.contexto||''),texto=String(detalle.texto||'').trim();vozEscuchando=false;if(contexto==='comando'){ejecutarComandoVoz(texto);return;}if(dictadoNativoPendiente&&contexto===dictadoNativoPendiente.contexto){const pendiente=dictadoNativoPendiente;pendiente.campo.value=(pendiente.campo.value?pendiente.campo.value.trim()+' ':'')+texto;pendiente.campo.dispatchEvent(new Event('input',{bubbles:true}));pendiente.boton.textContent=pendiente.original;pendiente.boton.classList.remove('listening');dictadoNativoPendiente=null;}});
+
 
   function toggleMapFullscreen(force){const card=$('#mapCard');if(!card)return;const active=typeof force==='boolean'?force:!card.classList.contains('map-fullscreen');card.classList.toggle('map-fullscreen',active);document.body.classList.toggle('mapa-pantalla-completa',active);const button=$('[data-map-fullscreen]',card);if(button)button.textContent=active?'↙ Volver al tamaño normal':'⛶ Pantalla completa';setTimeout(()=>mapaFlota?.redibujar?.(),120);}
   async function subirEvidenciaRutaArchivo(route,file,statusNode){if(!file?.type?.startsWith('image/'))throw new Error('FORMATO_ARCHIVO_DRIVE_INVALIDO');if(file.size>12582912)throw new Error('ARCHIVO_DRIVE_DEMASIADO_GRANDE');statusNode.innerHTML=`<i></i><span>Optimizando ${esc(file.name)}…</span>`;const optimized=await optimizarImagenDrive(file),dataUrl=await leerArchivoDataUrl(optimized);statusNode.innerHTML=`<i></i><span>Subiendo ${esc(optimized.name)}…</span>`;return api.request('uploadDriveFile',{data:{DESTINO:'RUTA_EVIDENCIA',NOMBRE_ARCHIVO:optimized.name,TIPO_MIME:optimized.type||'image/jpeg',ARCHIVO_BASE64:dataUrl,CONTEXTO:`Ruta ${route.ID} - ${route.NOMBRE||''}`,IP_PUBLICA:clientPublicIp}});}
-  function openRouteEvidenceModal(routeId){const route=registroFormulario('routes',routeId)||(cacheListasFormulario.get('routes')||[]).find(row=>String(row.ID)===String(routeId));if(!route)return toast('Ruta no disponible','Sincronice e intente nuevamente.','error');const existing=evidenciasRuta(route);$('#modalEyebrow').textContent='RESPALDO DE RUTA';$('#modalTitle').textContent=`Fotografías · ${route.NOMBRE||route.ID}`;$('#modalBody').innerHTML=`<form id="routeEvidenceForm" class="form-grid"><div class="route-evidence-existing full"><b>${existing.length} fotografía(s) guardadas</b><div>${existing.slice(-6).reverse().map((item,index)=>`<a href="${esc(item.url)}" target="_blank" rel="noopener">Foto ${existing.length-index}</a>`).join('')||'<span>Sin fotografías anteriores.</span>'}</div></div><label class="file-drop full route-photo-picker"><input type="file" name="FOTOS" accept="image/*" capture="environment" multiple required><i>📷</i><b>Tomar fotos o elegir desde galería</b><span>La carga comienza inmediatamente. Máximo 6 fotos por envío.</span></label><div class="route-upload-list full" data-route-upload-list><div class="drive-upload-status"><i>○</i><span>Seleccione las fotografías.</span></div></div><label class="field full"><span>Observación del respaldo</span><textarea name="OBSERVACION" placeholder="Entrega realizada, novedad, estado de carga, firma visual u otra evidencia"></textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit" disabled>Guardar respaldo en la ruta</button></div></form>`;openModal();const form=$('#routeEvidenceForm'),input=form.elements.FOTOS,list=$('[data-route-upload-list]',form),submit=$('button[type="submit"]',form);let uploaded=[];$('[data-cancel-modal]',form).onclick=closeModal;input.addEventListener('change',async()=>{uploaded=[];submit.disabled=true;const files=[...(input.files||[])].slice(0,6);if(!files.length)return;list.innerHTML=files.map((file,index)=>`<div class="drive-upload-status loading" data-route-upload="${index}"><i></i><span>Preparando ${esc(file.name)}</span></div>`).join('');for(let index=0;index<files.length;index++){const node=list.querySelector(`[data-route-upload="${index}"]`);try{const result=await subirEvidenciaRutaArchivo(route,files[index],node);uploaded.push({url:result.url,nombre:result.nombre||files[index].name});node.className='drive-upload-status ready';node.innerHTML=`<i>✓</i><span>${esc(files[index].name)} cargada</span>`;}catch(error){node.className='drive-upload-status error';node.innerHTML=`<i>!</i><span>${esc(translateError(error))}</span>`;}}submit.disabled=!uploaded.length;});form.onsubmit=event=>{event.preventDefault();conCargaBoton(submit,'Guardando respaldo…',async()=>{try{await api.request('registerRouteEvidence',{data:{RUTA_ID:route.ID,URLS:uploaded,OBSERVACION:form.elements.OBSERVACION.value.trim()}});invalidarListasFormulario('routes','notifications','audit');cacheVistasModulo.delete('routes');cacheVistasModulo.delete('dashboard');closeModal();toast('Respaldo guardado',`${uploaded.length} fotografía(s) quedaron vinculadas a la ruta.`);actualizarSeccionEnSegundoPlano(currentSection);}catch(error){toast('No se pudo guardar el respaldo',translateError(error),'error');}});};}
+  function openRouteEvidenceModal(routeId){
+    const route=registroFormulario('routes',routeId)||(cacheListasFormulario.get('routes')||[]).find(row=>String(row.ID)===String(routeId));
+    if(!route)return toast('Ruta no disponible','Sincronice e intente nuevamente.','error');
+    const existing=evidenciasRuta(route);
+    $('#modalEyebrow').textContent='RESPALDO DE RUTA';
+    $('#modalTitle').textContent=`Fotografías · ${route.NOMBRE||route.ID}`;
+    $('#modalBody').innerHTML=`<form id="routeEvidenceForm" class="form-grid">
+      <div class="route-evidence-existing full">
+        <b>${existing.length} fotografía(s) guardadas</b>
+        <div>${existing.length?botonGaleriaRuta(route,`Ver las ${existing.length} foto(s)`):'<span>Sin fotografías anteriores.</span>'}</div>
+      </div>
+      <div class="route-photo-actions full">
+        <label class="file-drop route-photo-picker route-camera-picker">
+          <input type="file" name="FOTO_CAMARA" accept="image/*" capture="environment">
+          <i>📷</i><b>Tomar fotografía</b><span>Abre la cámara trasera del teléfono.</span>
+        </label>
+        <label class="file-drop route-photo-picker route-gallery-picker">
+          <input type="file" name="FOTOS_GALERIA" accept="image/*" multiple>
+          <i>▧</i><b>Elegir desde galería</b><span>Puede seleccionar varias imágenes.</span>
+        </label>
+      </div>
+      <div class="route-upload-summary full" data-route-upload-summary>0 de 6 fotografías preparadas.</div>
+      <div class="route-upload-list full" data-route-upload-list>
+        <div class="drive-upload-status"><i>○</i><span>Tome una fotografía o seleccione imágenes.</span></div>
+      </div>
+      <label class="field full"><span>Observación del respaldo</span><textarea name="OBSERVACION" placeholder="Entrega realizada, novedad, estado de carga, firma visual u otra evidencia"></textarea></label>
+      <div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit" disabled>Guardar respaldo en la ruta</button></div>
+    </form>`;
+    openModal();
+    const form=$('#routeEvidenceForm'),camera=form.elements.FOTO_CAMARA,gallery=form.elements.FOTOS_GALERIA,list=$('[data-route-upload-list]',form),summary=$('[data-route-upload-summary]',form),submit=$('button[type="submit"]',form);
+    enlazarVisoresRuta(form);enlazarGaleriasRuta(form);
+    let uploaded=[],sequence=0,processing=false;
+    $('[data-cancel-modal]',form).onclick=closeModal;
+    const updateSummary=()=>{summary.textContent=`${uploaded.length} de 6 fotografía(s) cargadas. ${processing?'Procesando…':''}`;submit.disabled=!uploaded.length||processing;};
+    const processFiles=async selected=>{
+      const available=Math.max(0,6-uploaded.length),files=[...(selected||[])].filter(file=>file?.type?.startsWith('image/')).slice(0,available);
+      if(!files.length){if(available===0)toast('Límite alcanzado','Puede guardar hasta 6 fotografías por respaldo.','error');return;}
+      if(!uploaded.length)list.innerHTML='';
+      processing=true;updateSummary();
+      for(const file of files){
+        const id=sequence++,node=document.createElement('div');
+        node.className='drive-upload-status loading';node.dataset.routeUpload=String(id);node.innerHTML=`<i></i><span>Preparando ${esc(file.name||'fotografía')}…</span>`;list.appendChild(node);
+        try{
+          const result=await subirEvidenciaRutaArchivo(route,file,node);
+          uploaded.push({url:result.url,nombre:result.nombre||file.name});
+          node.className='drive-upload-status ready';node.innerHTML=`<i>✓</i><span>${esc(file.name||'Fotografía')} cargada</span>`;
+        }catch(error){
+          node.className='drive-upload-status error';node.innerHTML=`<i>!</i><span>${esc(translateError(error))}</span>`;
+        }
+        updateSummary();
+      }
+      processing=false;updateSummary();
+      camera.value='';gallery.value='';
+    };
+    camera.addEventListener('change',()=>processFiles(camera.files));
+    gallery.addEventListener('change',()=>processFiles(gallery.files));
+    updateSummary();
+    form.onsubmit=event=>{
+      event.preventDefault();
+      if(!uploaded.length||processing)return;
+      conCargaBoton(submit,'Guardando respaldo…',async()=>{
+        try{
+          await api.request('registerRouteEvidence',{data:{RUTA_ID:route.ID,URLS:uploaded,OBSERVACION:form.elements.OBSERVACION.value.trim()}});
+          invalidarListasFormulario('routes','notifications','audit');cacheVistasModulo.delete('routes');cacheVistasModulo.delete('dashboard');closeModal();
+          toast('Respaldo guardado',`${uploaded.length} fotografía(s) quedaron vinculadas a la ruta.`);actualizarSeccionEnSegundoPlano(currentSection);
+        }catch(error){toast('No se pudo guardar el respaldo',translateError(error),'error');}
+      });
+    };
+  }
   async function runAutomaticAlerts(button){try{const result=await api.request('runAutomaticAlerts',{force:true});invalidarListasFormulario('alerts','notifications');cacheVistasModulo.delete('alerts');cacheVistasModulo.delete('dashboard');toast('Revisión automática completada',`${Number(result.creadas||0)} alerta(s) nueva(s) detectadas.`);if(currentSection==='alerts')actualizarSeccionEnSegundoPlano('alerts');}catch(error){toast('No se pudo revisar',translateError(error),'error');}}
   function openRouteModal(){
     const base=configuracionPuntoOperacion();
@@ -2337,16 +2459,31 @@
     if(currentSection!=='gps'||!currentUser)return;
     gpsRefreshTimer=setTimeout(()=>refreshLocations(false,false),Math.max(250,delay));
   }
+  function esperarTamanoMapa(contenedor,intentos=24){
+    return new Promise(resolve=>{
+      const revisar=()=>{
+        if(!contenedor?.isConnected){resolve(false);return;}
+        if(contenedor.clientWidth>220&&contenedor.clientHeight>220){resolve(true);return;}
+        if(intentos--<=0){resolve(false);return;}
+        requestAnimationFrame(revisar);
+      };
+      revisar();
+    });
+  }
   async function initMap() {
     const contenedor=$('#fleetMap');
     if(!contenedor||!window.MapaFlotas){toast('Mapa no disponible','No se pudo iniciar el componente del mapa.','error');return;}
+    contenedor.classList.add('mapa-iniciando');
     try{
+      await esperarTamanoMapa(contenedor);
+      if(currentSection!=='gps'||!contenedor.isConnected)return;
       mapaFlota?.eliminar?.();
       mapaFlota=new MapaFlotas(contenedor,{centro:config.CENTRO_MAPA,nivel:config.NIVEL_ACERCAMIENTO_MAPA});
-      requestAnimationFrame(()=>{mapaFlota?.redibujar?.();paintGpsData(ultimoResumenGps,true);});
-      setTimeout(()=>mapaFlota?.redibujar?.(),300);
-      scheduleGpsRefresh(500);
+      requestAnimationFrame(()=>{mapaFlota?.redibujar?.();paintGpsData(ultimoResumenGps,true);contenedor.classList.remove('mapa-iniciando');});
+      setTimeout(()=>mapaFlota?.redibujar?.(),350);
+      scheduleGpsRefresh(120);
     }catch(error){
+      contenedor.classList.remove('mapa-iniciando');
       contenedor.innerHTML='<div class="mapa-error"><b>No se pudo mostrar el mapa</b><span>Pulse Sincronizar para volver a intentarlo.</span></div>';
       toast('Mapa no disponible',translateError(error),'error');
     }
@@ -2370,15 +2507,21 @@
   function permissionLabel(state=geolocationPermissionState){
     return ({granted:'Concedido',prompt:'Pendiente de autorización',denied:'Bloqueado',desconocido:'No disponible'})[state]||'No disponible';
   }
+  function nativeGpsAvailable(){
+    try{return Boolean(window.AndroidConfig&&typeof window.AndroidConfig.esGpsPermanenteDisponible==='function'&&window.AndroidConfig.esGpsPermanenteDisponible());}
+    catch(_){return false;}
+  }
   function wakeLockLabel(){
+    if(gpsWatchId==='ANDROID')return 'No requerida · servicio Android';
     if(!navigator.wakeLock)return 'No compatible';
     if(wakeLock&&!wakeLock.released)return 'Activa';
     return gpsWatchId===null?'No requerida':'En espera';
   }
   function trackingDetail(){
-    if(gpsWatchId!==null)return 'La preferencia quedó guardada y se reanudará cuando vuelva a abrir la sesión con el permiso concedido. Mantenga la aplicación abierta; el teléfono todavía puede suspender el navegador.';
-    if(trackingPreferenceEnabled())return 'La preferencia está guardada. Se reactivará automáticamente cuando el navegador tenga el permiso concedido y la aplicación esté abierta.';
-    return 'Actívela una vez y acepte el permiso del teléfono. El navegador no permite conceder “Siempre” automáticamente ni garantiza datos con la aplicación cerrada.';
+    if(gpsWatchId==='ANDROID')return 'El servicio nativo de Android seguirá enviando la ubicación con la pantalla apagada o la aplicación cerrada. Android mantendrá una notificación visible.';
+    if(gpsWatchId!==null)return 'La preferencia quedó guardada y se reanudará cuando vuelva a abrir la sesión con el permiso concedido.';
+    if(trackingPreferenceEnabled())return nativeGpsAvailable()?'La preferencia está guardada. Android reactivará el servicio permanente al iniciar la sesión.':'La preferencia está guardada. Se reactivará automáticamente cuando el navegador tenga permiso y la aplicación esté abierta.';
+    return nativeGpsAvailable()?'Actívela una vez y conceda “Permitir todo el tiempo”. El servicio Android podrá continuar con la aplicación cerrada.':'Actívela una vez y acepte el permiso del teléfono.';
   }
   function updateTrackingUi(){
     const active=gpsWatchId!==null;
@@ -2408,7 +2551,7 @@
     updateTrackingUi();return geolocationPermissionState;
   }
   async function requestWakeLock(){
-    if(!navigator.wakeLock?.request||document.hidden||gpsWatchId===null)return;
+    if(gpsWatchId==='ANDROID'||!navigator.wakeLock?.request||document.hidden||gpsWatchId===null)return;
     try{
       if(!wakeLock||wakeLock.released){
         wakeLock=await navigator.wakeLock.request('screen');
@@ -2434,6 +2577,14 @@
   }
   async function startTracking({silent=false}={}){
     if(gpsWatchId!==null)return true;
+    if(nativeGpsAvailable()){
+      gpsWatchId='ANDROID';
+      localStorage.setItem(trackingPreferenceKey,'1');
+      try{window.AndroidConfig.activarGpsPermanente();}catch(_){}
+      updateTrackingUi();sendHeartbeat();
+      if(!silent)toast('Ubicación permanente solicitada','Android continuará el seguimiento con la pantalla apagada o la aplicación cerrada después de conceder los permisos.');
+      return true;
+    }
     if(!navigator.geolocation){if(!silent)toast('GPS no compatible','Este navegador no ofrece geolocalización.','error');return false;}
     await monitorGeolocationPermission();
     if(geolocationPermissionState==='denied'){if(!silent)toast('Permiso de ubicación bloqueado','Abra la configuración del navegador y cambie el permiso de ubicación a permitido.','error');return false;}
@@ -2450,14 +2601,22 @@
     }catch(error){handleTrackingError(error);return false;}
   }
   function stopTracking({remember=true,silent=false}={}){
-    if(gpsWatchId!==null&&navigator.geolocation)navigator.geolocation.clearWatch(gpsWatchId);
+    if(gpsWatchId==='ANDROID'){try{window.AndroidConfig.detenerGpsPermanente();}catch(_){}}
+    else if(gpsWatchId!==null&&navigator.geolocation)navigator.geolocation.clearWatch(gpsWatchId);
     gpsWatchId=null;ultimaUbicacionEnviada=null;
     if(remember)localStorage.setItem(trackingPreferenceKey,'0');
     releaseWakeLock();updateTrackingUi();
     if(!silent)toast('Ubicación continua detenida');
   }
   async function resumeTrackingIfAllowed(){
-    if(!currentUser||!trackingPreferenceEnabled()||gpsWatchId!==null)return;
+    if(!currentUser||gpsWatchId!==null)return;
+    if(nativeGpsAvailable()){
+      try{const nativeState=JSON.parse(window.AndroidConfig.estadoGpsPermanente?.()||'{}');if(nativeState.habilitado)localStorage.setItem(trackingPreferenceKey,'1');}
+      catch(_){}
+      if(trackingPreferenceEnabled())await startTracking({silent:true});
+      return;
+    }
+    if(!trackingPreferenceEnabled())return;
     const state=await monitorGeolocationPermission();
     if(state==='granted')await startTracking({silent:true});
   }

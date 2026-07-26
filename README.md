@@ -1,5 +1,5 @@
-# Sistema de Gestión de Flotas 3.13.1
+# Sistema de Gestión de Flotas 3.13.2
 
-Entrega web completa en una sola carpeta. Incluye fotografías múltiples de respaldo en rutas, galería completa, alertas automáticas y mapa en pantalla completa.
+Versión web completa con Administrador total, conexiones en línea, fotografías de rutas, visor autenticado, alertas automáticas sin duplicados y validación QR reforzada.
 
-Consulte `LEEME_ACTUALIZACION_3.13.1.md`, `CAMBIOS_VERSION_3.13.1.md` y `PRUEBAS_VERSION_3.13.1.md`.
+El archivo `Codigo_Completo.gs` es maestro y autosuficiente. Ejecute `actualizarSistema()` después de reemplazarlo y publique una versión nueva del despliegue web.

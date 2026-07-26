@@ -2745,14 +2745,47 @@
   function openSidebar(){$('#sidebar').classList.add('open');$('#overlay').classList.add('open');}
   function closeSidebar(){$('#sidebar').classList.remove('open');$('#overlay').classList.remove('open');}
 
-  async function openQr(){openQrBackdrop();await enumerateCameras();}
+  function lectorQrNativoDisponible(){try{return Boolean(window.AndroidConfig&&AndroidConfig.esLectorQrNativoDisponible&&AndroidConfig.esLectorQrNativoDisponible());}catch(_){return false;}}
+  function iniciarQrNativo(){
+    if(!lectorQrNativoDisponible())return false;
+    try{
+      stopCamera();
+      $('#cameraEmpty')?.classList.remove('hidden');
+      $('#scannerStatus')?.classList.add('active');
+      if($('#scannerStatus span'))$('#scannerStatus span').textContent='Abriendo lector QR nativo…';
+      AndroidConfig.iniciarEscaneoQr('vehiculo-operacion');
+      return true;
+    }catch(error){toast('No se pudo abrir el lector QR',String(error?.message||error),'error');return false;}
+  }
+  async function openQr(){openQrBackdrop();if(iniciarQrNativo())return;await enumerateCameras();}
   function openQrBackdrop(){$('#qrBackdrop').classList.add('open');document.body.classList.add('modal-open');}
   function closeQr(){stopCamera();$('#qrBackdrop').classList.remove('open');if(!$('#modalBackdrop').classList.contains('open'))document.body.classList.remove('modal-open');}
   async function enumerateCameras(){try{const devices=await navigator.mediaDevices?.enumerateDevices();const cameras=(devices||[]).filter(d=>d.kind==='videoinput');$('#cameraSelect').innerHTML=cameras.length?cameras.map((c,i)=>`<option value="${c.deviceId}">${esc(c.label||`Cámara ${i+1}`)}</option>`).join(''):'<option value="">Cámara predeterminada</option>';}catch(_) {}}
-  async function startCamera(deviceId=''){if(!navigator.mediaDevices?.getUserMedia)return toast('Cámara no compatible','Use el código manual.','error');stopCamera();try{mediaStream=await navigator.mediaDevices.getUserMedia({video:deviceId?{deviceId:{exact:deviceId}}:{facingMode:{ideal:facingMode}},audio:false});$('#qrVideo').srcObject=mediaStream;await $('#qrVideo').play();$('#cameraEmpty').classList.add('hidden');$('#scannerStatus').classList.add('active');$('#scannerStatus span').textContent='Buscando QR…';await enumerateCameras();if('BarcodeDetector'in window){barcodeDetector=new BarcodeDetector({formats:['qr_code']});scanFrame();}else $('#scannerStatus span').textContent='Cámara activa · use ingreso manual';}catch(error){toast('No se pudo abrir la cámara','Revise el permiso del navegador.','error');}}
-  async function scanFrame(){if(!barcodeDetector||!mediaStream)return;try{if($('#qrVideo').readyState>=2){const codes=await barcodeDetector.detect($('#qrVideo'));if(codes.length)return processQr(codes[0].rawValue);}}catch(_){}scanFrameId=requestAnimationFrame(scanFrame);}
-  function stopCamera(){if(scanFrameId)cancelAnimationFrame(scanFrameId);scanFrameId=null;if(mediaStream)mediaStream.getTracks().forEach(track=>track.stop());mediaStream=null;if($('#qrVideo'))$('#qrVideo').srcObject=null;$('#cameraEmpty')?.classList.remove('hidden');$('#scannerStatus')?.classList.remove('active');if($('#scannerStatus span'))$('#scannerStatus span').textContent='Cámara detenida';}
-  async function processQr(code){try{const result=await api.request('validateVehicleQr',{codigo:String(code||'').trim()});const vehicle=result.row;if(!vehicle)throw new Error('QR_NO_RECONOCIDO');vehicle.AUTORIZACION_QR=result.autorizacionQr||'';closeQr();toast('Vehículo validado',`${vehicle.PATENTE} quedó listo para asociarlo a la operación.`);openOperationModal(vehicle);}catch(error){toast('No se pudo validar el QR',translateError(error),'error');}}
+  async function startCamera(deviceId=''){
+    if(iniciarQrNativo())return;
+    if(!navigator.mediaDevices?.getUserMedia)return toast('Lector QR no compatible','Ingrese el código manualmente o utilice la aplicación Android.','error');
+    stopCamera();
+    try{
+      mediaStream=await navigator.mediaDevices.getUserMedia({video:deviceId?{deviceId:{exact:deviceId}}:{facingMode:{ideal:facingMode}},audio:false});
+      $('#qrVideo').srcObject=mediaStream;await $('#qrVideo').play();$('#cameraEmpty').classList.add('hidden');$('#scannerStatus').classList.add('active');$('#scannerStatus span').textContent='Buscando código QR…';await enumerateCameras();
+      if('BarcodeDetector'in window){barcodeDetector=new BarcodeDetector({formats:['qr_code']});scanFrame();}
+      else {barcodeDetector=null;$('#scannerStatus span').textContent='Este navegador no incluye decodificador QR. Use el código manual o la aplicación Android.';}
+    }catch(error){toast('No se pudo abrir la cámara','Revise el permiso de cámara del navegador.','error');}
+  }
+  async function scanFrame(){if(!barcodeDetector||!mediaStream)return;try{if($('#qrVideo').readyState>=2){const codes=await barcodeDetector.detect($('#qrVideo'));if(codes.length){const value=String(codes[0].rawValue||'').trim();if(value)return processQr(value);}}}catch(_){}scanFrameId=requestAnimationFrame(scanFrame);}
+  function stopCamera(){if(scanFrameId)cancelAnimationFrame(scanFrameId);scanFrameId=null;if(mediaStream)mediaStream.getTracks().forEach(track=>track.stop());mediaStream=null;barcodeDetector=null;if($('#qrVideo'))$('#qrVideo').srcObject=null;$('#cameraEmpty')?.classList.remove('hidden');$('#scannerStatus')?.classList.remove('active');if($('#scannerStatus span'))$('#scannerStatus span').textContent='Cámara detenida';}
+  async function processQr(code){
+    const limpio=String(code||'').trim();
+    if(!limpio)return toast('Código QR vacío','No se recibió información del lector.','error');
+    try{
+      if($('#scannerStatus span'))$('#scannerStatus span').textContent='Validando vehículo…';
+      const result=await api.request('validateVehicleQr',{codigo:limpio});const vehicle=result.row;if(!vehicle)throw new Error('QR_NO_RECONOCIDO');
+      vehicle.AUTORIZACION_QR=result.autorizacionQr||'';closeQr();toast('Vehículo validado',`${vehicle.PATENTE} quedó listo para asociarlo a la operación.`);openOperationModal(vehicle);
+    }catch(error){if($('#scannerStatus span'))$('#scannerStatus span').textContent='QR no reconocido';toast('No se pudo validar el QR',translateError(error),'error');}
+  }
+  window.addEventListener('flotas:qr-nativo-resultado',event=>{const codigo=String(event?.detail?.codigo||'').trim();if(codigo)processQr(codigo);});
+  window.addEventListener('flotas:qr-nativo-estado',event=>{const mensaje=String(event?.detail?.mensaje||'');if($('#scannerStatus span')&&mensaje)$('#scannerStatus span').textContent=mensaje;});
+  window.addEventListener('flotas:qr-nativo-error',event=>{const mensaje=String(event?.detail?.mensaje||'No se pudo leer el código QR.');if($('#scannerStatus span'))$('#scannerStatus span').textContent='Error de lectura QR';toast('Lector QR',mensaje,'error');});
 
   async function logout(){try{await api.request('logout',{data:{SESION_CLIENTE_ID:clientSessionId}});}catch(_){}forceLogout();}
   function forceLogout(){cleanupSection();stopRealtimeServices();stopCamera();stopTracking({remember:false,silent:true});currentUser=null;notificationSnapshotReady=false;knownNotificationIds=new Set();knownAlertIds=new Set();notificationCenterState={notifications:[],alerts:[]};precargaIniciada=false;modulosSincronizadosSesion.clear();actualizacionesModuloPendientes.clear();cacheVistasModulo.clear();invalidarListasFormulario();api.setAuth({});postParent({tipo:'flotas:sesion-cerrada'});$('#appShell').classList.add('hidden');if(embeddedMode)return;$('#authScreen').classList.remove('hidden');checkSystem();}

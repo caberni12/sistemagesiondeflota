@@ -6,7 +6,7 @@
  * Si el proyecto Apps Script está vinculado a la hoja, instalarSistema() guardará
  * automáticamente el ID. Para un proyecto independiente, pegue el ID aquí.
  */
-const VERSION_APLICACION = '3.13.1';
+const VERSION_APLICACION = '3.13.2';
 
 const CONFIGURACION_APLICACION = Object.freeze({
   ID_HOJA_CALCULO: '1onJJEN1rgz0N9GXOiUqV7ong4-nlbdAjzMyW_rumXCM',
@@ -52,14 +52,14 @@ const ESQUEMAS_APLICACION = Object.freeze({
   CARGAS_COMBUSTIBLE: ['ID','VEHICULO_ID','CONDUCTOR_ID','OPERACION_ID','RUTA_ID','FECHA_HORA','TIPO_COMBUSTIBLE','LITROS','PRECIO_LITRO','COSTO_TOTAL','KILOMETRAJE','KILOMETRAJE_ANTERIOR','DISTANCIA_DESDE_ULTIMA_CARGA_KM','CONSUMO_KM_L','CONSUMO_L_100KM','ESTACION_SERVICIO','NUMERO_DOCUMENTO','MEDIO_PAGO','TANQUE_LLENO','COMPROBANTE_URL','OBSERVACIONES','CREADO_POR','CREADO_EN','ACTUALIZADO_POR','ACTUALIZADO_EN','ESTADO_REGISTRO','ELIMINADO'],
   AUTORIZACIONES_ELIMINACION_COMBUSTIBLE: ['ID','CARGA_ID','SOLICITADO_POR','SOLICITANTE_NOMBRE','MOTIVO','ESTADO','AUTORIZADO_POR','AUTORIZADOR_NOMBRE','COMENTARIO_AUTORIZACION','FECHA_SOLICITUD','FECHA_AUTORIZACION','FECHA_EJECUCION','IP_SOLICITUD','IP_AUTORIZACION','EJECUTADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   DOCUMENTOS: ['ID','TIPO','ASOCIADO_TIPO','ASOCIADO_ID','IDENTIFICACION','FECHA_EMISION','FECHA_VENCIMIENTO','ESTADO','DIRECCION_ARCHIVO','OBSERVACIONES','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
-  ALERTAS: ['ID','TIPO','NIVEL','TITULO','MENSAJE','MODULO','REGISTRO_ID','LEIDA','USUARIO_ID','FECHA_HORA','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
+  ALERTAS: ['ID','TIPO','NIVEL','TITULO','MENSAJE','MODULO','REGISTRO_ID','CLAVE_UNICA','LEIDA','USUARIO_ID','FECHA_HORA','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   REPORTES: ['ID','TIPO','PARAMETROS_CODIFICADOS','DIRECCION_ARCHIVO','GENERADO_POR','FECHA_HORA','ESTADO','CREADO_EN','ELIMINADO'],
   BITACORA: ['ID','USUARIO_ID','USUARIO_NOMBRE','ACCION','MODULO','REGISTRO_ID','DETALLE','IP_CLIENTE','FECHA_HORA','CREADO_EN','ELIMINADO'],
   PARAMETROS: ['ID','GRUPO','CLAVE','VALOR','TIPO','DESCRIPCION','ACTIVO','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   EMPRESAS: ['ID','RUT','RAZON_SOCIAL','NOMBRE_FANTASIA','GIRO','DIRECCION','COMUNA','CIUDAD','REGION','PAIS','TELEFONO_PRINCIPAL','TELEFONO_SECUNDARIO','CORREO','SITIO_WEB','REPRESENTANTE_LEGAL','RUT_REPRESENTANTE','DIRECCION_LOGOTIPO','ID_ARCHIVO_LOGOTIPO','NOMBRE_ARCHIVO_LOGOTIPO','TIPO_ARCHIVO_LOGOTIPO','COLOR_PRINCIPAL','COLOR_SECUNDARIO','ZONA_HORARIA','MONEDA','UNIDAD_DISTANCIA','FORMATO_FECHA','TEXTO_PIE','ESTADO','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','COLOR_ACENTO','COLOR_FONDO','COLOR_SUPERFICIE','COLOR_TEXTO','COLOR_TEXTO_SECUNDARIO','COLOR_BORDE','COLOR_MENU','COLOR_MENU_SECUNDARIO','COLOR_EXITO','COLOR_ADVERTENCIA','COLOR_PELIGRO','COLOR_FONDO_OSCURO','COLOR_SUPERFICIE_OSCURO','COLOR_TEXTO_OSCURO','COLOR_TEXTO_SECUNDARIO_OSCURO','COLOR_BORDE_OSCURO','TEMA_PREDETERMINADO','VALIDAR_UBICACION_OPERACION','PUNTO_OPERACION_NOMBRE','PUNTO_OPERACION_DIRECCION','PUNTO_OPERACION_LATITUD','PUNTO_OPERACION_LONGITUD','RADIO_INICIO_METROS','RADIO_FIN_METROS','PRECISION_GPS_MAXIMA_METROS','RETORNO_BASE_OBLIGATORIO','PUNTO_OPERACION_MODIFICADO_POR','PUNTO_OPERACION_MODIFICADO_ROL','PUNTO_OPERACION_MODIFICADO_IP','PUNTO_OPERACION_MODIFICADO_EN'],
   QR: ['ID','CODIGO','TIPO','REGISTRO_ID','ESTADO','FECHA_GENERACION','FECHA_ULTIMO_USO','USOS','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   RUTAS: ['ID','NOMBRE','CONDUCTOR_ID','VEHICULO_ID','OPERACION_ID','ORIGEN','ORIGEN_LATITUD','ORIGEN_LONGITUD','DESTINO','DESTINO_LATITUD','DESTINO_LONGITUD','PARADAS_CODIFICADAS','PROVEEDOR_NAVEGACION','ESTADO','INSTRUCCIONES','FECHA_ASIGNACION','FECHA_INICIO','FECHA_FIN','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','EVIDENCIAS_FOTOS_CODIFICADAS','ULTIMA_EVIDENCIA_URL','ULTIMA_EVIDENCIA_FECHA','ULTIMA_EVIDENCIA_POR','ULTIMA_EVIDENCIA_OBSERVACION'],
-  NOTIFICACIONES: ['ID','DESTINATARIO_USUARIO_ID','DESTINATARIO_CONDUCTOR_ID','TITULO','MENSAJE','TIPO','PRIORIDAD','RUTA_ID','OPERACION_ID','LEIDA','FECHA_ENVIO','FECHA_LECTURA','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
+  NOTIFICACIONES: ['ID','DESTINATARIO_USUARIO_ID','DESTINATARIO_CONDUCTOR_ID','TITULO','MENSAJE','TIPO','PRIORIDAD','RUTA_ID','OPERACION_ID','CLAVE_UNICA','LEIDA','FECHA_ENVIO','FECHA_LECTURA','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   CHECKINS: ['ID','VEHICULO_ID','CONDUCTOR_ID','OPERACION_ID','FECHA_HORA','KILOMETRAJE','NIVEL_COMBUSTIBLE','LISTA_CODIFICADA','TOTAL_ITEMS','ITEMS_OK','FALLAS_LEVES','FALLAS_CRITICAS','RESULTADO','ESTADO_REVISION','OBSERVACIONES','FIRMA_CONDUCTOR','REVISADO_POR','FECHA_REVISION','COMENTARIO_REVISION','VIGENTE_HASTA','UTILIZADO','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','SOLICITUD_CLIENTE_ID'],
   CONEXIONES: ['ID','USUARIO_ID','CONDUCTOR_ID','DISPOSITIVO_ID','SESION_ID','SESION_CLIENTE_ID','SECCION_ACTUAL','ACTIVIDAD','VEHICULO_ID','OPERACION_ID','RUTA_ID','GPS_ACTIVO','PAGINA_VISIBLE','ESTADO','ULTIMA_CONEXION','PLATAFORMA','NAVEGADOR','TIPO_RED','BATERIA_PORCENTAJE','IP_PUBLICA','IP_VERSION','IP_CAPTURADA_EN','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   SESIONES: ['ID','USUARIO_ID','FICHA_SESION_CIFRADA','FECHA_INICIO','FECHA_EXPIRACION','ULTIMO_USO','ACTIVA','AGENTE_NAVEGADOR','IP_PUBLICA','IP_VERSION','IP_CAPTURADA_EN','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
@@ -812,7 +812,8 @@ function buscarFilaExacta_(sheet, columnIndex, value) {
 
 function insertarRegistro_(sheetName, data, prefix) {
   const lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  const lockYaAdquirido = lock.hasLock();
+  if (!lockYaAdquirido) lock.waitLock(20000);
   try {
     const sheet = obtenerHoja_(sheetName);
     const headers = ESQUEMAS_APLICACION[sheetName];
@@ -829,14 +830,15 @@ function insertarRegistro_(sheetName, data, prefix) {
     invalidarCacheHoja_(sheetName);
     return limpiarSalidaRecurso_(sheetName, object);
   } finally {
-    lock.releaseLock();
+    if (!lockYaAdquirido) lock.releaseLock();
   }
 }
 
 function actualizarRegistro_(sheetName, id, data) {
   if (!id) throw new Error('ID_REQUERIDO');
   const lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  const lockYaAdquirido = lock.hasLock();
+  if (!lockYaAdquirido) lock.waitLock(20000);
   try {
     const sheet = obtenerHoja_(sheetName);
     const headers = ESQUEMAS_APLICACION[sheetName];
@@ -856,7 +858,7 @@ function actualizarRegistro_(sheetName, id, data) {
     invalidarCacheHoja_(sheetName);
     return limpiarSalidaRecurso_(sheetName, current);
   } finally {
-    lock.releaseLock();
+    if (!lockYaAdquirido) lock.releaseLock();
   }
 }
 
@@ -1119,6 +1121,8 @@ function instalarSistema() {
   migrarGpsActualDesdeHistorial_();
   asegurarCatalogos_();
   try { instalarActivadorAlertasAutomaticas_(); } catch (error) { Logger.log('Activador de alertas: ' + error.message); }
+  let duplicadosDepurados = { alertas:0, notificaciones:0 };
+  try { duplicadosDepurados = depurarDuplicadosAvisos_(); } catch (error) { Logger.log('Depuración de avisos: ' + error.message); }
   const claveInstalacion = obtenerOCrearClaveInstalacion_();
   Logger.log('CLAVE DE INSTALACIÓN: ' + claveInstalacion);
   return {
@@ -1127,6 +1131,7 @@ function instalarSistema() {
     spreadsheetUrl: ss.getUrl(),
     sheets: Object.keys(ESQUEMAS_APLICACION),
     claveInstalacion: claveInstalacion,
+    duplicadosDepurados: duplicadosDepurados,
     message: 'Estructura instalada. Copie la clave mostrada en el registro de ejecución para crear el administrador inicial.',
   };
 }
@@ -1136,7 +1141,7 @@ function actualizarSistema() {
   try { repararModuloCheckin(); } catch (error) { Logger.log('Reparación de check-in: ' + error.message); }
   try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
   reiniciarCachesEjecucion_();
-  resultado.message = 'Sistema 3.13.1 actualizado: conexiones en línea, acceso delegado por Administrador, GPS automático, fotografías, alertas, permisos y estructura verificados.';
+  resultado.message = 'Sistema 3.13.2 actualizado: conexiones en línea, acceso delegado por Administrador, GPS automático, fotografías, alertas, permisos y estructura verificados.';
   return resultado;
 }
 
@@ -1229,17 +1234,33 @@ function listarUsuarios_(session) {
  * ARCHIVO: 11_Vehiculos.gs
  * ============================================================ */
 /** Módulo Vehículos. */
+function extraerCodigoQrVehiculo_(contenido) {
+  let codigo=String(contenido||'').trim();
+  if(!codigo)return '';
+  try {
+    const json=JSON.parse(codigo);
+    codigo=String(json.CODIGO||json.codigo||json.QR_CODIGO||json.qrCodigo||json.qr||json.VEHICULO||json.vehiculo||json.PATENTE||json.patente||codigo).trim();
+  } catch (_) {}
+  const parametro=codigo.match(/[?&#](?:codigo|qr|qr_codigo|vehiculo|patente)=([^&#]+)/i);
+  if(parametro)try{codigo=decodeURIComponent(parametro[1].replace(/\+/g,' '));}catch(_){codigo=parametro[1];}
+  codigo=codigo.replace(/^(?:QR|CODIGO|VEHICULO|PATENTE)\s*[:=]\s*/i,'').trim();
+  return codigo;
+}
+
 function obtenerVehiculoPorQr_(code) {
-  const normalized = String(code || '').trim().toUpperCase();
+  const extracted=extraerCodigoQrVehiculo_(code);
+  const normalized = String(extracted || '').trim().toUpperCase();
+  const comparable=normalized.replace(/[^A-Z0-9]/g, '');
   return listarRegistros_('VEHICULOS', {}).find(function(row) {
-    return String(row.QR_CODIGO || '').toUpperCase() === normalized ||
-      String(row.PATENTE || '').replace(/[^A-Z0-9]/g, '') === normalized.replace(/[^A-Z0-9]/g, '');
+    const qr=String(row.QR_CODIGO||'').trim().toUpperCase();
+    const patente=String(row.PATENTE||'').trim().toUpperCase();
+    return qr===normalized||qr.replace(/[^A-Z0-9]/g,'')===comparable||patente.replace(/[^A-Z0-9]/g,'')===comparable;
   }) || null;
 }
 
 function validarQrVehiculo_(request, session) {
   exigirPermiso_(session.user, 'QR', 'LEER');
-  const code = request.codigo || request.CODIGO || '';
+  const code = extraerCodigoQrVehiculo_(request.codigo || request.CODIGO || '');
   if (!code) throw new Error('CODIGO_QR_REQUERIDO');
   const vehicle = obtenerVehiculoPorQr_(code);
   if (!vehicle) throw new Error('QR_NO_RECONOCIDO');
@@ -2151,13 +2172,62 @@ function actualizarEstadosDocumentos_() {
  * ARCHIVO: 17_Alertas.gs
  * ============================================================ */
 /** Módulo de alertas automáticas, anomalías y mantenciones. */
-function crearAlerta_(data){return insertarRegistro_('ALERTAS',{TIPO:data.TIPO||'Sistema',NIVEL:data.NIVEL||'Info',TITULO:data.TITULO||'Alerta',MENSAJE:data.MENSAJE||'',MODULO:data.MODULO||'',REGISTRO_ID:data.REGISTRO_ID||'',LEIDA:'NO',USUARIO_ID:data.USUARIO_ID||'',FECHA_HORA:new Date(),ELIMINADO:'NO'},'ALT');}
+function huellaEvento_(prefijo, partes) {
+  const texto = String(prefijo || 'EVENTO') + '|' + (Array.isArray(partes) ? partes : [partes]).map(function(valor) {
+    return String(valor == null ? '' : valor).trim().toUpperCase().replace(/\s+/g, ' ');
+  }).join('|');
+  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, texto, Utilities.Charset.UTF_8);
+  return String(prefijo || 'EVENTO').toUpperCase() + '-' + bytes.map(function(byte) {
+    const valor = byte < 0 ? byte + 256 : byte;
+    return ('0' + valor.toString(16)).slice(-2);
+  }).join('').toUpperCase();
+}
+
+function claveAlertaUnica_(data) {
+  return String(data.CLAVE_UNICA || '').trim() || huellaEvento_('ALT', [
+    data.TIPO || 'Sistema', data.MODULO || 'Sistema', data.REGISTRO_ID || '', data.TITULO || 'Alerta'
+  ]);
+}
+
+function crearAlerta_(data){
+  return insertarRegistro_('ALERTAS',{
+    TIPO:data.TIPO||'Sistema',NIVEL:data.NIVEL||'Info',TITULO:data.TITULO||'Alerta',MENSAJE:data.MENSAJE||'',
+    MODULO:data.MODULO||'',REGISTRO_ID:data.REGISTRO_ID||'',CLAVE_UNICA:claveAlertaUnica_(data),LEIDA:'NO',
+    USUARIO_ID:data.USUARIO_ID||'',FECHA_HORA:new Date(),ELIMINADO:'NO'
+  },'ALT');
+}
+
 function crearAlertaUnica_(data){
-  const now=Date.now(),windowMs=Number(CONFIGURACION_APLICACION.HORAS_REPETICION_ALERTA||8)*3600000,type=String(data.TIPO||'Sistema'),moduleName=String(data.MODULO||'Sistema'),recordId=String(data.REGISTRO_ID||''),title=String(data.TITULO||'Alerta');
-  const existing=listarRegistros_('ALERTAS',{}).find(function(row){if(String(row.TIPO||'')!==type||String(row.MODULO||'')!==moduleName||String(row.REGISTRO_ID||'')!==recordId||String(row.TITULO||'')!==title)return false;const date=new Date(row.FECHA_HORA||row.CREADO_EN||0).getTime();return row.LEIDA!=='SI'||(isFinite(date)&&now-date<windowMs);});
-  if(existing)return{row:existing,created:false};const alert=crearAlerta_(data);
-  try{notificarRolesInterno_(['ROL-ADMIN','ROL-SUPERVISOR'],{TITULO:'Alerta: '+alert.TITULO,MENSAJE:alert.MENSAJE,TIPO:alert.TIPO||'Alerta',PRIORIDAD:String(alert.NIVEL||'').toLowerCase().indexOf('cr')>=0?'Urgente':'Alta',CREADO_POR:'SISTEMA'});}catch(error){console.log('Notificación de alerta: '+error.message);}
-  return{row:alert,created:true};
+  const lock=LockService.getScriptLock(),lockYaAdquirido=lock.hasLock(),now=Date.now(),windowMs=Number(CONFIGURACION_APLICACION.HORAS_REPETICION_ALERTA||8)*3600000;
+  const clave=claveAlertaUnica_(data),type=String(data.TIPO||'Sistema'),moduleName=String(data.MODULO||'Sistema'),recordId=String(data.REGISTRO_ID||''),title=String(data.TITULO||'Alerta');
+  let alert=null,created=false;
+  try {
+    if(!lockYaAdquirido)lock.waitLock(10000);
+    const existing=listarRegistros_('ALERTAS',{}).find(function(row){
+      if(String(row.ELIMINADO||'NO')==='SI')return false;
+      const mismaClave=String(row.CLAVE_UNICA||'')===clave;
+      const legado=!row.CLAVE_UNICA&&String(row.TIPO||'')===type&&String(row.MODULO||'')===moduleName&&String(row.REGISTRO_ID||'')===recordId&&String(row.TITULO||'')===title;
+      if(!mismaClave&&!legado)return false;
+      const date=new Date(row.FECHA_HORA||row.CREADO_EN||0).getTime();
+      return row.LEIDA!=='SI'||(isFinite(date)&&now-date<windowMs);
+    });
+    if(existing){
+      if(!existing.CLAVE_UNICA)try{actualizarRegistro_('ALERTAS',existing.ID,{CLAVE_UNICA:clave});}catch(_){ }
+      return{row:existing,created:false};
+    }
+    alert=crearAlerta_(Object.assign({},data,{CLAVE_UNICA:clave}));
+    created=true;
+  } finally {
+    if(!lockYaAdquirido)try{lock.releaseLock();}catch(_){ }
+  }
+  if(created){
+    try{notificarRolesInterno_(['ROL-ADMIN','ROL-SUPERVISOR'],{
+      TITULO:'Alerta: '+alert.TITULO,MENSAJE:alert.MENSAJE,TIPO:alert.TIPO||'Alerta',
+      PRIORIDAD:String(alert.NIVEL||'').toLowerCase().indexOf('cr')>=0?'Urgente':'Alta',
+      CREADO_POR:'SISTEMA',CLAVE_UNICA:'AVISO-'+alert.ID
+    });}catch(error){console.log('Notificación de alerta: '+error.message);}
+  }
+  return{row:alert,created:created};
 }
 function diasHasta_(value,now){if(!value)return null;const date=new Date(value);if(isNaN(date.getTime()))return null;return Math.ceil((date.getTime()-now.getTime())/86400000);}
 function ejecutarMotorAlertasAutomaticas_(options){
@@ -2183,7 +2253,34 @@ function solicitarRevisionAlertasSegundoPlano_(motivo){
 }
 function ejecutarAlertasAutomaticasServicio_(request,session){exigirPermiso_(session.user,'ALERTAS','LEER');const result=ejecutarMotorAlertasAutomaticas_({force:true});registrarBitacora_(session.user,'EJECUTAR_MOTOR','ALERTAS','','Motor automático ejecutado. Alertas creadas: '+Number(result.creadas||0));return ok_(result);}
 function procesarAlertasAutomaticasProgramadas_(){return ejecutarMotorAlertasAutomaticas_({force:true});}
-function instalarActivadorAlertasAutomaticas_(){const handler='procesarAlertasAutomaticasProgramadas_';const exists=ScriptApp.getProjectTriggers().some(function(trigger){return trigger.getHandlerFunction()===handler;});if(!exists)ScriptApp.newTrigger(handler).timeBased().everyMinutes(5).create();return true;}
+function depurarDuplicadosAvisos_(){
+  const margen=10*60*1000;
+  function depurar(hoja,campos,fechaCampo){
+    const rows=listarRegistros_(hoja,{}).slice().sort(function(a,b){return new Date(a[fechaCampo]||a.CREADO_EN||0)-new Date(b[fechaCampo]||b.CREADO_EN||0);});
+    const ultimo={};let eliminados=0;
+    rows.forEach(function(row){
+      if(String(row.ELIMINADO||'NO')==='SI')return;
+      const firma=campos.map(function(c){return String(row[c]||'').trim().toUpperCase();}).join('|');
+      const fecha=new Date(row[fechaCampo]||row.CREADO_EN||0).getTime();
+      const previo=ultimo[firma];
+      if(firma&&previo&&isFinite(fecha)&&isFinite(previo.fecha)&&fecha-previo.fecha<=margen){
+        actualizarRegistro_(hoja,row.ID,{ELIMINADO:'SI'});eliminados++;
+      }else ultimo[firma]={id:row.ID,fecha:fecha};
+    });
+    return eliminados;
+  }
+  return{
+    alertas:depurar('ALERTAS',['TIPO','MODULO','REGISTRO_ID','TITULO','MENSAJE'],'FECHA_HORA'),
+    notificaciones:depurar('NOTIFICACIONES',['DESTINATARIO_USUARIO_ID','TIPO','TITULO','MENSAJE','RUTA_ID','OPERACION_ID'],'FECHA_ENVIO')
+  };
+}
+
+function instalarActivadorAlertasAutomaticas_(){
+  const handler='procesarAlertasAutomaticasProgramadas_',triggers=ScriptApp.getProjectTriggers().filter(function(trigger){return trigger.getHandlerFunction()===handler;});
+  triggers.slice(1).forEach(function(trigger){try{ScriptApp.deleteTrigger(trigger);}catch(_){ }});
+  if(!triggers.length)ScriptApp.newTrigger(handler).timeBased().everyMinutes(5).create();
+  return true;
+}
 
 /** ============================================================
  * ARCHIVO: 18_Reportes.gs
@@ -2787,21 +2884,40 @@ function enviarNotificacion_(request, session) {
   return ok_({ row: limpiarSalidaRecurso_('NOTIFICACIONES', notification) });
 }
 
+function claveNotificacionUnica_(data) {
+  const base=String(data.CLAVE_UNICA||'').trim();
+  if(!base)return '';
+  return huellaEvento_('NOT',[base,data.DESTINATARIO_USUARIO_ID||'',data.DESTINATARIO_CONDUCTOR_ID||'']);
+}
+
 function crearNotificacionInterna_(data) {
-  return insertarRegistro_('NOTIFICACIONES', {
-    DESTINATARIO_USUARIO_ID: data.DESTINATARIO_USUARIO_ID || '',
-    DESTINATARIO_CONDUCTOR_ID: data.DESTINATARIO_CONDUCTOR_ID || '',
-    TITULO: data.TITULO,
-    MENSAJE: data.MENSAJE,
-    TIPO: data.TIPO || 'Información',
-    PRIORIDAD: data.PRIORIDAD || 'Normal',
-    RUTA_ID: data.RUTA_ID || '',
-    OPERACION_ID: data.OPERACION_ID || '',
-    LEIDA: 'NO',
-    FECHA_ENVIO: new Date(),
-    CREADO_POR: data.CREADO_POR || '',
-    ELIMINADO: 'NO',
-  }, 'NOT');
+  const clave=claveNotificacionUnica_(data),lock=clave?LockService.getScriptLock():null,lockYaAdquirido=lock?lock.hasLock():false;
+  try {
+    if(lock&&!lockYaAdquirido)lock.waitLock(10000);
+    if(clave){
+      const existente=listarRegistros_('NOTIFICACIONES',{}).find(function(row){
+        return String(row.ELIMINADO||'NO')!=='SI'&&String(row.CLAVE_UNICA||'')===clave;
+      });
+      if(existente)return existente;
+    }
+    return insertarRegistro_('NOTIFICACIONES', {
+      DESTINATARIO_USUARIO_ID: data.DESTINATARIO_USUARIO_ID || '',
+      DESTINATARIO_CONDUCTOR_ID: data.DESTINATARIO_CONDUCTOR_ID || '',
+      TITULO: data.TITULO,
+      MENSAJE: data.MENSAJE,
+      TIPO: data.TIPO || 'Información',
+      PRIORIDAD: data.PRIORIDAD || 'Normal',
+      RUTA_ID: data.RUTA_ID || '',
+      OPERACION_ID: data.OPERACION_ID || '',
+      CLAVE_UNICA: clave,
+      LEIDA: 'NO',
+      FECHA_ENVIO: new Date(),
+      CREADO_POR: data.CREADO_POR || '',
+      ELIMINADO: 'NO',
+    }, 'NOT');
+  } finally {
+    if(lock&&!lockYaAdquirido)try{lock.releaseLock();}catch(_){ }
+  }
 }
 
 function notificarUsuarioInterno_(userId, data) {
@@ -2812,11 +2928,16 @@ function notificarUsuarioInterno_(userId, data) {
 
 function notificarRolesInterno_(roleIds, data) {
   const roles = Array.isArray(roleIds) ? roleIds : [roleIds];
-  const sent = [];
+  const sent = [],vistos={};
+  const payload=Object.assign({},data||{});
+  if(!payload.CLAVE_UNICA){
+    payload.CLAVE_UNICA=huellaEvento_('AVISO',[payload.TIPO||'',payload.TITULO||'',payload.MENSAJE||'',payload.RUTA_ID||'',payload.OPERACION_ID||'']);
+  }
   listarRegistros_('USUARIOS', {}).filter(function(user) {
-    return roles.indexOf(user.ROL_ID) >= 0 && user.ESTADO !== 'Inactivo';
+    return roles.indexOf(user.ROL_ID) >= 0 && user.ESTADO !== 'Inactivo'&&!vistos[user.ID];
   }).forEach(function(user) {
-    const row = notificarUsuarioInterno_(user.ID, data);
+    vistos[user.ID]=true;
+    const row = notificarUsuarioInterno_(user.ID, payload);
     if (row) sent.push(row);
   });
   return sent;
@@ -3408,10 +3529,12 @@ function repararSistema_(request, session) {
   migrarGpsActualDesdeHistorial_();
   try { repararModuloCheckin(); } catch (error) { Logger.log('Check-in: ' + error.message); }
   try { instalarActivadorAlertasAutomaticas_(); } catch (error) { Logger.log('Activador de alertas: ' + error.message); }
+  let duplicadosDepurados = { alertas:0, notificaciones:0 };
+  try { duplicadosDepurados = depurarDuplicadosAvisos_(); } catch (error) { Logger.log('Depuración de avisos: ' + error.message); }
   registrarBitacora_(session.user, 'REPARAR_SISTEMA', 'CONFIGURACION', '', 'Hojas, columnas, catálogos, permisos, GPS actual y check-in verificados');
   reiniciarCachesEjecucion_();
   const diagnostic = diagnosticoSistema_({}, session).data;
-  return ok_({ repaired:true, diagnostico:diagnostic });
+  return ok_({ repaired:true, duplicadosDepurados:duplicadosDepurados, diagnostico:diagnostic });
 }
 
 /** ============================================================

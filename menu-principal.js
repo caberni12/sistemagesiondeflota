@@ -2,7 +2,7 @@
   'use strict';
   const $=(selector,root=document)=>root.querySelector(selector);
   const api=window.ConexionFlotas;
-  const VERSION='3.13.6';
+  const VERSION='3.14.4';
   const grupos=[
     ['GENERAL',[
       ['dashboard','⌂','Panel principal','panel-principal.html','PANEL_PRINCIPAL'],
@@ -107,10 +107,25 @@
 
     if(marcoListo&&marco.contentWindow&&!forzar){
       enviar({tipo:'flotas:navegar',seccion:modulo[0]});
+      // Conexiones en línea debe liberar el contenedor de inmediato. Los datos
+      // se consultan dentro del módulo y no deben bloquear la navegación.
+      if(modulo[0]==='connections'){
+        setTimeout(()=>{
+          if(cambio!==secuenciaCambioModulo||seccionActual!=='connections')return;
+          $('#cargandoModulo').classList.add('oculto');
+          cambiarEstado('Módulo abierto · consultando conexiones','listo');
+          enviar({tipo:'flotas:modulo-visible',seccion:'connections'});
+        },650);
+      }
       setTimeout(()=>{
         if(cambio!==secuenciaCambioModulo||marcoListo===false)return;
         const titulo=$('#tituloModulo')?.textContent||'';
         if(titulo===modulo[2]&&!$('#cargandoModulo').classList.contains('oculto')){
+          if(modulo[0]==='connections'){
+            $('#cargandoModulo').classList.add('oculto');
+            cambiarEstado('Módulo abierto · datos en segundo plano','listo');
+            return;
+          }
           marcoListo=false;
           moduloIframeActual=modulo[0];
           marco.src=`${modulo[3]}?v=${VERSION}&recuperar=${Date.now()}`;
@@ -268,7 +283,20 @@
     if(data.tipo==='flotas:tema-colores'&&data.tema)window.TemaFlotas?.aplicar?.(data.tema,{guardar:false});
   });
   window.addEventListener('flotas:sesion-invalida',()=>validarSesion({desdeModulo:true}));
-  marco.addEventListener('load',()=>{marcoListo=false;setTimeout(()=>{if(!marcoListo)cambiarEstado('Preparando módulo…');},350);});
+  marco.addEventListener('load',()=>{
+    marcoListo=false;
+    if(seccionActual==='connections'){
+      setTimeout(()=>{
+        if(seccionActual!=='connections'||marcoListo)return;
+        // Respaldo para WebView y navegadores que retrasan postMessage.
+        marcoListo=true;
+        $('#cargandoModulo').classList.add('oculto');
+        cambiarEstado('Módulo abierto · consultando conexiones','listo');
+        enviar({tipo:'flotas:modulo-visible',seccion:'connections'});
+      },900);
+    }
+    setTimeout(()=>{if(!marcoListo&&seccionActual!=='connections')cambiarEstado('Preparando módulo…');},350);
+  });
   marco.addEventListener('error',()=>cambiarEstado('No se pudo abrir el módulo','error'));
   $('#abrirMenu').addEventListener('click',abrirMenu);
   $('#cerrarMenu').addEventListener('click',cerrarMenu);

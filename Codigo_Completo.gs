@@ -6,7 +6,7 @@
  * Si el proyecto Apps Script está vinculado a la hoja, instalarSistema() guardará
  * automáticamente el ID. Para un proyecto independiente, pegue el ID aquí.
  */
-const VERSION_APLICACION = '3.14.0';
+const VERSION_APLICACION = '3.14.4';
 
 const CONFIGURACION_APLICACION = Object.freeze({
   ID_HOJA_CALCULO: '1onJJEN1rgz0N9GXOiUqV7ong4-nlbdAjzMyW_rumXCM',
@@ -23,6 +23,7 @@ const CONFIGURACION_APLICACION = Object.freeze({
   SEGUNDOS_HISTORIAL_GPS: 60,
   SEGUNDOS_ACTUALIZAR_CONEXION_DESDE_GPS: 20,
   SEGUNDOS_CACHE_METADATOS_TIEMPO_REAL: 10,
+  MAXIMO_CONEXIONES_EN_LINEA_RESPUESTA: 120,
   MAXIMO_FILAS_IMPORTACION: 1500,
   TOLERANCIA_GPS_IMPRECISA_FIN_METROS: 500,
   ID_CARPETA_DOCUMENTOS_FOTOS: '1lWKDp7E28XU2D45ihvZctIq29Ji_aoq9',
@@ -62,6 +63,7 @@ const ESQUEMAS_APLICACION = Object.freeze({
   NOTIFICACIONES: ['ID','DESTINATARIO_USUARIO_ID','DESTINATARIO_CONDUCTOR_ID','TITULO','MENSAJE','TIPO','PRIORIDAD','RUTA_ID','OPERACION_ID','CLAVE_UNICA','LEIDA','FECHA_ENVIO','FECHA_LECTURA','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   CHECKINS: ['ID','VEHICULO_ID','CONDUCTOR_ID','OPERACION_ID','FECHA_HORA','KILOMETRAJE','NIVEL_COMBUSTIBLE','LISTA_CODIFICADA','TOTAL_ITEMS','ITEMS_OK','FALLAS_LEVES','FALLAS_CRITICAS','RESULTADO','ESTADO_REVISION','OBSERVACIONES','FIRMA_CONDUCTOR','REVISADO_POR','FECHA_REVISION','COMENTARIO_REVISION','VIGENTE_HASTA','UTILIZADO','CREADO_POR','CREADO_EN','ACTUALIZADO_EN','ELIMINADO','SOLICITUD_CLIENTE_ID','FECHA_OPERATIVA'],
   CONEXIONES: ['ID','USUARIO_ID','CONDUCTOR_ID','DISPOSITIVO_ID','SESION_ID','SESION_CLIENTE_ID','SECCION_ACTUAL','ACTIVIDAD','VEHICULO_ID','OPERACION_ID','RUTA_ID','GPS_ACTIVO','PAGINA_VISIBLE','ESTADO','ULTIMA_CONEXION','PLATAFORMA','NAVEGADOR','TIPO_RED','BATERIA_PORCENTAJE','IP_PUBLICA','IP_VERSION','IP_CAPTURADA_EN','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
+  CONEXIONES_ACTUAL: ['ID','CLAVE_CONEXION','CONEXION_ID','USUARIO_ID','CONDUCTOR_ID','DISPOSITIVO_ID','SESION_ID','SESION_CLIENTE_ID','SECCION_ACTUAL','ACTIVIDAD','VEHICULO_ID','OPERACION_ID','RUTA_ID','GPS_ACTIVO','PAGINA_VISIBLE','ESTADO','ULTIMA_CONEXION','PLATAFORMA','NAVEGADOR','TIPO_RED','BATERIA_PORCENTAJE','IP_PUBLICA','IP_VERSION','IP_CAPTURADA_EN','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
   SESIONES: ['ID','USUARIO_ID','FICHA_SESION_CIFRADA','FECHA_INICIO','FECHA_EXPIRACION','ULTIMO_USO','ACTIVA','AGENTE_NAVEGADOR','IP_PUBLICA','IP_VERSION','IP_CAPTURADA_EN','CREADO_EN','ACTUALIZADO_EN','ELIMINADO'],
 });
 
@@ -119,9 +121,37 @@ function doPost(e) {
  * ARCHIVO: 02_Rutas.gs
  * ============================================================ */
 /** Enrutador único del servicio de datos. */
+function normalizarAccionSolicitud_(request) {
+  const entrada = String((request && (request.accion || request.action || request.ACCION)) || '').trim();
+  if (!entrada) return '';
+  const clave = entrada.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[\s_-]+/g, '').toLowerCase();
+  const alias = {
+    iniciarruta:'iniciarRuta',
+    startroute:'iniciarRuta',
+    iniciaruta:'iniciarRuta',
+    iniciarrutaasignada:'iniciarRuta',
+    startassignedroute:'iniciarRuta',
+    completarruta:'completarRuta',
+    completaruta:'completarRuta',
+    completeroute:'completarRuta',
+    routecomplete:'completarRuta',
+    completado:'completarRuta',
+    completada:'completarRuta',
+    finalizarruta:'completarRuta',
+    finishroute:'completarRuta',
+    terminarruta:'completarRuta',
+    cerrarruta:'completarRuta',
+    marcarrutacompletada:'completarRuta',
+    actualizarestadoruta:'actualizarEstadoRuta',
+    updateroutestatus:'actualizarEstadoRuta'
+  };
+  return alias[clave] || entrada;
+}
+
 function enrutarSolicitud_(request, event) {
   reiniciarCachesEjecucion_();
-  const accion = String(request.accion || '').trim();
+  request = request || {};
+  const accion = normalizarAccionSolicitud_(request);
   if (!accion) throw new Error('ACCION_REQUERIDA');
 
   if (accion === 'salud') {
@@ -155,9 +185,19 @@ function enrutarSolicitud_(request, event) {
     case 'guardarUbicacion': return guardarUbicacion_(request, session);
     case 'ultimasUbicaciones': return ultimasUbicaciones_(request, session);
     case 'asignarRuta': return asignarRuta_(request, session);
-    case 'iniciarRuta': return iniciarRuta_(request, session);
-    case 'completarRuta': return completarRuta_(request, session);
-    case 'actualizarEstadoRuta': return actualizarEstadoRuta_(request, session);
+    case 'iniciarRuta':
+    case 'startRoute':
+    case 'iniciar_ruta':
+    case 'iniciar-ruta': return iniciarRuta_(request, session);
+    case 'completarRuta':
+    case 'completeRoute':
+    case 'finalizarRuta':
+    case 'terminarRuta':
+    case 'cerrarRuta':
+    case 'Completado':
+    case 'Completada': return completarRuta_(request, session);
+    case 'actualizarEstadoRuta':
+    case 'updateRouteStatus': return actualizarEstadoRuta_(request, session);
     case 'registrarEvidenciaRuta': return registrarEvidenciaRuta_(request, session);
     case 'obtenerImagenEvidenciaRuta': return obtenerImagenEvidenciaRuta_(request, session);
     case 'enviarNotificacion': return enviarNotificacion_(request, session);
@@ -1294,7 +1334,7 @@ function actualizarSistema() {
   try { repararModuloCheckin(); } catch (error) { Logger.log('Reparación de check-in: ' + error.message); }
   try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
   reiniciarCachesEjecucion_();
-  resultado.message = 'Sistema 3.14.0 actualizado: carga de documentos del Conductor habilitada por defecto, revisión administrativa, notificaciones únicas y bloqueo administrable por permisos; filtros GPS y demás módulos verificados.';
+  resultado.message = 'Sistema 3.14.4 actualizado: Conexiones en línea estabilizado con vista inmediata, tiempo máximo de consulta, actualización moderada y hoja compacta CONEXIONES_ACTUAL.';
   return resultado;
 }
 
@@ -1369,7 +1409,7 @@ function limpiarDatosOperativosServicio_(request, session) {
   exigirPermiso_(session.user, 'CONFIGURACION', 'ELIMINAR');
   if (String(request.confirmacion || '') !== 'LIMPIAR DATOS') throw new Error('CONFIRMACION_REQUERIDA');
   PropertiesService.getScriptProperties().deleteProperty('GPS_ACTUAL_MIGRADO_' + VERSION_APLICACION);
-  ['VEHICULOS','CONDUCTORES','OPERACIONES','CHECKINS','GPS','GPS_ACTUAL','HISTORIAL','MANTENCIONES','CARGAS_COMBUSTIBLE','AUTORIZACIONES_ELIMINACION_COMBUSTIBLE','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','QR','RUTAS','NOTIFICACIONES','CONEXIONES'].forEach(limpiarHojaDatos_);
+  ['VEHICULOS','CONDUCTORES','OPERACIONES','CHECKINS','GPS','GPS_ACTUAL','HISTORIAL','MANTENCIONES','CARGAS_COMBUSTIBLE','AUTORIZACIONES_ELIMINACION_COMBUSTIBLE','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','QR','RUTAS','NOTIFICACIONES','CONEXIONES','CONEXIONES_ACTUAL'].forEach(limpiarHojaDatos_);
   registrarBitacora_(session.user, 'LIMPIAR', 'CONFIGURACION', '', 'Datos operativos eliminados; usuarios y empresa conservados');
   return ok_({ cleared: true });
 }
@@ -3131,8 +3171,11 @@ function iniciarRuta_(request, session) {
 
 function completarRuta_(request, session) {
   exigirPermiso_(session.user, 'RUTAS', 'ACTUALIZAR');
-  const data = request.datos || request || {};
-  const routeId = String(request.identificador || request.RUTA_ID || data.RUTA_ID || '').trim();
+  const data = request.datos || request.data || request || {};
+  const routeId = String(
+    request.identificador || request.id || request.RUTA_ID || request.routeId ||
+    data.RUTA_ID || data.ID || data.id || data.routeId || ''
+  ).trim();
   const route = obtenerRegistro_('RUTAS', routeId);
   if (!route) throw new Error('RUTA_NO_ENCONTRADA');
   if (!filtrarPorUsuario_('RUTAS', [route], session.user).length) throw new Error('PERMISO_DENEGADO');
@@ -3176,12 +3219,24 @@ function completarRuta_(request, session) {
   });
 }
 
+function normalizarEstadoRuta_(valor) {
+  const entrada = String(valor || '').trim();
+  const clave = entrada.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[\s_-]+/g, '').toLowerCase();
+  if (['encurso','iniciada','iniciado','activa','activo'].indexOf(clave) >= 0) return 'En curso';
+  if (['completada','completado','finalizada','finalizado','terminada','terminado','cerrada','cerrado'].indexOf(clave) >= 0) return 'Completada';
+  if (['cancelada','cancelado'].indexOf(clave) >= 0) return 'Cancelada';
+  if (['asignada','asignado'].indexOf(clave) >= 0) return 'Asignada';
+  return entrada;
+}
+
 function actualizarEstadoRuta_(request, session) {
-  const state = String(request.ESTADO || (request.datos || {}).ESTADO || '');
+  const data = request.datos || request.data || {};
+  const state = normalizarEstadoRuta_(request.ESTADO || request.estado || data.ESTADO || data.estado || '');
   if (state === 'En curso') return iniciarRuta_(request, session);
   if (state === 'Completada') return completarRuta_(request, session);
   exigirPermiso_(session.user, 'RUTAS', 'ACTUALIZAR');
-  const routeId = request.identificador || request.RUTA_ID || ((request.datos || {}).RUTA_ID);
+  const routeId = request.identificador || request.id || request.RUTA_ID || request.routeId ||
+    data.RUTA_ID || data.ID || data.id || data.routeId;
   const route = obtenerRegistro_('RUTAS', routeId);
   if (!route) throw new Error('RUTA_NO_ENCONTRADA');
   if (!filtrarPorUsuario_('RUTAS', [route], session.user).length) throw new Error('PERMISO_DENEGADO');
@@ -3287,6 +3342,70 @@ function marcarNotificacionLeida_(request, session) {
   return ok_({ row: limpiarSalidaRecurso_('NOTIFICACIONES', updated) });
 }
 
+function claveConexionActual_(usuarioId, dispositivoId, sesionId, sesionClienteId) {
+  return [usuarioId, dispositivoId, sesionId, sesionClienteId].map(function(value) {
+    return String(value || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80);
+  }).join('|').slice(0, 300);
+}
+
+function obtenerRegistroRapidoPorId_(sheetName, id) {
+  if (!id) return null;
+  const sheet = obtenerHoja_(sheetName);
+  const headers = ESQUEMAS_APLICACION[sheetName];
+  const idIndex = headers.indexOf('ID');
+  const rowNumber = buscarFilaExacta_(sheet, idIndex + 1, id);
+  if (rowNumber < 2) return null;
+  const values = sheet.getRange(rowNumber, 1, 1, headers.length).getValues()[0];
+  const object = {};
+  headers.forEach(function(header, index) { object[header] = serializarValor_(values[index]); });
+  if (object.ELIMINADO === 'SI') return null;
+  return object;
+}
+
+function obtenerConexionActualPorClave_(clave) {
+  if (!clave) return null;
+  let sheet;
+  try { sheet = obtenerHoja_('CONEXIONES_ACTUAL'); } catch (_) { sheet = asegurarHoja_('CONEXIONES_ACTUAL'); }
+  const headers = ESQUEMAS_APLICACION.CONEXIONES_ACTUAL;
+  const keyIndex = headers.indexOf('CLAVE_CONEXION');
+  const rowNumber = buscarFilaExacta_(sheet, keyIndex + 1, clave);
+  if (rowNumber < 2) return null;
+  const values = sheet.getRange(rowNumber, 1, 1, headers.length).getValues()[0];
+  const object = {};
+  headers.forEach(function(header, index) { object[header] = serializarValor_(values[index]); });
+  return object.ELIMINADO === 'SI' ? null : object;
+}
+
+function guardarConexionActual_(clave, conexionId, data) {
+  let sheet;
+  try { sheet = obtenerHoja_('CONEXIONES_ACTUAL'); } catch (_) { sheet = asegurarHoja_('CONEXIONES_ACTUAL'); }
+  const headers = ESQUEMAS_APLICACION.CONEXIONES_ACTUAL;
+  const keyIndex = headers.indexOf('CLAVE_CONEXION');
+  const rowNumber = buscarFilaExacta_(sheet, keyIndex + 1, clave);
+  const now = new Date();
+  let current = {};
+  if (rowNumber >= 2) {
+    const existing = sheet.getRange(rowNumber, 1, 1, headers.length).getValues()[0];
+    headers.forEach(function(header, index) { current[header] = existing[index]; });
+  } else {
+    current.ID = generarId_('CNA');
+    current.CREADO_EN = now;
+  }
+  current.CLAVE_CONEXION = clave;
+  current.CONEXION_ID = conexionId || current.CONEXION_ID || '';
+  Object.keys(data || {}).forEach(function(field) {
+    if (headers.indexOf(field) >= 0 && ['ID','CLAVE_CONEXION','CONEXION_ID','CREADO_EN'].indexOf(field) < 0) current[field] = data[field];
+  });
+  current.ACTUALIZADO_EN = now;
+  current.ELIMINADO = 'NO';
+  const values = headers.map(function(header) { return deserializarFecha_(current[header]); });
+  const destination = rowNumber >= 2 ? rowNumber : Math.max(2, sheet.getLastRow() + 1);
+  sheet.getRange(destination, 1, 1, headers.length).setValues([values]);
+  invalidarCacheHoja_('CONEXIONES_ACTUAL');
+  invalidarCacheTiempoReal_('CONEXIONES_ACTUAL');
+  return limpiarSalidaRecurso_('CONEXIONES_ACTUAL', current);
+}
+
 function actualizarConexion_(request, session) {
   const data = request.datos || request;
   validarRequeridos_(data, ['DISPOSITIVO_ID']);
@@ -3311,12 +3430,19 @@ function actualizarConexion_(request, session) {
         ? 'Operación activa sin GPS'
         : 'Conectado';
   const vehicleId = operation ? operation.VEHICULO_ID : route ? route.VEHICULO_ID : '';
-  const existing = listarRegistros_('CONEXIONES', {}).find(function(row) {
-    return row.USUARIO_ID === session.user.ID
-      && row.DISPOSITIVO_ID === deviceId
-      && row.SESION_ID === session.session.ID
-      && String(row.SESION_CLIENTE_ID || '') === clientSessionId;
-  });
+  const claveActual = claveConexionActual_(session.user.ID, deviceId, session.session.ID, clientSessionId);
+  const snapshotActual = obtenerConexionActualPorClave_(claveActual);
+  let existing = snapshotActual && snapshotActual.CONEXION_ID
+    ? obtenerRegistroRapidoPorId_('CONEXIONES', snapshotActual.CONEXION_ID)
+    : null;
+  if (!existing) {
+    existing = listarRegistros_('CONEXIONES', {}).find(function(row) {
+      return row.USUARIO_ID === session.user.ID
+        && row.DISPOSITIVO_ID === deviceId
+        && row.SESION_ID === session.session.ID
+        && String(row.SESION_CLIENTE_ID || '') === clientSessionId;
+    });
+  }
   exigirPermiso_(session.user, 'CONEXIONES', existing ? 'ACTUALIZAR' : 'CREAR');
   const values = {
     USUARIO_ID: session.user.ID,
@@ -3346,6 +3472,7 @@ function actualizarConexion_(request, session) {
     ? actualizarRegistro_('CONEXIONES', existing.ID, values)
     : insertarRegistro_('CONEXIONES', values, 'CNX');
   invalidarCacheTiempoReal_('CONEXIONES');
+  guardarConexionActual_(claveActual, row.ID, values);
   guardarAsignacionGpsCache_(session.user.ID, {
     CONDUCTOR_ID: driver ? driver.ID : '',
     OPERACION_ID: operation ? operation.ID : '',
@@ -3964,7 +4091,7 @@ function diagnosticoSistema_(request, session) {
     structure: estadoModuloDiagnostico_('Estructura general', Object.keys(ESQUEMAS_APLICACION), true, 'Todas las hojas del sistema'),
     routes: estadoModuloDiagnostico_('Asignación de rutas', ['RUTAS','CONDUCTORES','VEHICULOS'], drivers > 0, drivers + ' conductores · ' + vehicles + ' vehículos'),
     operations: estadoModuloDiagnostico_('Operaciones y punto base', ['OPERACIONES','EMPRESAS','CHECKINS'], pointOk, pointOk ? 'Punto operacional configurado · ' + approvedCheckins + ' check-ins disponibles' : 'Falta configurar el punto operacional'),
-    gps: estadoModuloDiagnostico_('Mapa en tiempo real', ['GPS','GPS_ACTUAL','CONEXIONES'], true, listarRegistrosDiagnosticoSeguro_('GPS_ACTUAL').length + ' posiciones actuales'),
+    gps: estadoModuloDiagnostico_('Mapa en tiempo real', ['GPS','GPS_ACTUAL','CONEXIONES','CONEXIONES_ACTUAL'], true, listarRegistrosDiagnosticoSeguro_('GPS_ACTUAL').length + ' posiciones actuales'),
     notifications: estadoModuloDiagnostico_('Notificaciones', ['NOTIFICACIONES'], true, listarRegistrosDiagnosticoSeguro_('NOTIFICACIONES').length + ' registros'),
     alerts: estadoModuloDiagnostico_('Alertas', ['ALERTAS'], true, listarRegistrosDiagnosticoSeguro_('ALERTAS').length + ' registros'),
     history: estadoModuloDiagnostico_('Historiales', ['HISTORIAL','BITACORA','CHECKINS'], true, listarRegistrosDiagnosticoSeguro_('HISTORIAL').length + ' eventos operativos')
@@ -4659,6 +4786,12 @@ function procesarTrabajoSegundoPlano_(job) {
     listarRegistros_('CONEXIONES', {}).filter(function(row) { return String(row.SESION_ID || '') === String(data.sesionId || ''); }).forEach(function(row) {
       actualizarRegistro_('CONEXIONES', row.ID, { ESTADO:'Desconectado', ACTIVIDAD:'Inactivo', PAGINA_VISIBLE:'NO', ULTIMA_CONEXION:new Date(data.fechaHora || Date.now()) });
     });
+    try {
+      listarRegistros_('CONEXIONES_ACTUAL', {}).filter(function(row) { return String(row.SESION_ID || '') === String(data.sesionId || ''); }).forEach(function(row) {
+        actualizarRegistro_('CONEXIONES_ACTUAL', row.ID, { ESTADO:'Desconectado', ACTIVIDAD:'Inactivo', PAGINA_VISIBLE:'NO', ULTIMA_CONEXION:new Date(data.fechaHora || Date.now()) });
+      });
+      invalidarCacheTiempoReal_('CONEXIONES_ACTUAL');
+    } catch (_) {}
     registrarBitacora_(data.usuario || {}, 'CIERRE_SESION', 'SEGURIDAD', data.usuario && data.usuario.ID || '', 'Cierre de sesión');
     return;
   }
@@ -4736,40 +4869,61 @@ function resumenConexionesAdministrador_(request, session) {
   const plataformaFiltro = normalizarFiltroConexion_(data.PLATAFORMA || data.plataforma);
   const buscar = normalizarFiltroConexion_(data.BUSCAR || data.buscar);
   const precisionMaxima = Number(data.PRECISION_MAXIMA || data.precisionMaxima || 0);
+  const limiteRespuesta = Math.max(20, Math.min(250, Number(data.LIMITE || data.limite || CONFIGURACION_APLICACION.MAXIMO_CONEXIONES_EN_LINEA_RESPUESTA || 120)));
   const limiteActivo = Date.now() - Number(CONFIGURACION_APLICACION.SEGUNDOS_CONEXION_ACTIVA || 90) * 1000;
   const limiteGpsActivo = Date.now() - 2 * 60 * 1000;
 
   const usuarios = listarRegistrosCacheadosTiempoReal_('USUARIOS', 10);
   const conductores = listarRegistrosCacheadosTiempoReal_('CONDUCTORES', 10);
   const vehiculos = listarRegistrosCacheadosTiempoReal_('VEHICULOS', 10);
-  const gpsActual = listarRegistrosCacheadosTiempoReal_('GPS_ACTUAL', 3);
-  const conexiones = listarRegistrosCacheadosTiempoReal_('CONEXIONES', 3);
+  const gpsActual = listarRegistrosCacheadosTiempoReal_('GPS_ACTUAL', 5);
+  let conexiones = [];
+  try { conexiones = listarRegistrosCacheadosTiempoReal_('CONEXIONES_ACTUAL', 5); } catch (_) { conexiones = []; }
+  // Respaldo de migración: mientras llegan nuevos latidos se toman las filas
+  // históricas más recientes, sin bloquear permanentemente el módulo.
+  if (!conexiones.length) {
+    const historicas = listarRegistrosCacheadosTiempoReal_('CONEXIONES', 10);
+    historicas.sort(function(a,b) { return new Date(b.ULTIMA_CONEXION || 0).getTime() - new Date(a.ULTIMA_CONEXION || 0).getTime(); });
+    conexiones = historicas.slice(0, 300);
+  }
 
+  function indexarPorId_(rows) {
+    const mapa = {};
+    (rows || []).forEach(function(row) { if (row && row.ID) mapa[String(row.ID)] = row; });
+    return mapa;
+  }
+  function fechaRegistroConexionMs_(row, campoPrincipal) {
+    const valor = row && (row[campoPrincipal] || row.ACTUALIZADO_EN || row.CREADO_EN || 0);
+    const tiempo = new Date(valor).getTime();
+    return isNaN(tiempo) ? 0 : tiempo;
+  }
+  function conservarMasReciente_(mapa, clave, row, campoFecha) {
+    if (!clave) return;
+    const actual = mapa[clave];
+    if (!actual || fechaRegistroConexionMs_(row, campoFecha) > fechaRegistroConexionMs_(actual, campoFecha)) mapa[clave] = row;
+  }
+
+  const usuariosPorId = indexarPorId_(usuarios);
+  const conductoresPorId = indexarPorId_(conductores);
+  const vehiculosPorId = indexarPorId_(vehiculos);
   const gpsMapas = { dispositivo:{}, vehiculo:{}, conductor:{} };
-  gpsActual.slice().sort(function(a,b) {
-    return new Date(b.FECHA_HORA || b.ACTUALIZADO_EN || 0).getTime() - new Date(a.FECHA_HORA || a.ACTUALIZADO_EN || 0).getTime();
-  }).forEach(function(row) {
-    const d = String(row.DISPOSITIVO_ID || '');
-    const v = String(row.VEHICULO_ID || '');
-    const c = String(row.CONDUCTOR_ID || '');
-    if (d && !gpsMapas.dispositivo[d]) gpsMapas.dispositivo[d] = row;
-    if (v && !gpsMapas.vehiculo[v]) gpsMapas.vehiculo[v] = row;
-    if (c && !gpsMapas.conductor[c]) gpsMapas.conductor[c] = row;
+  gpsActual.forEach(function(row) {
+    conservarMasReciente_(gpsMapas.dispositivo, String(row.DISPOSITIVO_ID || ''), row, 'FECHA_HORA');
+    conservarMasReciente_(gpsMapas.vehiculo, String(row.VEHICULO_ID || ''), row, 'FECHA_HORA');
+    conservarMasReciente_(gpsMapas.conductor, String(row.CONDUCTOR_ID || ''), row, 'FECHA_HORA');
   });
 
   const ultimasPorEquipo = {};
-  conexiones.slice().sort(function(a,b) {
-    return new Date(b.ULTIMA_CONEXION || b.ACTUALIZADO_EN || 0).getTime() - new Date(a.ULTIMA_CONEXION || a.ACTUALIZADO_EN || 0).getTime();
-  }).forEach(function(row) {
+  conexiones.forEach(function(row) {
     const key = String(row.DISPOSITIVO_ID || row.SESION_CLIENTE_ID || row.SESION_ID || row.ID);
-    if (!ultimasPorEquipo[key]) ultimasPorEquipo[key] = row;
+    conservarMasReciente_(ultimasPorEquipo, key, row, 'ULTIMA_CONEXION');
   });
 
   let equipos = Object.keys(ultimasPorEquipo).map(function(key) {
     const row = ultimasPorEquipo[key];
-    const usuario = usuarios.find(function(item) { return item.ID === row.USUARIO_ID; }) || {};
-    const conductor = conductores.find(function(item) { return item.ID === row.CONDUCTOR_ID; }) || {};
-    const vehiculo = vehiculos.find(function(item) { return item.ID === row.VEHICULO_ID; }) || {};
+    const usuario = usuariosPorId[String(row.USUARIO_ID || '')] || {};
+    const conductor = conductoresPorId[String(row.CONDUCTOR_ID || '')] || {};
+    const vehiculo = vehiculosPorId[String(row.VEHICULO_ID || '')] || {};
     const ubicacion = buscarUltimaUbicacionConexion_(row, gpsMapas) || {};
     const ultimaConexionMs = new Date(row.ULTIMA_CONEXION || row.ACTUALIZADO_EN || 0).getTime();
     const fechaGpsMs = new Date(ubicacion.FECHA_HORA || ubicacion.ACTUALIZADO_EN || 0).getTime();
@@ -4860,8 +5014,8 @@ function resumenConexionesAdministrador_(request, session) {
   }
 
   return ok_({
-    equipos: equipos.slice(0, 500),
-    ubicaciones: ubicaciones.slice(0, 500),
+    equipos: equipos.slice(0, limiteRespuesta),
+    ubicaciones: ubicaciones.slice(0, Math.min(limiteRespuesta, 200)),
     totales: {
       equipos: equipos.length,
       activos: equipos.filter(function(row) { return row.EN_LINEA; }).length,
@@ -4902,10 +5056,14 @@ function resumenConexionesAdministrador_(request, session) {
 function parsearSolicitud_(e) {
   if (!e) return {};
   const raw = e.postData && e.postData.contents ? e.postData.contents : '';
+  let request = {};
   if (raw) {
-    try { return JSON.parse(raw); } catch (error) { /* continúa con parámetros */ }
-  }
-  return Object.assign({}, e.parameter || {});
+    try { request = JSON.parse(raw) || {}; }
+    catch (error) { request = Object.assign({}, e.parameter || {}); }
+  } else request = Object.assign({}, e.parameter || {});
+  if (!request.accion && request.action) request.accion = request.action;
+  if (!request.accion && request.ACCION) request.accion = request.ACCION;
+  return request;
 }
 
 function respuestaJson_(data) {

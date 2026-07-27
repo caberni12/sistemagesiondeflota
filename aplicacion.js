@@ -41,6 +41,8 @@
   let gpsTotalsPaintKey = '';
   let connectionsRefreshTimer = null;
   let connectionsRefreshPending = null;
+  let connectionsRequestGeneration = 0;
+  let connectionsFailureCount = 0;
   let ultimoResumenConexiones = { equipos:[], ubicaciones:[], totales:{}, opciones:{} };
   const filtrosConexiones = { FECHA_DESDE:'', FECHA_HASTA:'', USUARIO_ID:'', ESTADO:'TODOS', GPS:'TODOS', VEHICULO_ID:'', DISPOSITIVO_ID:'', TIPO_RED:'', PLATAFORMA:'', PRECISION_MAXIMA:'', BUSCAR:'' };
   let realtimeTimer = null;
@@ -328,7 +330,7 @@
       UBICACION_OPERACION_REQUERIDA:'Debe permitir el acceso al GPS y obtener la ubicación antes de continuar.', PRECISION_GPS_REQUERIDA:'El dispositivo no informó la precisión de la ubicación.',
       UBICACION_GPS_IMPRECISA:'La señal GPS es demasiado imprecisa. Salga a un lugar abierto y vuelva a intentarlo.', FUERA_DEL_PUNTO_DE_INICIO:'No puede iniciar la operación fuera del punto autorizado por el Administrador.',
       FUERA_DEL_PUNTO_DE_FINALIZACION:'No puede finalizar la operación hasta regresar al punto autorizado.', RADIO_OPERACION_INVALIDO:'Los radios y la precisión permitida deben estar entre 10 y 5.000 metros.',
-      RUTA_NO_DISPONIBLE:'La ruta seleccionada ya no está disponible.', RUTA_VEHICULO_REQUERIDO:'La ruta necesita un vehículo asignado o una operación activa con vehículo.', RUTA_VEHICULO_NO_COINCIDE_OPERACION:'La operación activa utiliza otro vehículo distinto al asignado en la ruta.', RUTA_NO_COINCIDE_CONDUCTOR:'La ruta no corresponde al conductor seleccionado.', RUTA_NO_COINCIDE_VEHICULO:'La ruta no corresponde al vehículo seleccionado.', RUTA_YA_VINCULADA:'La ruta ya está vinculada a otra operación activa.',
+      RUTA_NO_DISPONIBLE:'La ruta seleccionada ya no está disponible.', RUTA_NO_CONFIRMADA_EN_CURSO:'El servidor respondió, pero no confirmó la ruta en estado En curso. Publique nuevamente Codigo_Completo.gs.', RUTA_VEHICULO_REQUERIDO:'La ruta necesita un vehículo asignado o una operación activa con vehículo.', RUTA_VEHICULO_NO_COINCIDE_OPERACION:'La operación activa utiliza otro vehículo distinto al asignado en la ruta.', RUTA_NO_COINCIDE_CONDUCTOR:'La ruta no corresponde al conductor seleccionado.', RUTA_NO_COINCIDE_VEHICULO:'La ruta no corresponde al vehículo seleccionado.', RUTA_YA_VINCULADA:'La ruta ya está vinculada a otra operación activa.',
       PUNTO_OPERACION_ROL_NO_AUTORIZADO:'Solo un Administrador o Supervisor puede configurar o cambiar el punto base.', CIERRE_EXCEPCIONAL_NO_AUTORIZADO:'Solo un Administrador o Supervisor puede cerrar una operación fuera de la base.',
       CIERRE_EXCEPCIONAL_CONFIRMACION_REQUERIDA:'Active la opción de cierre excepcional para continuar fuera de la base.', CIERRE_EXCEPCIONAL_MOTIVO_REQUERIDO:'Explique el motivo del cierre excepcional con al menos 10 caracteres.',
       KILOMETRAJE_FINAL_INVALIDO:'El kilometraje será guardado para revisión, pero no impedirá finalizar.', SOLO_ADMINISTRADOR:'Solo un Administrador puede realizar esta acción.', ACCESO_CONEXIONES_NO_AUTORIZADO:'El Administrador no ha habilitado el acceso a Conexiones en línea para este usuario.', MOTIVO_EDICION_REQUERIDO:'Indique un motivo de al menos 5 caracteres para registrar la edición.', FECHA_OPERACION_INVALIDA:'La fecha indicada no es válida.', RECURSO_IMPORTACION_NO_PERMITIDO:'Este módulo no admite importación masiva.',
@@ -698,7 +700,7 @@
   }
 
   async function go(section, options = {}) {
-    if(section==='connections'&&!esAdministrador()){toast('Acceso restringido','Este módulo está disponible únicamente para Administradores.','error');return false;}
+    if(section==='connections'&&!hasPermission('CONEXIONES','LEER')){toast('Acceso restringido','El Administrador no ha habilitado este módulo para su cuenta.','error');return false;}
     if (!renderers[section]) section = 'dashboard';
     const sequence = ++secuenciaNavegacion;
     cleanupSection(); currentSection=section; buildNav();
@@ -719,7 +721,7 @@
       return true;
     }
 
-    const cachedView = section === 'gps' ? null : cacheVistasModulo.get(section);
+    const cachedView = (section === 'gps' || section === 'connections') ? null : cacheVistasModulo.get(section);
     if (cachedView && !options.force) {
       $('#content').innerHTML=cachedView;
       bindSection();
@@ -735,7 +737,7 @@
       if (sequence !== secuenciaNavegacion || section !== currentSection) return;
       const decorated = decorarModuloConSincronizacion(html, section);
       $('#content').innerHTML=decorated;
-      if(section!=='gps')cacheVistasModulo.set(section, decorated);
+      if(section!=='gps'&&section!=='connections')cacheVistasModulo.set(section, decorated);
       if (cacheVistasModulo.size > 18) cacheVistasModulo.delete(cacheVistasModulo.keys().next().value);
       registrarSincronizacionSeccion(section,'SERVIDOR');
       bindSection();
@@ -790,6 +792,8 @@
   function cleanupSection() {
     if (gpsRefreshTimer) clearTimeout(gpsRefreshTimer); gpsRefreshTimer=null;
     if (connectionsRefreshTimer) clearTimeout(connectionsRefreshTimer); connectionsRefreshTimer=null;
+    connectionsRequestGeneration++;
+    connectionsRefreshPending=null;
     gpsRefreshQueued=false;gpsLocationsPaintKey='';gpsDevicesPaintKey='';gpsTotalsPaintKey='';
     document.body.classList.remove('mapa-pantalla-completa');$('#mapCard')?.classList.remove('map-fullscreen');
     if (mapaFlota) { mapaFlota.eliminar(); mapaFlota=null; }
@@ -1015,7 +1019,7 @@
     const importButtons=importDefinition&&hasPermission(resourcePermission[resource],'CREAR')&&currentUser.ROL_ID!=='ROL-CONDUCTOR'?`<a class="btn soft" href="${esc(importDefinition.template)}" download>⇩ Plantilla</a><button class="btn soft" data-bulk-import="${resource}">⇧ Importación masiva</button>`:'';
     const folderButtons=resource==='documents'&&currentUser.ROL_ID!=='ROL-CONDUCTOR'?`<a class="btn soft" href="${esc(carpetasDrive.documentosFotos)}" target="_blank" rel="noopener">▧ Fotos</a><a class="btn soft" href="${esc(carpetasDrive.documentosPdf)}" target="_blank" rel="noopener">▤ PDF</a>`:'';
     const rowHtml=rows.map(row=>rowRenderer(row)).join('');
-    return heading(tag,title,description,`<button class="btn soft" data-sync>↻ Sincronizar</button>${folderButtons}${importButtons}${createButton}`)+accesoBloqueado+`<article class="card"><div class="toolbar"><label class="search-box"><span>⌕</span><input data-table-search placeholder="Buscar en ${title.toLowerCase()}"></label><button class="btn soft push" data-export="${resource}">Exportar CSV</button></div><div data-filter-table>${table(headers,rowHtml,`No hay ${title.toLowerCase()} registrados.`)}</div></article>`;
+    return heading(tag,title,description,`<button class="btn soft" data-sync>↻ Sincronizar</button>${folderButtons}${importButtons}${createButton}`)+accesoBloqueado+`<article class="card resource-card resource-${esc(resource)}"><div class="toolbar"><label class="search-box"><span>⌕</span><input data-table-search placeholder="Buscar en ${title.toLowerCase()}"></label><button class="btn soft push" data-export="${resource}">Exportar CSV</button></div><div data-filter-table class="resource-table resource-${esc(resource)}">${table(headers,rowHtml,`No hay ${title.toLowerCase()} registrados.`)}</div></article>`;
   }
 
   function vehicleRows(v){return `<tr data-filter-date="${esc(v.PROXIMA_MANTENCION||v.ACTUALIZADO_EN||v.CREADO_EN||'')}" data-search-row="${esc(`${v.PATENTE} ${v.MARCA} ${v.MODELO} ${v.ESTADO}`.toLowerCase())}"><td><div class="entity"><i class="entity-icon">🚐</i><div><strong>${esc(v.MARCA||'Sin marca')} ${esc(v.MODELO||'')}</strong><span class="muted">${esc(v.ID)}</span></div></div></td><td><strong>${esc(v.PATENTE)}</strong></td><td>${esc(v.ANIO||'—')}</td><td>${number(v.KILOMETRAJE)} km</td><td>${status(v.ESTADO)}</td><td>${esc(v.QR_CODIGO||'—')}</td><td>${actions('vehicles',v.ID)}</td></tr>`;}
@@ -1054,7 +1058,14 @@
       input.setAttribute('aria-checked',input.checked?'true':'false');
     });
   }
-  function userRows(u){const personalizados=normalizarPermisosVisualesUsuario(u),mode=String(u.ROL_ID||u.ROL_NOMBRE||'').toUpperCase()==='ROL-ADMIN'||String(u.ROL_NOMBRE||'').toUpperCase()==='ADMINISTRADOR'?'Completo':u.MODO_PERMISOS==='PERSONALIZADO'?`Personalizados (${personalizados.length})`:'Según rol';const permissionButton=hasPermission('USUARIOS','ACTUALIZAR')?`<button data-user-permissions="${esc(u.ID)}" title="Configurar permisos">⚿</button>`:'';const actionHtml=actions('users',u.ID),baseActions=actionHtml==='—'?(permissionButton?`<div class="row-actions">${permissionButton}</div>`:'—'):actionHtml.replace('</div>',permissionButton+'</div>');return `<tr data-filter-date="${esc(u.ULTIMO_ACCESO||u.ACTUALIZADO_EN||u.CREADO_EN||'')}" data-search-row="${esc(`${u.NOMBRE} ${u.CORREO} ${u.ROL_ID} ${mode}`.toLowerCase())}"><td><div class="entity"><span class="avatar">${initials(u.NOMBRE)}</span><strong>${esc(u.NOMBRE)}</strong></div></td><td>${esc(u.CORREO)}</td><td>${esc(u.ROL_NOMBRE||u.ROL_ID)}</td><td>${status(mode)}</td><td>${fmtDate(u.ULTIMO_ACCESO,true)}</td><td>${status(u.ESTADO)}</td><td>${baseActions}</td></tr>`;}
+  function userRows(u){
+    const personalizados=normalizarPermisosVisualesUsuario(u);
+    const admin=String(u.ROL_ID||u.ROL_NOMBRE||'').toUpperCase()==='ROL-ADMIN'||String(u.ROL_NOMBRE||'').toUpperCase()==='ADMINISTRADOR';
+    const mode=admin?'Acceso completo':u.MODO_PERMISOS==='PERSONALIZADO'?`Personalizados (${personalizados.length})`:'Según rol';
+    const permissionButton=hasPermission('USUARIOS','ACTUALIZAR')?`<button data-user-permissions="${esc(u.ID)}" title="Configurar permisos" aria-label="Configurar permisos de ${esc(u.NOMBRE)}">⚿</button>`:'';
+    const actionHtml=actions('users',u.ID),baseActions=actionHtml==='—'?(permissionButton?`<div class="row-actions">${permissionButton}</div>`:'—'):actionHtml.replace('</div>',permissionButton+'</div>');
+    return `<tr class="user-row" data-filter-date="${esc(u.ULTIMO_ACCESO||u.ACTUALIZADO_EN||u.CREADO_EN||'')}" data-search-row="${esc(`${u.NOMBRE} ${u.CORREO} ${u.ROL_ID} ${mode}`.toLowerCase())}"><td data-label="Usuario" class="user-main-cell"><div class="entity"><span class="avatar">${initials(u.NOMBRE)}</span><strong>${esc(u.NOMBRE)}</strong></div></td><td data-label="Correo" class="user-email-cell">${esc(u.CORREO)}</td><td data-label="Rol">${esc(u.ROL_NOMBRE||u.ROL_ID)}</td><td data-label="Permisos" class="user-permission-cell"><span class="user-permission-summary ${admin?'full':'custom'}"><b>${esc(mode)}</b><small>${admin?'Todos los permisos activos':u.MODO_PERMISOS==='PERSONALIZADO'?`${personalizados.length} permiso(s) marcados`:'Permisos heredados del rol'}</small></span></td><td data-label="Último acceso">${fmtDate(u.ULTIMO_ACCESO,true)}</td><td data-label="Estado">${status(u.ESTADO)}</td><td data-label="Acciones" class="user-actions-cell">${baseActions}</td></tr>`;
+  }
   function actions(resource,id){const module=resourcePermission[resource];const buttons=[];if(hasPermission(module,'ACTUALIZAR'))buttons.push(`<button data-edit="${resource}:${id}" title="Editar">✎</button>`);if(hasPermission(module,'ELIMINAR'))buttons.push(`<button data-delete="${resource}:${id}" title="Eliminar">×</button>`);return buttons.length?`<div class="row-actions">${buttons.join('')}</div>`:'—';}
 
   function parseCheckinItems(row) {
@@ -1546,7 +1557,9 @@
       `<div class="gps-layout"><article class="card map-card" id="mapCard"><div class="map-fullscreen-bar"><button class="btn soft small" type="button" data-map-fullscreen>⛶ Pantalla completa</button></div><div id="fleetMap" class="fleet-map"></div><div class="map-toolbar"><span class="gps-live"><i></i> Consulta rápida cada ${Math.round(config.INTERVALO_TIEMPO_REAL_MILISEGUNDOS/1000)} segundos</span><span class="map-status-legend"><b class="active"></b> Activo <b class="inactive"></b> Inactivo <b class="geofence"></b> Radio base</span><span class="muted" id="gpsLastSync">Datos iniciales cargados</span><span class="muted push">Mapa © OpenStreetMap, CARTO o Esri</span></div></article><article class="card"><div class="card-header"><div><h3>Últimas posiciones</h3><p id="locationCount">${locations.total} vehículos visibles</p></div></div><div class="driver-location-list" id="driverLocationList">${locationList(locations.rows)}</div><div class="card-header" style="margin-top:18px"><div><h3>Sesiones y conductores</h3><p>Usuario, actividad y sección abierta</p></div></div><div class="device-list" id="deviceList">${(realtime.devices||[]).map(deviceCard).join('')||empty('○','Sin sesiones','Esperando señales de los dispositivos.')}</div></article></div>`;
   }
 
-  function connectionFilterPayload(){return {...filtrosConexiones};}
+  function connectionFilterPayload(){
+    return {...filtrosConexiones,MODO_RAPIDO:'SI',LIMITE:Number(config.LIMITE_CONEXIONES_EN_LINEA||120)};
+  }
   function connectionOption(value,label,selected){return `<option value="${esc(value)}" ${String(selected||'')===String(value)?'selected':''}>${esc(label)}</option>`;}
   function connectionFilterForm(result){
     const options=result.opciones||{},f=filtrosConexiones;
@@ -1558,23 +1571,85 @@
     return `<article class="card connections-filter-card"><div class="card-header"><div><h3>Filtros administrativos</h3><p>Consulte conexiones por fecha de última señal, usuario, equipo, vehículo, GPS, red, plataforma y precisión.</p></div></div><form id="connectionsFilterForm" class="connections-filter-form"><label class="field"><span>Desde</span><input type="date" name="FECHA_DESDE" value="${esc(f.FECHA_DESDE)}"></label><label class="field"><span>Hasta</span><input type="date" name="FECHA_HASTA" value="${esc(f.FECHA_HASTA)}"></label><label class="field"><span>Usuario</span><select name="USUARIO_ID"><option value="">Todos los usuarios</option>${users}</select></label><label class="field"><span>Estado</span><select name="ESTADO"><option value="TODOS" ${f.ESTADO==='TODOS'?'selected':''}>Todos</option><option value="ACTIVOS" ${f.ESTADO==='ACTIVOS'?'selected':''}>Activos</option><option value="DESCONECTADOS" ${f.ESTADO==='DESCONECTADOS'?'selected':''}>Desconectados</option><option value="SEGUNDO_PLANO" ${f.ESTADO==='SEGUNDO_PLANO'?'selected':''}>En segundo plano</option></select></label><label class="field"><span>GPS</span><select name="GPS"><option value="TODOS" ${f.GPS==='TODOS'?'selected':''}>Todos</option><option value="ACTIVO" ${f.GPS==='ACTIVO'?'selected':''}>GPS activo</option><option value="INACTIVO" ${f.GPS==='INACTIVO'?'selected':''}>GPS inactivo</option><option value="SIN_UBICACION" ${f.GPS==='SIN_UBICACION'?'selected':''}>Sin ubicación</option></select></label><label class="field"><span>Vehículo</span><select name="VEHICULO_ID"><option value="">Todos los vehículos</option>${vehicles}</select></label><label class="field"><span>Dispositivo</span><select name="DISPOSITIVO_ID"><option value="">Todos los equipos</option>${devices}</select></label><label class="field"><span>Tipo de red</span><select name="TIPO_RED"><option value="">Todas las redes</option>${networks}</select></label><label class="field"><span>Plataforma</span><select name="PLATAFORMA"><option value="">Todas las plataformas</option>${platforms}</select></label><label class="field"><span>Precisión máxima</span><select name="PRECISION_MAXIMA"><option value="" ${!f.PRECISION_MAXIMA?'selected':''}>Cualquier precisión</option><option value="25" ${String(f.PRECISION_MAXIMA)==='25'?'selected':''}>Hasta 25 m</option><option value="50" ${String(f.PRECISION_MAXIMA)==='50'?'selected':''}>Hasta 50 m</option><option value="100" ${String(f.PRECISION_MAXIMA)==='100'?'selected':''}>Hasta 100 m</option><option value="200" ${String(f.PRECISION_MAXIMA)==='200'?'selected':''}>Hasta 200 m</option></select></label><label class="field connections-search-field"><span>Buscar en todos los campos</span><input type="search" name="BUSCAR" value="${esc(f.BUSCAR)}" placeholder="Nombre, correo, patente, IP, dispositivo, módulo…"></label><div class="form-actions"><button class="btn soft" type="button" data-connections-reset>Limpiar filtros</button><button class="btn primary" type="submit">Aplicar filtros</button></div></form></article>`;
   }
   function connectionRows(rows){
-    return (rows||[]).map(row=>`<tr><td><span class="connection-state ${row.EN_LINEA?'online':'offline'}"><i></i>${row.EN_LINEA?'Activo':'Desconectado'}</span></td><td><strong>${esc(row.USUARIO_NOMBRE||row.USUARIO_ID)}</strong><span class="muted">${esc(row.USUARIO_CORREO||row.ROL_ID||'')}</span></td><td><strong>${esc(row.DISPOSITIVO_ID||'Sin ID')}</strong><span class="muted">${esc(row.PLATAFORMA||'Plataforma no informada')}</span></td><td>${esc(row.VEHICULO_PATENTE||'—')}<span class="muted">${esc(row.CONDUCTOR_NOMBRE||row.VEHICULO_NOMBRE||'')}</span></td><td>${row.GPS_ACTIVO==='SI'&&row.GPS_RECIENTE?status('Activo'):status('Sin GPS')}<span class="muted">${row.PRECISION_METROS!==''?`±${number(row.PRECISION_METROS)} m`:'Sin posición'}</span></td><td>${esc(row.SECCION_ACTUAL||'—')}<span class="muted">${esc(row.ACTIVIDAD||'')}</span></td><td>${esc(row.TIPO_RED||'—')}<span class="muted">${row.BATERIA_GPS!==''?`${esc(row.BATERIA_GPS)}% batería`:''}</span></td><td>${fmtDate(row.ULTIMA_CONEXION,true)}</td><td>${row.LATITUD!==''?`<button class="btn soft small" data-connection-focus="${row.LATITUD},${row.LONGITUD}">Ver mapa</button>`:'—'}</td></tr>`).join('')||`<tr><td colspan="9">${empty('○','Sin equipos para los filtros aplicados','Cambie el período o quite filtros para ampliar la búsqueda.')}</td></tr>`;
+    const visibles=(rows||[]).slice(0,120);
+    return visibles.map(row=>`<tr class="connection-detail-row"><td data-label="Estado"><span class="connection-state ${row.EN_LINEA?'online':'offline'}"><i></i>${row.EN_LINEA?'Activo':'Desconectado'}</span></td><td data-label="Usuario"><strong>${esc(row.USUARIO_NOMBRE||row.USUARIO_ID)}</strong><span class="muted">${esc(row.USUARIO_CORREO||row.ROL_ID||'')}</span></td><td data-label="Equipo"><strong>${esc(row.DISPOSITIVO_ID||'Sin ID')}</strong><span class="muted">${esc(row.PLATAFORMA||'Plataforma no informada')}</span></td><td data-label="Vehículo / conductor">${esc(row.VEHICULO_PATENTE||'—')}<span class="muted">${esc(row.CONDUCTOR_NOMBRE||row.VEHICULO_NOMBRE||'')}</span></td><td data-label="GPS">${row.GPS_ACTIVO==='SI'&&row.GPS_RECIENTE?status('Activo'):status('Sin GPS')}<span class="muted">${row.PRECISION_METROS!==''?`±${number(row.PRECISION_METROS)} m`:'Sin posición'}</span></td><td data-label="Módulo / actividad">${esc(row.SECCION_ACTUAL||'—')}<span class="muted">${esc(row.ACTIVIDAD||'')}</span></td><td data-label="Red / batería">${esc(row.TIPO_RED||'—')}<span class="muted">${row.BATERIA_GPS!==''?`${esc(row.BATERIA_GPS)}% batería`:''}</span></td><td data-label="Última señal">${fmtDate(row.ULTIMA_CONEXION,true)}</td><td data-label="Mapa">${row.LATITUD!==''?`<button class="btn soft small" data-connection-focus="${row.LATITUD},${row.LONGITUD}">Ver mapa</button>`:'—'}</td></tr>`).join('')||`<tr><td colspan="9">${empty('○','Sin equipos para los filtros aplicados','Cambie el período o quite filtros para ampliar la búsqueda.')}</td></tr>`;
   }
   function connectionQuickList(rows){return (rows||[]).slice(0,14).map(row=>`<button class="connection-quick-item ${row.EN_LINEA?'online':'offline'}" ${row.LATITUD!==''?`data-connection-focus="${row.LATITUD},${row.LONGITUD}"`:''}><i></i><span><b>${esc(row.USUARIO_NOMBRE||'Usuario')}</b><small>${esc(row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo')}</small></span><em>${row.EN_LINEA?'Activo':'Desconectado'}</em></button>`).join('')||empty('○','Sin conexiones','Los equipos aparecerán cuando registren una señal.');}
   function connectionsResultsHtml(result){
-    const totals=result.totales||{},rows=result.equipos||[];
-    return `<div class="live-strip connections-live-strip"><article class="live-stat"><i>▣</i><div><span>Equipos encontrados</span><b id="connectionsTotal">${totals.equipos||0}</b></div></article><article class="live-stat online"><i>●</i><div><span>Activos</span><b id="connectionsOnline">${totals.activos||0}</b></div></article><article class="live-stat warning"><i>●</i><div><span>Desconectados</span><b id="connectionsOffline">${totals.desconectados||0}</b></div></article><article class="live-stat online"><i>⌖</i><div><span>GPS activos</span><b id="connectionsGps">${totals.gpsActivos||0}</b></div></article><article class="live-stat ${(totals.sinGps||0)?'warning':''}"><i>!</i><div><span>Sin GPS</span><b id="connectionsNoGps">${totals.sinGps||0}</b></div></article></div><div class="connections-dashboard-grid"><article class="card map-card" id="mapCard"><div class="card-header"><div><h3>Mapa de equipos conectados</h3><p>Verde: conexión activa · Rojo: desconectado o sin señal reciente.</p></div><button class="btn soft small" type="button" data-map-fullscreen>⛶ Pantalla completa</button></div><div class="fleet-map connections-map" id="connectionsMap"></div><small class="muted" id="connectionsLastSync">Última consulta: ${fmtDate(result.serverTime||new Date(),true)}</small></article><article class="card"><div class="card-header"><div><h3>Estado rápido</h3><p>Usuarios y equipos ordenados por última señal.</p></div></div><div class="connections-quick-list" id="connectionsQuickList">${connectionQuickList(rows)}</div></article></div><article class="card"><div class="card-header"><div><h3>Detalle de conexiones</h3><p>Información administrativa de usuarios, equipos, GPS, red y última actividad.</p></div><span class="status-badge">${rows.length} registro(s)</span></div><div class="table-wrap"><table><thead><tr><th>Estado</th><th>Usuario</th><th>Equipo</th><th>Vehículo / conductor</th><th>GPS</th><th>Módulo / actividad</th><th>Red / batería</th><th>Última señal</th><th>Mapa</th></tr></thead><tbody id="connectionsTableBody">${connectionRows(rows)}</tbody></table></div></article>`;
+    const totals=result.totales||{},rows=result.equipos||[],visibleCount=Math.min(rows.length,120);
+    const detailNote=rows.length>visibleCount?`Mostrando ${visibleCount} de ${rows.length} registros. Use los filtros para reducir la consulta.`:`${rows.length} registro(s)`;
+    return `<div class="live-strip connections-live-strip"><article class="live-stat"><i>▣</i><div><span>Equipos encontrados</span><b id="connectionsTotal">${totals.equipos||0}</b></div></article><article class="live-stat online"><i>●</i><div><span>Activos</span><b id="connectionsOnline">${totals.activos||0}</b></div></article><article class="live-stat warning"><i>●</i><div><span>Desconectados</span><b id="connectionsOffline">${totals.desconectados||0}</b></div></article><article class="live-stat online"><i>⌖</i><div><span>GPS activos</span><b id="connectionsGps">${totals.gpsActivos||0}</b></div></article><article class="live-stat ${(totals.sinGps||0)?'warning':''}"><i>!</i><div><span>Sin GPS</span><b id="connectionsNoGps">${totals.sinGps||0}</b></div></article></div><div class="connections-dashboard-grid"><article class="card map-card" id="mapCard"><div class="card-header"><div><h3>Mapa de equipos conectados</h3><p>Verde: conexión activa · Rojo: desconectado o sin señal reciente.</p></div><button class="btn soft small" type="button" data-map-fullscreen>⛶ Pantalla completa</button></div><div class="fleet-map connections-map" id="connectionsMap"></div><small class="muted" id="connectionsLastSync">Última consulta: ${fmtDate(result.serverTime||new Date(),true)}</small></article><article class="card"><div class="card-header"><div><h3>Estado rápido</h3><p>Usuarios y equipos ordenados por última señal.</p></div></div><div class="connections-quick-list" id="connectionsQuickList">${connectionQuickList(rows)}</div></article></div><article class="card connections-detail-card"><div class="card-header"><div><h3>Detalle de conexiones</h3><p>Información administrativa de usuarios, equipos, GPS, red y última actividad.</p></div><span class="status-badge" id="connectionsVisibleCount">${esc(detailNote)}</span></div><div class="table-wrap connections-table-wrap"><table><thead><tr><th>Estado</th><th>Usuario</th><th>Equipo</th><th>Vehículo / conductor</th><th>GPS</th><th>Módulo / actividad</th><th>Red / batería</th><th>Última señal</th><th>Mapa</th></tr></thead><tbody id="connectionsTableBody">${connectionRows(rows)}</tbody></table></div></article>`;
+  }
+  function connectionsPageHtml(result){
+    return heading('ADMINISTRACIÓN','Conexiones en línea','Mapa y control en tiempo real de usuarios y equipos conectados. El acceso es otorgado y retirado únicamente por un Administrador.',`<button class="btn soft" data-connections-refresh>↻ Actualizar ahora</button>`)+`<div class="automatic-alert-banner"><i>⌖</i><div><b>Supervisión activa</b><span>Un equipo se muestra en verde cuando envía señal dentro de ${number(result.intervaloActivoSegundos||90)} segundos; después cambia a rojo automáticamente.</span></div></div>`+connectionFilterForm(result)+`<section id="connectionsResults" aria-live="polite">${connectionsResultsHtml(result)}</section>`;
+  }
+  function connectionsLoadingHtml(){
+    const base={equipos:[],ubicaciones:[],totales:{equipos:0,activos:0,desconectados:0,gpsActivos:0,sinGps:0},opciones:{usuarios:[],vehiculos:[],dispositivos:[],redes:[],plataformas:[]},serverTime:'',intervaloActivoSegundos:90};
+    return heading('ADMINISTRACIÓN','Conexiones en línea','El módulo está disponible. La consulta de usuarios, equipos y GPS se realiza en segundo plano.',`<button class="btn soft" data-connections-initial-retry>↻ Consultar ahora</button>`)+
+      `<div class="automatic-alert-banner"><i>⌖</i><div><b>Vista abierta sin bloqueo</b><span>Puede navegar, aplicar filtros o salir del módulo aunque el servidor todavía esté procesando las conexiones.</span></div></div>`+
+      `<section id="connectionsLoadNotice" aria-live="polite"><article class="card connections-opening-card"><div class="connections-opening-spinner"></div><div><h3>Consultando conexiones recientes</h3><p>La pantalla ya está abierta. Se mostrarán los resultados en cuanto responda la base central.</p><small>La consulta se cancela automáticamente si supera el tiempo máximo.</small></div></article></section>`+
+      connectionFilterForm(base)+`<section id="connectionsResults" aria-live="polite">${connectionsResultsHtml(base)}</section>`;
+  }
+  function programarCargaInicialConexiones(){
+    setTimeout(()=>cargarConexionesIniciales(),160);
+  }
+  function avisoCargaConexiones(texto,tipo=''){
+    const state=$('#connectionsLoadNotice');
+    if(!state)return;
+    state.innerHTML=tipo==='error'
+      ? `<article class="card connections-opening-card error"><i>!</i><div><h3>La consulta no pudo completarse</h3><p>${esc(texto)}</p><button class="btn primary" type="button" data-connections-initial-retry>Reintentar</button></div></article>`
+      : `<article class="card connections-opening-card"><div class="connections-opening-spinner"></div><div><h3>Consultando conexiones</h3><p>${esc(texto)}</p><small>El módulo permanece operativo mientras espera.</small></div></article>`;
+    bindSection();
   }
   async function renderConnectionsOnline(){
     if(!hasPermission('CONEXIONES','LEER'))throw new Error('ACCESO_CONEXIONES_NO_AUTORIZADO');
-    const result=await api.request('connectionsOnline',{...connectionFilterPayload(),force:true});ultimoResumenConexiones=result;
-    return heading('ADMINISTRACIÓN','Conexiones en línea','Mapa y control en tiempo real de usuarios y equipos conectados. El acceso es otorgado y retirado únicamente por un Administrador.',`<button class="btn soft" data-connections-refresh>↻ Actualizar ahora</button>`)+`<div class="automatic-alert-banner"><i>⌖</i><div><b>Supervisión activa</b><span>Un equipo se muestra en verde cuando envía señal dentro de ${number(result.intervaloActivoSegundos||90)} segundos; después cambia a rojo automáticamente.</span></div></div>`+connectionFilterForm(result)+`<section id="connectionsResults" aria-live="polite">${connectionsResultsHtml(result)}</section>`;
+    const tieneDatos=Boolean(ultimoResumenConexiones?.serverTime)||Boolean((ultimoResumenConexiones?.equipos||[]).length);
+    programarCargaInicialConexiones();
+    return tieneDatos?connectionsPageHtml(ultimoResumenConexiones):connectionsLoadingHtml();
+  }
+  async function cargarConexionesIniciales(){
+    if(currentSection!=='connections'||!hasPermission('CONEXIONES','LEER'))return null;
+    if(connectionsRefreshPending)return connectionsRefreshPending;
+    const generation=++connectionsRequestGeneration;
+    const slowTimer=setTimeout(()=>{
+      if(currentSection==='connections'&&generation===connectionsRequestGeneration){
+        avisoCargaConexiones('La base central está tardando más de lo esperado. Puede esperar o pulsar Reintentar después del mensaje de error.');
+      }
+    },7000);
+    connectionsRefreshPending=(async()=>{
+      try{
+        const result=await api.request('connectionsOnline',{...connectionFilterPayload(),force:true,cache:false,marcaTiempo:Date.now()});
+        if(generation!==connectionsRequestGeneration)return result;
+        connectionsFailureCount=0;
+        ultimoResumenConexiones=result;
+        if(currentSection!=='connections')return result;
+        const decorated=decorarModuloConSincronizacion(connectionsPageHtml(result),'connections');
+        $('#content').innerHTML=decorated;
+        registrarSincronizacionSeccion('connections','SERVIDOR');
+        bindSection();
+        actualizarEstadoSincronizacionVisible(textoActualizacionSeccion('connections'));
+        requestAnimationFrame(()=>setTimeout(initConnectionsMap,60));
+        postParent({tipo:'flotas:modulo-listo',usuario:currentUser,seccion:'connections',actualizadoEn:estadoSincronizacionModulos.connections?.time||Date.now()});
+        return result;
+      }catch(error){
+        if(generation!==connectionsRequestGeneration)return null;
+        connectionsFailureCount++;
+        if(currentSection==='connections')avisoCargaConexiones(translateError(error),'error');
+        return null;
+      }finally{
+        clearTimeout(slowTimer);
+        if(generation===connectionsRequestGeneration)connectionsRefreshPending=null;
+        if(currentSection==='connections'&&ultimoResumenConexiones?.serverTime&&generation===connectionsRequestGeneration)scheduleConnectionsRefresh();
+      }
+    })();
+    return connectionsRefreshPending;
   }
   function paintConnectionsOnline(result,adjust=false){
     ultimoResumenConexiones=result||ultimoResumenConexiones;const rows=ultimoResumenConexiones.equipos||[],totals=ultimoResumenConexiones.totales||{};
     const set=(id,value)=>{const node=$(id);if(node)node.textContent=value;};set('#connectionsTotal',totals.equipos||0);set('#connectionsOnline',totals.activos||0);set('#connectionsOffline',totals.desconectados||0);set('#connectionsGps',totals.gpsActivos||0);set('#connectionsNoGps',totals.sinGps||0);
+    const visibleCount=Math.min(rows.length,120),count=$('#connectionsVisibleCount');if(count)count.textContent=rows.length>visibleCount?`Mostrando ${visibleCount} de ${rows.length} registros. Use filtros.`:`${rows.length} registro(s)`;
     const tbody=$('#connectionsTableBody');if(tbody)tbody.innerHTML=connectionRows(rows);const quick=$('#connectionsQuickList');if(quick)quick.innerHTML=connectionQuickList(rows);const sync=$('#connectionsLastSync');if(sync)sync.textContent=`Última consulta: ${fmtDate(ultimoResumenConexiones.serverTime||new Date(),true)}`;
-    const markers=(ultimoResumenConexiones.ubicaciones||[]).map(row=>({id:row.DISPOSITIVO_ID||row.ID,latitud:Number(row.LATITUD),longitud:Number(row.LONGITUD),nombre:`${row.USUARIO_NOMBRE||'Usuario'} · ${row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo'}`,activo:Boolean(row.EN_LINEA),detalle:`<b>${esc(row.USUARIO_NOMBRE||'Usuario')}</b><span>${esc(row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo')}</span><span>${esc(row.DIRECCION||`${Number(row.LATITUD).toFixed(5)}, ${Number(row.LONGITUD).toFixed(5)}`)}</span><span>${row.GPS_ACTIVO==='SI'?'GPS declarado activo':'GPS inactivo'} · precisión ${row.PRECISION_METROS!==''?`±${number(row.PRECISION_METROS)} m`:'sin dato'}</span><small>${row.EN_LINEA?'Activo':'Desconectado'} · ${fmtDate(row.FECHA_GPS||'',true)}</small>`}));mapaFlota?.actualizarMarcadores(markers,adjust);
+    const markers=(ultimoResumenConexiones.ubicaciones||[]).slice(0,200).map(row=>({id:row.DISPOSITIVO_ID||row.ID,latitud:Number(row.LATITUD),longitud:Number(row.LONGITUD),nombre:`${row.USUARIO_NOMBRE||'Usuario'} · ${row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo'}`,activo:Boolean(row.EN_LINEA),detalle:`<b>${esc(row.USUARIO_NOMBRE||'Usuario')}</b><span>${esc(row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo')}</span><span>${esc(row.DIRECCION||`${Number(row.LATITUD).toFixed(5)}, ${Number(row.LONGITUD).toFixed(5)}`)}</span><span>${row.GPS_ACTIVO==='SI'?'GPS declarado activo':'GPS inactivo'} · precisión ${row.PRECISION_METROS!==''?`±${number(row.PRECISION_METROS)} m`:'sin dato'}</span><small>${row.EN_LINEA?'Activo':'Desconectado'} · ${fmtDate(row.FECHA_GPS||'',true)}</small>`}));mapaFlota?.actualizarMarcadores(markers,adjust);
     $$('[data-connection-focus]').forEach(btn=>btn.addEventListener('click',()=>{const [lat,lng]=btn.dataset.connectionFocus.split(',').map(Number);mapaFlota?.establecerVista(lat,lng,16);}));
   }
   function asegurarComponenteMapa(){
@@ -1591,7 +1666,7 @@
         return;
       }
       const script=document.createElement('script');
-      script.src='mapa.js?v=3.14.0';
+      script.src='mapa.js?v=3.14.4';
       script.async=true;
       script.dataset.mapaFlotas='dinamico';
       script.onload=comprobar;
@@ -1625,12 +1700,44 @@
       paintConnectionsOnline(ultimoResumenConexiones,true);
       requestAnimationFrame(()=>mapaFlota?.redibujar?.());
       setTimeout(()=>mapaFlota?.redibujar?.(),300);
-      scheduleConnectionsRefresh(250);
+      scheduleConnectionsRefresh();
     })().catch(error=>{toast('Mapa no disponible',translateError(error),'error');}).finally(()=>{promesaInicializacionMapa=null;});
     return promesaInicializacionMapa;
   }
-  function scheduleConnectionsRefresh(delay=Number(config.INTERVALO_TIEMPO_REAL_MILISEGUNDOS||4000)){if(connectionsRefreshTimer)clearTimeout(connectionsRefreshTimer);connectionsRefreshTimer=null;if(currentSection!=='connections'||!currentUser||!esAdministrador())return;connectionsRefreshTimer=setTimeout(()=>refreshConnectionsOnline(false),Math.max(500,delay));}
-  async function refreshConnectionsOnline(showToast=false,adjust=false){if(connectionsRefreshPending)return connectionsRefreshPending;connectionsRefreshPending=(async()=>{try{const result=await api.request('connectionsOnline',{...connectionFilterPayload(),force:true,marcaTiempo:Date.now()});paintConnectionsOnline(result,adjust);if(showToast)toast('Conexiones actualizadas',`${result.totales?.activos||0} equipos activos y ${result.totales?.desconectados||0} desconectados.`);return result;}catch(error){if(showToast)toast('No se pudieron actualizar las conexiones',translateError(error),'error');return null;}finally{connectionsRefreshPending=null;if(currentSection==='connections')scheduleConnectionsRefresh();}})();return connectionsRefreshPending;}
+  function scheduleConnectionsRefresh(delay){
+    if(connectionsRefreshTimer)clearTimeout(connectionsRefreshTimer);
+    connectionsRefreshTimer=null;
+    if(currentSection!=='connections'||!currentUser||!hasPermission('CONEXIONES','LEER'))return;
+    const normal=Number(config.INTERVALO_CONEXIONES_EN_LINEA_MILISEGUNDOS||15000);
+    const hidden=Number(config.INTERVALO_TIEMPO_REAL_OCULTO_MILISEGUNDOS||30000);
+    const espera=Number(delay|| (document.hidden?hidden:normal));
+    connectionsRefreshTimer=setTimeout(()=>refreshConnectionsOnline(false),Math.max(5000,espera));
+  }
+  async function refreshConnectionsOnline(showToast=false,adjust=false){
+    if(connectionsRefreshPending)return connectionsRefreshPending;
+    const generation=++connectionsRequestGeneration;
+    connectionsRefreshPending=(async()=>{
+      try{
+        const result=await api.request('connectionsOnline',{...connectionFilterPayload(),force:true,cache:false,marcaTiempo:Date.now()});
+        if(generation!==connectionsRequestGeneration||currentSection!=='connections')return result;
+        connectionsFailureCount=0;
+        ultimoResumenConexiones=result;
+        paintConnectionsOnline(result,adjust);
+        if(showToast)toast('Conexiones actualizadas',`${result.totales?.activos||0} equipos activos y ${result.totales?.desconectados||0} desconectados.`);
+        return result;
+      }catch(error){
+        if(generation===connectionsRequestGeneration){
+          connectionsFailureCount++;
+          if(showToast||connectionsFailureCount>=2)toast('No se pudieron actualizar las conexiones',translateError(error),'error');
+        }
+        return null;
+      }finally{
+        if(generation===connectionsRequestGeneration)connectionsRefreshPending=null;
+        if(currentSection==='connections'&&generation===connectionsRequestGeneration)scheduleConnectionsRefresh(connectionsFailureCount?30000:undefined);
+      }
+    })();
+    return connectionsRefreshPending;
+  }
   function applyConnectionsFilters(form){const values=Object.fromEntries(new FormData(form).entries());Object.keys(filtrosConexiones).forEach(key=>{filtrosConexiones[key]=String(values[key]||'').trim();});return refreshConnectionsOnline(true,true);}
   function resetConnectionsFilters(){Object.keys(filtrosConexiones).forEach(key=>{filtrosConexiones[key]=['ESTADO','GPS'].includes(key)?'TODOS':'';});return go('connections',{force:true});}
 
@@ -2029,6 +2136,7 @@
     $$('[data-focus-location]').forEach(btn=>btn.addEventListener('click',()=>{const [lat,lng]=btn.dataset.focusLocation.split(',').map(Number);mapaFlota?.establecerVista(lat,lng,16);}));
     $('[data-map-fullscreen]')?.addEventListener('click',()=>toggleMapFullscreen());
     $('[data-connections-refresh]')?.addEventListener('click',event=>conCargaBoton(event.currentTarget,'Actualizando…',()=>refreshConnectionsOnline(true,false)));
+    $('[data-connections-initial-retry]')?.addEventListener('click',event=>conCargaBoton(event.currentTarget,'Consultando…',()=>cargarConexionesIniciales()));
     const connectionsForm=$('#connectionsFilterForm');if(connectionsForm){connectionsForm.addEventListener('submit',event=>{event.preventDefault();const button=$('button[type="submit"]',connectionsForm);conCargaBoton(button,'Aplicando…',()=>applyConnectionsFilters(connectionsForm));});$('[data-connections-reset]',connectionsForm)?.addEventListener('click',()=>resetConnectionsFilters());}
     $$('[data-connection-focus]').forEach(btn=>btn.addEventListener('click',()=>{const [lat,lng]=btn.dataset.connectionFocus.split(',').map(Number);mapaFlota?.establecerVista(lat,lng,16);}));
     const kpiForm=$('#kpiFilterForm');if(kpiForm){const repaint=()=>pintarKpisReportes();kpiForm.addEventListener('change',repaint);$('[data-kpi-apply]',kpiForm)?.addEventListener('click',repaint);$('[data-kpi-reset]',kpiForm)?.addEventListener('click',()=>{const today=new Date(),start=new Date();start.setDate(today.getDate()-30);kpiForm.elements.FECHA_DESDE.value=fechaInputIso(start);kpiForm.elements.FECHA_HASTA.value=fechaInputIso(today);kpiForm.elements.CONDUCTOR_ID.value='';kpiForm.elements.VEHICULO_ID.value='';repaint();});pintarKpisReportes();}
@@ -2281,7 +2389,7 @@
     const modo=String(user.MODO_PERMISOS||'ROL').toUpperCase()==='PERSONALIZADO'?'PERSONALIZADO':'ROL';
     const matrizActual=normalizarMatrizPermisosUsuario(user,'MATRIZ_PERMISOS');
     const mandatory=new Set(['PANEL_PRINCIPAL:LEER','CONEXIONES:CREAR','CONEXIONES:ACTUALIZAR']);
-    return `<div class="permission-help"><b>${admin?'Administrador con acceso completo':'Permisos de '+esc(user.NOMBRE)}</b><span>${admin?'Los permisos del administrador no pueden reducirse para evitar perder el control del sistema. Todos sus checkbox permanecen marcados.':'Cada casilla refleja el valor guardado en la base: marcada = true (permiso activo), vacía = false (sin permiso). La matriz se consulta nuevamente al servidor cada vez que se abre.'}</span></div><form id="userPermissionsForm" class="permission-form"><input type="hidden" name="USUARIO_ID" value="${esc(user.ID)}"><div class="permission-mode"><label><input type="radio" name="MODO_PERMISOS" value="ROL" ${modo==='ROL'||admin?'checked':''} ${admin?'disabled':''}><span>Usar permisos del rol</span></label><label><input type="radio" name="MODO_PERMISOS" value="PERSONALIZADO" ${modo==='PERSONALIZADO'&&!admin?'checked':''} ${admin?'disabled':''}><span>Personalizar permisos</span></label></div><div class="permission-boolean-legend"><span><i class="permission-legend-check">✓</i> Marcado = true</span><span><i class="permission-legend-empty"></i> Vacío = false</span></div><div class="permission-matrix ${modo==='PERSONALIZADO'&&!admin?'enabled':''}" data-permission-matrix><div class="permission-row permission-head"><b>Módulo</b>${permissionActions.map(([,label])=>`<b>${label}</b>`).join('')}</div>${permissionCatalog.map(([module,label])=>`<div class="permission-row"><span>${esc(label)}</span>${permissionActions.map(([action])=>{const value=`${module}:${action}`,required=mandatory.has(value),active=admin||required||matrizActual[value]===true;return `<label title="${required?'Permiso técnico obligatorio':active?'Permiso activo (true)':'Sin permiso (false)'}"><input type="checkbox" name="PERMISOS" value="${value}" data-obligatorio="${required?'1':'0'}" data-valor-booleano="${active?'true':'false'}" aria-checked="${active?'true':'false'}" ${active?'checked':''} ${admin||required?'disabled':''}><i></i></label>`;}).join('')}</div>`).join('')}</div><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit" ${admin?'disabled':''}>Guardar permisos sin cerrar sesión</button></div></form>`;
+    return `<div class="permission-help"><b>${admin?'Administrador con acceso completo':'Permisos de '+esc(user.NOMBRE)}</b><span>${admin?'Los permisos del administrador no pueden reducirse para evitar perder el control del sistema. Todos sus checkbox permanecen marcados.':'Cada casilla refleja el valor guardado en la base: marcada = true (permiso activo), vacía = false (sin permiso). La matriz se consulta nuevamente al servidor cada vez que se abre.'}</span></div><form id="userPermissionsForm" class="permission-form"><input type="hidden" name="USUARIO_ID" value="${esc(user.ID)}"><div class="permission-mode"><label><input type="radio" name="MODO_PERMISOS" value="ROL" ${modo==='ROL'||admin?'checked':''} ${admin?'disabled':''}><span>Usar permisos del rol</span></label><label><input type="radio" name="MODO_PERMISOS" value="PERSONALIZADO" ${modo==='PERSONALIZADO'&&!admin?'checked':''} ${admin?'disabled':''}><span>Personalizar permisos</span></label></div><div class="permission-boolean-legend"><span><i class="permission-legend-check">✓</i> Marcado = true</span><span><i class="permission-legend-empty"></i> Vacío = false</span></div><div class="permission-matrix ${modo==='PERSONALIZADO'&&!admin?'enabled':''}" data-permission-matrix><div class="permission-row permission-head"><b>Módulo</b>${permissionActions.map(([,label])=>`<b>${label}</b>`).join('')}</div>${permissionCatalog.map(([module,label])=>`<div class="permission-row"><span>${esc(label)}</span>${permissionActions.map(([action])=>{const value=`${module}:${action}`,required=mandatory.has(value),active=admin||required||matrizActual[value]===true;return `<label class="permission-cell" data-action-label="${esc(permissionActions.find(([clave])=>clave===action)?.[1]||action)}" title="${required?'Permiso técnico obligatorio':active?'Permiso activo (true)':'Sin permiso (false)'}"><input type="checkbox" name="PERMISOS" value="${value}" data-obligatorio="${required?'1':'0'}" data-valor-booleano="${active?'true':'false'}" aria-checked="${active?'true':'false'}" ${active?'checked':''} ${admin||required?'disabled':''}><i></i></label>`;}).join('')}</div>`).join('')}</div><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit" ${admin?'disabled':''}>Guardar permisos sin cerrar sesión</button></div></form>`;
   }
 
   async function openUserPermissionsModal(userId){
@@ -2449,8 +2557,93 @@
   function guardarContextoSeguimientoRuta(contexto){routeTrackingContext=contexto&&contexto.activo!==false?contexto:null;try{if(routeTrackingContext)localStorage.setItem(routeTrackingKey,JSON.stringify(routeTrackingContext));else localStorage.removeItem(routeTrackingKey);}catch(_){}}
   async function activarSeguimientoRutaCliente(contexto){guardarContextoSeguimientoRuta(contexto);try{if(window.AndroidConfig&&typeof AndroidConfig.iniciarSeguimientoRuta==='function'){AndroidConfig.iniciarSeguimientoRuta(JSON.stringify(contexto||{}));gpsWatchId='ANDROID';updateTrackingUi();return true;}}catch(_){}return startTracking({silent:true});}
   function detenerSeguimientoRutaCliente(routeId){guardarContextoSeguimientoRuta(null);try{if(window.AndroidConfig&&typeof AndroidConfig.finalizarSeguimientoRuta==='function')AndroidConfig.finalizarSeguimientoRuta(String(routeId||''));}catch(_){}if(!config.GPS_AUTOMATICO_OBLIGATORIO&&gpsWatchId!==null)stopTracking({remember:false,silent:true});}
-  async function iniciarRutaConSeguimiento(id){const result=await api.request('startRoute',{id,data:{RUTA_ID:id}});await activarSeguimientoRutaCliente(result.seguimiento||{activo:true,RUTA_ID:id});return result;}
-  async function changeRouteState(value){const split=value.indexOf(':'),id=value.slice(0,split),state=value.slice(split+1);try{let result;if(state==='En curso')result=await iniciarRutaConSeguimiento(id);else if(state==='Completada'){result=await api.request('completeRoute',{id,data:{RUTA_ID:id}});detenerSeguimientoRutaCliente(id);}else{result=await api.request('updateRouteStatus',{id,ESTADO:state});if(state==='Cancelada')detenerSeguimientoRutaCliente(id);}try{localStorage.removeItem(pendingRouteCheckinKey);}catch(_){}invalidarListasFormulario('routes','notifications','checkins','operations');cacheVistasModulo.delete(currentSection);cacheVistasModulo.delete('dashboard');toast(state==='En curso'?'Ruta iniciada':'Ruta actualizada',state==='En curso'?`GPS en tiempo real activado · check-in ${result.seguimiento?.CHECKIN_ID||'vigente'}${result.operacionVinculada?' · operación vinculada':''}.`:`Nuevo estado: ${state}.`);actualizarSeccionEnSegundoPlano(currentSection);}catch(error){const code=String(error?.message||error||'');if(code.includes('CHECKIN_DIARIO_REQUERIDO')){const route=registroFormulario('routes',id)||(cacheListasFormulario.get('routes')||[]).find(row=>String(row.ID)===String(id))||{};try{localStorage.setItem(pendingRouteCheckinKey,JSON.stringify({RUTA_ID:id,VEHICULO_ID:route.VEHICULO_ID||'',CONDUCTOR_ID:route.CONDUCTOR_ID||''}));}catch(_){}toast('Check-in requerido','Realice el check-in de hoy para este vehículo y conductor. Al aprobarse podrá iniciar la ruta.','error');navigateSection('checkin');return;}toast('No se pudo actualizar',translateError(error),'error');}}
+  function esErrorAccionRutaNoDisponible(error){
+    const codigo=String(error?.message||error||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9]/gi,'').toUpperCase();
+    return ['ACCIONNOENCONTRADA','ACCIONNORECONOCIDA','ACCIONDESCONOCIDA','ACTIONNOTFOUND','UNKNOWNACTION'].some(item=>codigo.includes(item));
+  }
+  async function solicitarAccionRutaCompatible(tipo,payload){
+    const intentos=tipo==='COMPLETAR'
+      ? [
+          ['completeRoute',payload],
+          ['updateRouteStatus',{...payload,ESTADO:'Completada',data:{...(payload.data||{}),RUTA_ID:payload.id||payload.RUTA_ID,ESTADO:'Completada'}}]
+        ]
+      : [
+          ['startRoute',payload],
+          ['updateRouteStatus',{...payload,ESTADO:'En curso',data:{...(payload.data||{}),RUTA_ID:payload.id||payload.RUTA_ID,ESTADO:'En curso'}}]
+        ];
+    let ultimoError=null;
+    for(const [accion,carga] of intentos){
+      try{return await api.request(accion,carga);}
+      catch(error){
+        ultimoError=error;
+        if(!esErrorAccionRutaNoDisponible(error))throw error;
+      }
+    }
+    throw ultimoError||new Error('ACCION_RUTA_NO_DISPONIBLE');
+  }
+  async function confirmarEstadoRutaServidor(id,estadoEsperado,result){
+    let row=result?.row||{};
+    if(!row.ID||String(row.ESTADO||'')!==estadoEsperado){
+      const verification=await api.request('get',{resource:'routes',id,force:true,cache:false});
+      if(verification?.row)row=verification.row;
+    }
+    if(String(row.ESTADO||'')!==estadoEsperado)throw new Error(estadoEsperado==='Completada'?'RUTA_NO_CONFIRMADA_COMPLETADA':'RUTA_NO_CONFIRMADA_EN_CURSO');
+    guardarRegistro('routes',row);
+    return {...(result||{}),row};
+  }
+  async function iniciarRutaConSeguimiento(id){
+    const payload={id,RUTA_ID:id,ESTADO:'En curso',data:{RUTA_ID:id,ESTADO:'En curso'}};
+    let result=await solicitarAccionRutaCompatible('INICIAR',payload);
+    result=await confirmarEstadoRutaServidor(id,'En curso',result);
+    const row=result.row||{};
+    const seguimiento=result?.seguimiento||{
+      activo:true,
+      RUTA_ID:id,
+      OPERACION_ID:row.OPERACION_ID||'',
+      VEHICULO_ID:row.VEHICULO_ID||'',
+      CONDUCTOR_ID:row.CONDUCTOR_ID||'',
+      CHECKIN_ID:row.CHECKIN_ID||''
+    };
+    await activarSeguimientoRutaCliente(seguimiento);
+    return {...result,row,seguimiento};
+  }
+  async function completarRutaConSeguimiento(id){
+    const payload={id,RUTA_ID:id,ESTADO:'Completada',data:{RUTA_ID:id,ESTADO:'Completada'}};
+    let result=await solicitarAccionRutaCompatible('COMPLETAR',payload);
+    result=await confirmarEstadoRutaServidor(id,'Completada',result);
+    detenerSeguimientoRutaCliente(id);
+    return result;
+  }
+  async function changeRouteState(value){
+    const split=value.indexOf(':'),id=value.slice(0,split),state=value.slice(split+1);
+    try{
+      let result;
+      if(state==='En curso')result=await iniciarRutaConSeguimiento(id);
+      else if(['Completada','Completado','Finalizada','Finalizado'].includes(state))result=await completarRutaConSeguimiento(id);
+      else{
+        result=await api.request('updateRouteStatus',{id,RUTA_ID:id,ESTADO:state,data:{RUTA_ID:id,ESTADO:state}});
+        if(state==='Cancelada')detenerSeguimientoRutaCliente(id);
+      }
+      try{localStorage.removeItem(pendingRouteCheckinKey);}catch(_){}
+      invalidarListasFormulario('routes','notifications','checkins','operations');
+      cacheVistasModulo.delete(currentSection);cacheVistasModulo.delete('dashboard');
+      const completada=String(result?.row?.ESTADO||state)==='Completada';
+      toast(state==='En curso'?'Ruta iniciada':completada?'Ruta completada':'Ruta actualizada',
+        state==='En curso'
+          ? `GPS en tiempo real activado · check-in ${result.seguimiento?.CHECKIN_ID||'vigente'}${result.operacionVinculada?' · operación vinculada':''}.`
+          : completada?'La ruta quedó completada, el seguimiento de esta ruta fue detenido y la notificación quedó programada.':`Nuevo estado: ${state}.`);
+      actualizarSeccionEnSegundoPlano(currentSection);
+    }catch(error){
+      const code=String(error?.message||error||'');
+      if(code.includes('CHECKIN_DIARIO_REQUERIDO')){
+        const route=registroFormulario('routes',id)||(cacheListasFormulario.get('routes')||[]).find(row=>String(row.ID)===String(id))||{};
+        try{localStorage.setItem(pendingRouteCheckinKey,JSON.stringify({RUTA_ID:id,VEHICULO_ID:route.VEHICULO_ID||'',CONDUCTOR_ID:route.CONDUCTOR_ID||''}));}catch(_){}
+        toast('Check-in requerido','Realice el check-in de hoy para este vehículo y conductor. Al aprobarse podrá iniciar la ruta.','error');
+        navigateSection('checkin');return;
+      }
+      toast('No se pudo completar la ruta',translateError(error),'error');
+    }
+  }
   function normalizarTelefonoWhatsApp(value=''){
     let digits=String(value||'').replace(/\D/g,'');
     if(digits.startsWith('00'))digits=digits.slice(2);

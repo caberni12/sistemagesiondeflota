@@ -463,8 +463,12 @@
   async function remoteRequest(action, payload) {
     if (!config.DIRECCION_APLICACION) throw new Error('DIRECCION_APLICACION_NO_CONFIGURADA');
     const controller = new AbortController();
-    const timeoutOperaciones=new Set(['operationsSummary','startOperation','finishOperation','editOperationAdmin','deleteOperationAdmin','uploadDriveFile','routeEvidenceImage']);
-    const timeout=timeoutOperaciones.has(action)?Number(config.TIEMPO_ESPERA_OPERACIONES_MILISEGUNDOS||60000):Number(config.TIEMPO_ESPERA_MILISEGUNDOS||30000);
+    const timeoutOperaciones=new Set(['operationsSummary','startOperation','finishOperation','editOperationAdmin','deleteOperationAdmin','startRoute','completeRoute','updateRouteStatus','uploadDriveFile','routeEvidenceImage']);
+    const timeout=action==='connectionsOnline'
+      ? Number(config.TIEMPO_ESPERA_CONEXIONES_MILISEGUNDOS||15000)
+      : timeoutOperaciones.has(action)
+        ? Number(config.TIEMPO_ESPERA_OPERACIONES_MILISEGUNDOS||60000)
+        : Number(config.TIEMPO_ESPERA_MILISEGUNDOS||30000);
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
       const response = await fetch(config.DIRECCION_APLICACION, {
@@ -548,7 +552,7 @@
   async function localRequest(action, payload) {
     await Promise.resolve();
     switch (action) {
-      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.14.0', now:iso() };
+      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.14.4', now:iso() };
       case 'status': return {
         connected:true, needsSetup:activeRows(localDb.users).length === 0, spreadsheetName:'Base local del navegador',
         rows:{ users:activeRows(localDb.users).length, vehicles:activeRows(localDb.vehicles).length,
@@ -1210,7 +1214,7 @@
       alerts:{nombre:'Alertas',estado:'OK',detalle:`${activeRows(localDb.alerts).length} registros`},
       history:{nombre:'Historiales',estado:'OK',detalle:`${activeRows(localDb.history).length} eventos operativos · ${activeRows(localDb.checkins).length} check-ins`}
     };
-    return{version:'3.14.0',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
+    return{version:'3.14.4',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
   }
   function localRepairSystem(){
     const user=requireLocalUser();requireLocalPermission(user,'CONFIGURACION','ACTUALIZAR');

@@ -44,7 +44,7 @@
   let connectionsRequestGeneration = 0;
   let connectionsFailureCount = 0;
   let ultimoResumenConexiones = { equipos:[], ubicaciones:[], totales:{}, opciones:{} };
-  const filtrosConexiones = { FECHA_DESDE:'', FECHA_HASTA:'', USUARIO_ID:'', ESTADO:'TODOS', GPS:'TODOS', VEHICULO_ID:'', DISPOSITIVO_ID:'', TIPO_RED:'', PLATAFORMA:'', PRECISION_MAXIMA:'', BUSCAR:'' };
+  const filtrosConexiones = { FECHA_DESDE:'', FECHA_HASTA:'', USUARIO_ID:'', CONDUCTOR_ID:'', ESTADO:'TODOS', GPS:'TODOS', VEHICULO_ID:'', DISPOSITIVO_ID:'', TIPO_RED:'', PLATAFORMA:'', PRECISION_MAXIMA:'', BUSCAR:'' };
   let realtimeTimer = null;
   let heartbeatTimer = null;
   let notificationTimer = null;
@@ -316,7 +316,7 @@
       ID_HOJA_NO_CONFIGURADO:'La base de datos central no está configurada correctamente.', CONFIRMACION_REQUERIDA:'Debe escribir exactamente “LIMPIAR DATOS”.',
       CONDUCTOR_NO_ASOCIADO:'La cuenta no está asociada a un conductor.', CONDUCTOR_NO_ENCONTRADO:'El conductor seleccionado no existe.', VEHICULO_NO_ENCONTRADO:'El vehículo seleccionado no existe.',
       QR_NO_RECONOCIDO:'El código QR no corresponde a un vehículo registrado.', CODIGO_QR_REQUERIDO:'Ingrese o escanee un código QR.', RUTA_NO_ENCONTRADA:'La ruta no existe.',
-      ESTADO_RUTA_INVALIDO:'El estado solicitado para la ruta no es válido.', DESTINATARIO_REQUERIDO:'Seleccione un conductor destinatario.', NOTIFICACION_NO_ENCONTRADA:'La notificación no existe.',
+      ESTADO_RUTA_INVALIDO:'El estado solicitado para la ruta no es válido.', DESTINATARIO_REQUERIDO:'Seleccione un conductor destinatario.', NOTIFICACION_NO_ENCONTRADA:'La notificación no existe.', ALERTA_NO_ENCONTRADA:'La alerta no existe.', LECTURA_NOTIFICACION_NO_CONFIRMADA:'La notificación no confirmó su estado leído en la base central.', LECTURA_ALERTA_NO_CONFIRMADA:'La alerta no confirmó su estado leído en la base central.',
       COORDENADAS_INVALIDAS:'Las coordenadas recibidas no son válidas.', AUTORIZACION_QR_INVALIDA:'Valide nuevamente el QR del vehículo. La autorización dura cinco minutos.',
       ACCION_ESPECIAL_REQUERIDA:'Utilice el botón específico del módulo para realizar esta acción.',
       SINCRONIZACION_NO_COMPLETADA:'La base de datos no respondió correctamente durante la sincronización.',
@@ -476,6 +476,24 @@
     const critical=kind==='alert'&&String(item.NIVEL||'').toLowerCase().includes('cr')||['Urgente','Alta'].includes(item.PRIORIDAD);
     toast(kind==='alert'?'Nueva alerta':'Nueva notificación',item.TITULO||item.MENSAJE||'Existe un nuevo aviso pendiente.',critical?'error':'success');
   }
+  function claveVisualAviso(item,tipo){
+    const normal=value=>String(value??'').trim().toUpperCase().replace(/\s+/g,' ');
+    if(item.CLAVE_UNICA)return tipo==='notification'
+      ? `${tipo}|${normal(item.CLAVE_UNICA)}|${normal(item.DESTINATARIO_USUARIO_ID)}|${normal(item.DESTINATARIO_CONDUCTOR_ID)}`
+      : `${tipo}|${normal(item.CLAVE_UNICA)}`;
+    return tipo==='alert'
+      ? ['ALT',item.TIPO,item.MODULO,item.REGISTRO_ID,item.TITULO,item.MENSAJE,item.USUARIO_ID].map(normal).join('|')
+      : ['NOT',item.DESTINATARIO_USUARIO_ID,item.DESTINATARIO_CONDUCTOR_ID,item.TIPO,item.TITULO,item.MENSAJE,item.RUTA_ID,item.OPERACION_ID].map(normal).join('|');
+  }
+  function deduplicarAvisos(rows,tipo){
+    const mapa=new Map();
+    (rows||[]).forEach(row=>{
+      const key=claveVisualAviso(row,tipo),current=mapa.get(key);
+      if(!current||alertItemDate(row)>alertItemDate(current))mapa.set(key,row);
+    });
+    return [...mapa.values()];
+  }
+
   async function refreshNotificationBadge(){
     if(!currentUser)return;
     try{
@@ -484,8 +502,8 @@
         canNotifications?api.request('list',{resource:'notifications',cache:false}):Promise.resolve({rows:[]}),
         canAlerts?api.request('list',{resource:'alerts',cache:false}):Promise.resolve({rows:[]})
       ]);
-      const notifications=(notificationResult.rows||[]).filter(row=>row.LEIDA!=='SI').sort((a,b)=>alertItemDate(b)-alertItemDate(a));
-      const alerts=(alertResult.rows||[]).filter(row=>row.LEIDA!=='SI').sort((a,b)=>alertItemDate(b)-alertItemDate(a));
+      const notifications=deduplicarAvisos((notificationResult.rows||[]).filter(row=>row.LEIDA!=='SI'),'notification').sort((a,b)=>alertItemDate(b)-alertItemDate(a));
+      const alerts=deduplicarAvisos((alertResult.rows||[]).filter(row=>row.LEIDA!=='SI'),'alert').sort((a,b)=>alertItemDate(b)-alertItemDate(a));
       notificationCenterState={notifications,alerts};
       const newNotifications=notifications.filter(row=>!knownNotificationIds.has(String(row.ID)));
       const newAlerts=alerts.filter(row=>!knownAlertIds.has(String(row.ID)));
@@ -505,11 +523,11 @@
   function openNotificationCenter(){
     if(!currentUser)return;
     const notifications=notificationCenterState.notifications||[],alerts=notificationCenterState.alerts||[];
-    const alertRows=alerts.slice(0,8).map(row=>`<article class="notification-card"><header><div><h4>${esc(row.TITULO||'Alerta')}</h4><p>${esc(row.MENSAJE||'')}</p></div>${status(row.NIVEL||'Alerta')}</header><div class="route-meta"><span>${fmtDate(row.FECHA_HORA||row.CREADO_EN,true)}</span><span>${esc(row.MODULO||'Sistema')}</span></div></article>`).join('');
+    const alertRows=alerts.slice(0,8).map(row=>`<article class="notification-card"><header><div><h4>${esc(row.TITULO||'Alerta')}</h4><p>${esc(row.MENSAJE||'')}</p></div>${status(row.NIVEL||'Alerta')}</header><div class="route-meta"><span>${fmtDate(row.FECHA_HORA||row.CREADO_EN,true)}</span><span>${esc(row.MODULO||'Sistema')}</span></div><button class="link-button" data-read-alert="${row.ID}" type="button">Marcar como leída</button></article>`).join('');
     const notificationRows=notifications.slice(0,8).map(notificationCard).join('');
     $('#modalEyebrow').textContent='AVISOS AUTOMÁTICOS';$('#modalTitle').textContent='Centro de notificaciones';
     $('#modalBody').innerHTML=`<div class="notification-center-summary"><div class="info-item"><span>Notificaciones pendientes</span><b>${notifications.length}</b></div><div class="info-item"><span>Alertas pendientes</span><b>${alerts.length}</b></div></div><div class="notification-dashboard"><article class="card"><div class="card-header"><div><h3>Notificaciones</h3><p>Mensajes dirigidos a su usuario.</p></div></div><div class="notification-list">${notificationRows||empty('✓','Sin notificaciones','No hay mensajes pendientes.')}</div><button class="btn soft full" type="button" data-center-nav="notifications">Abrir notificaciones</button></article><article class="card"><div class="card-header"><div><h3>Alertas</h3><p>Eventos generados automáticamente por el sistema.</p></div></div><div class="notification-list">${alertRows||empty('✓','Sin alertas','No hay alertas pendientes.')}</div><button class="btn soft full" type="button" data-center-nav="alerts">Abrir alertas</button></article></div>`;
-    openModal();$$('[data-center-nav]',$('#modalBody')).forEach(button=>button.addEventListener('click',()=>{closeModal();navigateSection(button.dataset.centerNav);}));$$('[data-read-notification]',$('#modalBody')).forEach(button=>button.addEventListener('click',()=>readNotification(button.dataset.readNotification)));
+    openModal();$$('[data-center-nav]',$('#modalBody')).forEach(button=>button.addEventListener('click',()=>{closeModal();navigateSection(button.dataset.centerNav);}));$$('[data-read-notification]',$('#modalBody')).forEach(button=>button.addEventListener('click',()=>readNotification(button.dataset.readNotification)));$$('[data-read-alert]',$('#modalBody')).forEach(button=>button.addEventListener('click',()=>readAlert(button.dataset.readAlert)));
   }
   function stopRealtimeServices(){
     [heartbeatTimer,notificationTimer,realtimeTimer].forEach(timer=>{if(timer)clearInterval(timer);});
@@ -1558,33 +1576,78 @@
   }
 
   function connectionFilterPayload(){
-    return {...filtrosConexiones,MODO_RAPIDO:'SI',LIMITE:Number(config.LIMITE_CONEXIONES_EN_LINEA||120)};
+    return {...filtrosConexiones,MODO_RAPIDO:'SI',INCLUIR_DIRECCIONES:'SI',LIMITE:Number(config.LIMITE_CONEXIONES_EN_LINEA||120)};
   }
   function connectionOption(value,label,selected){return `<option value="${esc(value)}" ${String(selected||'')===String(value)?'selected':''}>${esc(label)}</option>`;}
+  function fechaConexionFiltroCliente(value,endOfDay=false){
+    if(!value)return null;
+    const date=new Date(`${value}T${endOfDay?'23:59:59.999':'00:00:00.000'}`);
+    return Number.isNaN(date.getTime())?null:date;
+  }
+  function conexionCoincideFiltros(row,f=filtrosConexiones){
+    const desde=fechaConexionFiltroCliente(f.FECHA_DESDE,false),hasta=fechaConexionFiltroCliente(f.FECHA_HASTA,true);
+    const fecha=new Date(row.ULTIMA_CONEXION||row.ACTUALIZADO_EN||row.FECHA_GPS||0);
+    if(desde&&(!fecha||fecha<desde))return false;
+    if(hasta&&(!fecha||fecha>hasta))return false;
+    if(f.USUARIO_ID&&String(row.USUARIO_ID||'')!==String(f.USUARIO_ID))return false;
+    if(f.CONDUCTOR_ID&&String(row.CONDUCTOR_ID||'')!==String(f.CONDUCTOR_ID))return false;
+    if(f.VEHICULO_ID&&String(row.VEHICULO_ID||'')!==String(f.VEHICULO_ID))return false;
+    if(f.DISPOSITIVO_ID&&String(row.DISPOSITIVO_ID||'')!==String(f.DISPOSITIVO_ID))return false;
+    if(f.ESTADO==='ACTIVOS'&&!row.EN_LINEA)return false;
+    if(f.ESTADO==='DESCONECTADOS'&&row.EN_LINEA)return false;
+    if(f.ESTADO==='SEGUNDO_PLANO'&&row.PAGINA_VISIBLE!=='NO')return false;
+    const gpsActivo=row.GPS_ACTIVO==='SI'&&Boolean(row.GPS_RECIENTE)&&row.LATITUD!==''&&row.LONGITUD!=='';
+    if(f.GPS==='ACTIVO'&&!gpsActivo)return false;
+    if(f.GPS==='INACTIVO'&&gpsActivo)return false;
+    if(f.GPS==='SIN_UBICACION'&&row.LATITUD!=='')return false;
+    if(f.TIPO_RED&&String(row.TIPO_RED||'')!==String(f.TIPO_RED))return false;
+    if(f.PLATAFORMA&&!String(row.PLATAFORMA||'').toLowerCase().includes(String(f.PLATAFORMA).toLowerCase()))return false;
+    if(Number(f.PRECISION_MAXIMA||0)>0&&Number(row.PRECISION_METROS||Number.MAX_SAFE_INTEGER)>Number(f.PRECISION_MAXIMA))return false;
+    const buscar=String(f.BUSCAR||'').trim().toLowerCase();
+    if(buscar){
+      const texto=[row.USUARIO_NOMBRE,row.USUARIO_CORREO,row.CONDUCTOR_NOMBRE,row.VEHICULO_PATENTE,row.VEHICULO_NOMBRE,row.DISPOSITIVO_ID,row.PLATAFORMA,row.NAVEGADOR,row.IP_PUBLICA,row.SECCION_ACTUAL,row.ACTIVIDAD,row.TIPO_RED,row.DIRECCION].join(' ').toLowerCase();
+      if(!texto.includes(buscar))return false;
+    }
+    return true;
+  }
+  function conexionesFiltradasCliente(result){return (result?.equipos||[]).filter(row=>conexionCoincideFiltros(row));}
+  function totalesConexionesFiltradas(rows){
+    const gpsActivo=row=>row.GPS_ACTIVO==='SI'&&Boolean(row.GPS_RECIENTE)&&row.LATITUD!==''&&row.LONGITUD!=='';
+    return {equipos:rows.length,activos:rows.filter(row=>row.EN_LINEA).length,desconectados:rows.filter(row=>!row.EN_LINEA).length,gpsActivos:rows.filter(gpsActivo).length,sinGps:rows.filter(row=>!gpsActivo(row)).length,segundoPlano:rows.filter(row=>row.PAGINA_VISIBLE==='NO').length};
+  }
+  function direccionConexion(row){
+    if(row.DIRECCION&&String(row.DIRECCION).trim())return String(row.DIRECCION).trim();
+    if(row.LATITUD!==''&&row.LONGITUD!=='')return `${Number(row.LATITUD).toFixed(5)}, ${Number(row.LONGITUD).toFixed(5)}`;
+    return 'Sin ubicación disponible';
+  }
   function connectionFilterForm(result){
-    const options=result.opciones||{},f=filtrosConexiones;
-    const users=(options.usuarios||[]).map(row=>connectionOption(row.ID,`${row.NOMBRE||row.ID}${row.CORREO?` · ${row.CORREO}`:''}`,f.USUARIO_ID)).join('');
-    const vehicles=(options.vehiculos||[]).map(row=>connectionOption(row.ID,`${row.PATENTE||row.ID}${row.NOMBRE?` · ${row.NOMBRE}`:''}`,f.VEHICULO_ID)).join('');
-    const devices=(options.dispositivos||[]).map(value=>connectionOption(value,value,f.DISPOSITIVO_ID)).join('');
-    const networks=(options.redes||[]).map(value=>connectionOption(value,value,f.TIPO_RED)).join('');
-    const platforms=(options.plataformas||[]).map(value=>connectionOption(value,value,f.PLATAFORMA)).join('');
-    return `<article class="card connections-filter-card"><div class="card-header"><div><h3>Filtros administrativos</h3><p>Consulte conexiones por fecha de última señal, usuario, equipo, vehículo, GPS, red, plataforma y precisión.</p></div></div><form id="connectionsFilterForm" class="connections-filter-form"><label class="field"><span>Desde</span><input type="date" name="FECHA_DESDE" value="${esc(f.FECHA_DESDE)}"></label><label class="field"><span>Hasta</span><input type="date" name="FECHA_HASTA" value="${esc(f.FECHA_HASTA)}"></label><label class="field"><span>Usuario</span><select name="USUARIO_ID"><option value="">Todos los usuarios</option>${users}</select></label><label class="field"><span>Estado</span><select name="ESTADO"><option value="TODOS" ${f.ESTADO==='TODOS'?'selected':''}>Todos</option><option value="ACTIVOS" ${f.ESTADO==='ACTIVOS'?'selected':''}>Activos</option><option value="DESCONECTADOS" ${f.ESTADO==='DESCONECTADOS'?'selected':''}>Desconectados</option><option value="SEGUNDO_PLANO" ${f.ESTADO==='SEGUNDO_PLANO'?'selected':''}>En segundo plano</option></select></label><label class="field"><span>GPS</span><select name="GPS"><option value="TODOS" ${f.GPS==='TODOS'?'selected':''}>Todos</option><option value="ACTIVO" ${f.GPS==='ACTIVO'?'selected':''}>GPS activo</option><option value="INACTIVO" ${f.GPS==='INACTIVO'?'selected':''}>GPS inactivo</option><option value="SIN_UBICACION" ${f.GPS==='SIN_UBICACION'?'selected':''}>Sin ubicación</option></select></label><label class="field"><span>Vehículo</span><select name="VEHICULO_ID"><option value="">Todos los vehículos</option>${vehicles}</select></label><label class="field"><span>Dispositivo</span><select name="DISPOSITIVO_ID"><option value="">Todos los equipos</option>${devices}</select></label><label class="field"><span>Tipo de red</span><select name="TIPO_RED"><option value="">Todas las redes</option>${networks}</select></label><label class="field"><span>Plataforma</span><select name="PLATAFORMA"><option value="">Todas las plataformas</option>${platforms}</select></label><label class="field"><span>Precisión máxima</span><select name="PRECISION_MAXIMA"><option value="" ${!f.PRECISION_MAXIMA?'selected':''}>Cualquier precisión</option><option value="25" ${String(f.PRECISION_MAXIMA)==='25'?'selected':''}>Hasta 25 m</option><option value="50" ${String(f.PRECISION_MAXIMA)==='50'?'selected':''}>Hasta 50 m</option><option value="100" ${String(f.PRECISION_MAXIMA)==='100'?'selected':''}>Hasta 100 m</option><option value="200" ${String(f.PRECISION_MAXIMA)==='200'?'selected':''}>Hasta 200 m</option></select></label><label class="field connections-search-field"><span>Buscar en todos los campos</span><input type="search" name="BUSCAR" value="${esc(f.BUSCAR)}" placeholder="Nombre, correo, patente, IP, dispositivo, módulo…"></label><div class="form-actions"><button class="btn soft" type="button" data-connections-reset>Limpiar filtros</button><button class="btn primary" type="submit">Aplicar filtros</button></div></form></article>`;
+    const options=result.opciones||{},f=filtrosConexiones,rows=result.equipos||[];
+    const usuariosFuente=(options.usuarios?.length?options.usuarios:[...new Map(rows.filter(r=>r.USUARIO_ID).map(r=>[String(r.USUARIO_ID),{ID:r.USUARIO_ID,NOMBRE:r.USUARIO_NOMBRE,CORREO:r.USUARIO_CORREO}])).values()]);
+    const conductoresFuente=(options.conductores?.length?options.conductores:[...new Map(rows.filter(r=>r.CONDUCTOR_ID).map(r=>[String(r.CONDUCTOR_ID),{ID:r.CONDUCTOR_ID,NOMBRE:r.CONDUCTOR_NOMBRE||r.CONDUCTOR_ID}])).values()]);
+    const vehiculosFuente=(options.vehiculos?.length?options.vehiculos:[...new Map(rows.filter(r=>r.VEHICULO_ID).map(r=>[String(r.VEHICULO_ID),{ID:r.VEHICULO_ID,PATENTE:r.VEHICULO_PATENTE,NOMBRE:r.VEHICULO_NOMBRE}])).values()]);
+    const users=usuariosFuente.map(row=>connectionOption(row.ID,`${row.NOMBRE||row.ID}${row.CORREO?` · ${row.CORREO}`:''}`,f.USUARIO_ID)).join('');
+    const drivers=conductoresFuente.map(row=>connectionOption(row.ID,row.NOMBRE||row.ID,f.CONDUCTOR_ID)).join('');
+    const vehicles=vehiculosFuente.map(row=>connectionOption(row.ID,`${row.PATENTE||row.ID}${row.NOMBRE?` · ${row.NOMBRE}`:''}`,f.VEHICULO_ID)).join('');
+    const devices=(options.dispositivos||[...new Set(rows.map(r=>r.DISPOSITIVO_ID).filter(Boolean))]).map(value=>connectionOption(value,value,f.DISPOSITIVO_ID)).join('');
+    const networks=(options.redes||[...new Set(rows.map(r=>r.TIPO_RED).filter(Boolean))]).map(value=>connectionOption(value,value,f.TIPO_RED)).join('');
+    const platforms=(options.plataformas||[...new Set(rows.map(r=>r.PLATAFORMA).filter(Boolean))]).map(value=>connectionOption(value,value,f.PLATAFORMA)).join('');
+    return `<article class="card connections-filter-card"><div class="card-header"><div><h3>Filtros administrativos</h3><p>Los filtros se aplican simultáneamente a la lista, los totales y los marcadores del mapa.</p></div><span class="status-badge">Mapa sincronizado con filtros</span></div><form id="connectionsFilterForm" class="connections-filter-form"><label class="field"><span>Desde</span><input type="date" name="FECHA_DESDE" value="${esc(f.FECHA_DESDE)}"></label><label class="field"><span>Hasta</span><input type="date" name="FECHA_HASTA" value="${esc(f.FECHA_HASTA)}"></label><label class="field"><span>Usuario</span><select name="USUARIO_ID"><option value="">Todos los usuarios</option>${users}</select></label><label class="field"><span>Conductor</span><select name="CONDUCTOR_ID"><option value="">Todos los conductores</option>${drivers}</select></label><label class="field"><span>Estado</span><select name="ESTADO"><option value="TODOS" ${f.ESTADO==='TODOS'?'selected':''}>Todos</option><option value="ACTIVOS" ${f.ESTADO==='ACTIVOS'?'selected':''}>Activos</option><option value="DESCONECTADOS" ${f.ESTADO==='DESCONECTADOS'?'selected':''}>Desconectados</option><option value="SEGUNDO_PLANO" ${f.ESTADO==='SEGUNDO_PLANO'?'selected':''}>En segundo plano</option></select></label><label class="field"><span>GPS</span><select name="GPS"><option value="TODOS" ${f.GPS==='TODOS'?'selected':''}>Todos</option><option value="ACTIVO" ${f.GPS==='ACTIVO'?'selected':''}>GPS activo</option><option value="INACTIVO" ${f.GPS==='INACTIVO'?'selected':''}>GPS inactivo</option><option value="SIN_UBICACION" ${f.GPS==='SIN_UBICACION'?'selected':''}>Sin ubicación</option></select></label><label class="field"><span>Vehículo</span><select name="VEHICULO_ID"><option value="">Todos los vehículos</option>${vehicles}</select></label><label class="field"><span>Dispositivo</span><select name="DISPOSITIVO_ID"><option value="">Todos los equipos</option>${devices}</select></label><label class="field"><span>Tipo de red</span><select name="TIPO_RED"><option value="">Todas las redes</option>${networks}</select></label><label class="field"><span>Plataforma</span><select name="PLATAFORMA"><option value="">Todas las plataformas</option>${platforms}</select></label><label class="field"><span>Precisión máxima</span><select name="PRECISION_MAXIMA"><option value="" ${!f.PRECISION_MAXIMA?'selected':''}>Cualquier precisión</option><option value="25" ${String(f.PRECISION_MAXIMA)==='25'?'selected':''}>Hasta 25 m</option><option value="50" ${String(f.PRECISION_MAXIMA)==='50'?'selected':''}>Hasta 50 m</option><option value="100" ${String(f.PRECISION_MAXIMA)==='100'?'selected':''}>Hasta 100 m</option><option value="200" ${String(f.PRECISION_MAXIMA)==='200'?'selected':''}>Hasta 200 m</option></select></label><label class="field connections-search-field"><span>Buscar en todos los campos</span><input type="search" name="BUSCAR" value="${esc(f.BUSCAR)}" placeholder="Nombre, correo, conductor, patente, dirección, IP o dispositivo…"></label><div class="form-actions"><button class="btn soft" type="button" data-connections-reset>Limpiar filtros</button><button class="btn primary" type="submit">Aplicar filtros al mapa</button></div></form></article>`;
   }
   function connectionRows(rows){
     const visibles=(rows||[]).slice(0,120);
-    return visibles.map(row=>`<tr class="connection-detail-row"><td data-label="Estado"><span class="connection-state ${row.EN_LINEA?'online':'offline'}"><i></i>${row.EN_LINEA?'Activo':'Desconectado'}</span></td><td data-label="Usuario"><strong>${esc(row.USUARIO_NOMBRE||row.USUARIO_ID)}</strong><span class="muted">${esc(row.USUARIO_CORREO||row.ROL_ID||'')}</span></td><td data-label="Equipo"><strong>${esc(row.DISPOSITIVO_ID||'Sin ID')}</strong><span class="muted">${esc(row.PLATAFORMA||'Plataforma no informada')}</span></td><td data-label="Vehículo / conductor">${esc(row.VEHICULO_PATENTE||'—')}<span class="muted">${esc(row.CONDUCTOR_NOMBRE||row.VEHICULO_NOMBRE||'')}</span></td><td data-label="GPS">${row.GPS_ACTIVO==='SI'&&row.GPS_RECIENTE?status('Activo'):status('Sin GPS')}<span class="muted">${row.PRECISION_METROS!==''?`±${number(row.PRECISION_METROS)} m`:'Sin posición'}</span></td><td data-label="Módulo / actividad">${esc(row.SECCION_ACTUAL||'—')}<span class="muted">${esc(row.ACTIVIDAD||'')}</span></td><td data-label="Red / batería">${esc(row.TIPO_RED||'—')}<span class="muted">${row.BATERIA_GPS!==''?`${esc(row.BATERIA_GPS)}% batería`:''}</span></td><td data-label="Última señal">${fmtDate(row.ULTIMA_CONEXION,true)}</td><td data-label="Mapa">${row.LATITUD!==''?`<button class="btn soft small" data-connection-focus="${row.LATITUD},${row.LONGITUD}">Ver mapa</button>`:'—'}</td></tr>`).join('')||`<tr><td colspan="9">${empty('○','Sin equipos para los filtros aplicados','Cambie el período o quite filtros para ampliar la búsqueda.')}</td></tr>`;
+    return visibles.map(row=>`<tr class="connection-detail-row"><td data-label="Estado"><span class="connection-state ${row.EN_LINEA?'online':'offline'}"><i></i>${row.EN_LINEA?'Activo':'Desconectado'}</span></td><td data-label="Usuario"><strong>${esc(row.USUARIO_NOMBRE||row.USUARIO_ID)}</strong><span class="muted">${esc(row.USUARIO_CORREO||row.ROL_ID||'')}</span></td><td data-label="Equipo"><strong>${esc(row.DISPOSITIVO_ID||'Sin ID')}</strong><span class="muted">${esc(row.PLATAFORMA||'Plataforma no informada')}</span></td><td data-label="Vehículo / conductor">${esc(row.VEHICULO_PATENTE||'—')}<span class="muted">${esc(row.CONDUCTOR_NOMBRE||row.VEHICULO_NOMBRE||'')}</span></td><td data-label="Dirección"><span class="connection-address">${esc(direccionConexion(row))}</span></td><td data-label="GPS">${row.GPS_ACTIVO==='SI'&&row.GPS_RECIENTE?status('Activo'):status('Sin GPS')}<span class="muted">${row.PRECISION_METROS!==''?`±${number(row.PRECISION_METROS)} m`:'Sin posición'}</span></td><td data-label="Módulo / actividad">${esc(row.SECCION_ACTUAL||'—')}<span class="muted">${esc(row.ACTIVIDAD||'')}</span></td><td data-label="Red / batería">${esc(row.TIPO_RED||'—')}<span class="muted">${row.BATERIA_GPS!==''?`${esc(row.BATERIA_GPS)}% batería`:''}</span></td><td data-label="Última señal">${fmtDate(row.ULTIMA_CONEXION,true)}</td><td data-label="Mapa">${row.LATITUD!==''?`<button class="btn soft small" data-connection-focus="${row.LATITUD},${row.LONGITUD}">Ver mapa</button>`:'—'}</td></tr>`).join('')||`<tr><td colspan="10">${empty('○','Sin equipos para los filtros aplicados','Cambie el período o quite filtros para ampliar la búsqueda.')}</td></tr>`;
   }
-  function connectionQuickList(rows){return (rows||[]).slice(0,14).map(row=>`<button class="connection-quick-item ${row.EN_LINEA?'online':'offline'}" ${row.LATITUD!==''?`data-connection-focus="${row.LATITUD},${row.LONGITUD}"`:''}><i></i><span><b>${esc(row.USUARIO_NOMBRE||'Usuario')}</b><small>${esc(row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo')}</small></span><em>${row.EN_LINEA?'Activo':'Desconectado'}</em></button>`).join('')||empty('○','Sin conexiones','Los equipos aparecerán cuando registren una señal.');}
+  function connectionQuickList(rows){return (rows||[]).slice(0,14).map(row=>`<button class="connection-quick-item ${row.EN_LINEA?'online':'offline'}" ${row.LATITUD!==''?`data-connection-focus="${row.LATITUD},${row.LONGITUD}"`:''}><i></i><span><b>${esc(row.USUARIO_NOMBRE||'Usuario')}</b><small>${esc(row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo')}</small><small class="connection-quick-address">${esc(direccionConexion(row))}</small></span><em>${row.EN_LINEA?'Activo':'Desconectado'}</em></button>`).join('')||empty('○','Sin conexiones','Los equipos aparecerán cuando registren una señal.');}
   function connectionsResultsHtml(result){
-    const totals=result.totales||{},rows=result.equipos||[],visibleCount=Math.min(rows.length,120);
-    const detailNote=rows.length>visibleCount?`Mostrando ${visibleCount} de ${rows.length} registros. Use los filtros para reducir la consulta.`:`${rows.length} registro(s)`;
-    return `<div class="live-strip connections-live-strip"><article class="live-stat"><i>▣</i><div><span>Equipos encontrados</span><b id="connectionsTotal">${totals.equipos||0}</b></div></article><article class="live-stat online"><i>●</i><div><span>Activos</span><b id="connectionsOnline">${totals.activos||0}</b></div></article><article class="live-stat warning"><i>●</i><div><span>Desconectados</span><b id="connectionsOffline">${totals.desconectados||0}</b></div></article><article class="live-stat online"><i>⌖</i><div><span>GPS activos</span><b id="connectionsGps">${totals.gpsActivos||0}</b></div></article><article class="live-stat ${(totals.sinGps||0)?'warning':''}"><i>!</i><div><span>Sin GPS</span><b id="connectionsNoGps">${totals.sinGps||0}</b></div></article></div><div class="connections-dashboard-grid"><article class="card map-card" id="mapCard"><div class="card-header"><div><h3>Mapa de equipos conectados</h3><p>Verde: conexión activa · Rojo: desconectado o sin señal reciente.</p></div><button class="btn soft small" type="button" data-map-fullscreen>⛶ Pantalla completa</button></div><div class="fleet-map connections-map" id="connectionsMap"></div><small class="muted" id="connectionsLastSync">Última consulta: ${fmtDate(result.serverTime||new Date(),true)}</small></article><article class="card"><div class="card-header"><div><h3>Estado rápido</h3><p>Usuarios y equipos ordenados por última señal.</p></div></div><div class="connections-quick-list" id="connectionsQuickList">${connectionQuickList(rows)}</div></article></div><article class="card connections-detail-card"><div class="card-header"><div><h3>Detalle de conexiones</h3><p>Información administrativa de usuarios, equipos, GPS, red y última actividad.</p></div><span class="status-badge" id="connectionsVisibleCount">${esc(detailNote)}</span></div><div class="table-wrap connections-table-wrap"><table><thead><tr><th>Estado</th><th>Usuario</th><th>Equipo</th><th>Vehículo / conductor</th><th>GPS</th><th>Módulo / actividad</th><th>Red / batería</th><th>Última señal</th><th>Mapa</th></tr></thead><tbody id="connectionsTableBody">${connectionRows(rows)}</tbody></table></div></article>`;
+    const rows=conexionesFiltradasCliente(result),totals=totalesConexionesFiltradas(rows),visibleCount=Math.min(rows.length,120);
+    const detailNote=rows.length>visibleCount?`Mostrando ${visibleCount} de ${rows.length} registros filtrados.`:`${rows.length} registro(s) en lista y mapa`;
+    return `<div class="live-strip connections-live-strip"><article class="live-stat"><i>▣</i><div><span>Equipos visibles</span><b id="connectionsTotal">${totals.equipos||0}</b></div></article><article class="live-stat online"><i>●</i><div><span>Activos</span><b id="connectionsOnline">${totals.activos||0}</b></div></article><article class="live-stat warning"><i>●</i><div><span>Desconectados</span><b id="connectionsOffline">${totals.desconectados||0}</b></div></article><article class="live-stat online"><i>⌖</i><div><span>GPS activos</span><b id="connectionsGps">${totals.gpsActivos||0}</b></div></article><article class="live-stat ${(totals.sinGps||0)?'warning':''}"><i>!</i><div><span>Sin GPS</span><b id="connectionsNoGps">${totals.sinGps||0}</b></div></article></div><div class="connections-map-filter-summary"><b>Mapa filtrado</b><span id="connectionsMapFilterSummary">${rows.length} equipo(s) coinciden con los filtros actuales.</span></div><div class="connections-dashboard-grid"><article class="card map-card" id="mapCard"><div class="card-header"><div><h3>Mapa de equipos filtrados</h3><p>Solo aparecen los mismos equipos visibles en la lista. Verde: activo · Rojo: desconectado.</p></div><button class="btn soft small" type="button" data-map-fullscreen>⛶ Pantalla completa</button></div><div class="fleet-map connections-map" id="connectionsMap"></div><small class="muted" id="connectionsLastSync">Última consulta: ${fmtDate(result.serverTime||new Date(),true)}</small></article><article class="card"><div class="card-header"><div><h3>Estado rápido</h3><p>Dirección, usuario y vehículo de los resultados filtrados.</p></div></div><div class="connections-quick-list" id="connectionsQuickList">${connectionQuickList(rows)}</div></article></div><article class="card connections-detail-card"><div class="card-header"><div><h3>Detalle de conexiones</h3><p>La dirección se obtiene desde la última coordenada GPS validada.</p></div><span class="status-badge" id="connectionsVisibleCount">${esc(detailNote)}</span></div><div class="table-wrap connections-table-wrap"><table><thead><tr><th>Estado</th><th>Usuario</th><th>Equipo</th><th>Vehículo / conductor</th><th>Dirección</th><th>GPS</th><th>Módulo / actividad</th><th>Red / batería</th><th>Última señal</th><th>Mapa</th></tr></thead><tbody id="connectionsTableBody">${connectionRows(rows)}</tbody></table></div></article>`;
   }
   function connectionsPageHtml(result){
     return heading('ADMINISTRACIÓN','Conexiones en línea','Mapa y control en tiempo real de usuarios y equipos conectados. El acceso es otorgado y retirado únicamente por un Administrador.',`<button class="btn soft" data-connections-refresh>↻ Actualizar ahora</button>`)+`<div class="automatic-alert-banner"><i>⌖</i><div><b>Supervisión activa</b><span>Un equipo se muestra en verde cuando envía señal dentro de ${number(result.intervaloActivoSegundos||90)} segundos; después cambia a rojo automáticamente.</span></div></div>`+connectionFilterForm(result)+`<section id="connectionsResults" aria-live="polite">${connectionsResultsHtml(result)}</section>`;
   }
   function connectionsLoadingHtml(){
-    const base={equipos:[],ubicaciones:[],totales:{equipos:0,activos:0,desconectados:0,gpsActivos:0,sinGps:0},opciones:{usuarios:[],vehiculos:[],dispositivos:[],redes:[],plataformas:[]},serverTime:'',intervaloActivoSegundos:90};
+    const base={equipos:[],ubicaciones:[],totales:{equipos:0,activos:0,desconectados:0,gpsActivos:0,sinGps:0},opciones:{usuarios:[],conductores:[],vehiculos:[],dispositivos:[],redes:[],plataformas:[]},serverTime:'',intervaloActivoSegundos:90};
     return heading('ADMINISTRACIÓN','Conexiones en línea','El módulo está disponible. La consulta de usuarios, equipos y GPS se realiza en segundo plano.',`<button class="btn soft" data-connections-initial-retry>↻ Consultar ahora</button>`)+
       `<div class="automatic-alert-banner"><i>⌖</i><div><b>Vista abierta sin bloqueo</b><span>Puede navegar, aplicar filtros o salir del módulo aunque el servidor todavía esté procesando las conexiones.</span></div></div>`+
       `<section id="connectionsLoadNotice" aria-live="polite"><article class="card connections-opening-card"><div class="connections-opening-spinner"></div><div><h3>Consultando conexiones recientes</h3><p>La pantalla ya está abierta. Se mostrarán los resultados en cuanto responda la base central.</p><small>La consulta se cancela automáticamente si supera el tiempo máximo.</small></div></article></section>`+
@@ -1645,11 +1708,17 @@
     return connectionsRefreshPending;
   }
   function paintConnectionsOnline(result,adjust=false){
-    ultimoResumenConexiones=result||ultimoResumenConexiones;const rows=ultimoResumenConexiones.equipos||[],totals=ultimoResumenConexiones.totales||{};
-    const set=(id,value)=>{const node=$(id);if(node)node.textContent=value;};set('#connectionsTotal',totals.equipos||0);set('#connectionsOnline',totals.activos||0);set('#connectionsOffline',totals.desconectados||0);set('#connectionsGps',totals.gpsActivos||0);set('#connectionsNoGps',totals.sinGps||0);
-    const visibleCount=Math.min(rows.length,120),count=$('#connectionsVisibleCount');if(count)count.textContent=rows.length>visibleCount?`Mostrando ${visibleCount} de ${rows.length} registros. Use filtros.`:`${rows.length} registro(s)`;
-    const tbody=$('#connectionsTableBody');if(tbody)tbody.innerHTML=connectionRows(rows);const quick=$('#connectionsQuickList');if(quick)quick.innerHTML=connectionQuickList(rows);const sync=$('#connectionsLastSync');if(sync)sync.textContent=`Última consulta: ${fmtDate(ultimoResumenConexiones.serverTime||new Date(),true)}`;
-    const markers=(ultimoResumenConexiones.ubicaciones||[]).slice(0,200).map(row=>({id:row.DISPOSITIVO_ID||row.ID,latitud:Number(row.LATITUD),longitud:Number(row.LONGITUD),nombre:`${row.USUARIO_NOMBRE||'Usuario'} · ${row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo'}`,activo:Boolean(row.EN_LINEA),detalle:`<b>${esc(row.USUARIO_NOMBRE||'Usuario')}</b><span>${esc(row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo')}</span><span>${esc(row.DIRECCION||`${Number(row.LATITUD).toFixed(5)}, ${Number(row.LONGITUD).toFixed(5)}`)}</span><span>${row.GPS_ACTIVO==='SI'?'GPS declarado activo':'GPS inactivo'} · precisión ${row.PRECISION_METROS!==''?`±${number(row.PRECISION_METROS)} m`:'sin dato'}</span><small>${row.EN_LINEA?'Activo':'Desconectado'} · ${fmtDate(row.FECHA_GPS||'',true)}</small>`}));mapaFlota?.actualizarMarcadores(markers,adjust);
+    ultimoResumenConexiones=result||ultimoResumenConexiones;
+    const rows=conexionesFiltradasCliente(ultimoResumenConexiones),totals=totalesConexionesFiltradas(rows);
+    const set=(id,value)=>{const node=$(id);if(node)node.textContent=value;};
+    set('#connectionsTotal',totals.equipos||0);set('#connectionsOnline',totals.activos||0);set('#connectionsOffline',totals.desconectados||0);set('#connectionsGps',totals.gpsActivos||0);set('#connectionsNoGps',totals.sinGps||0);
+    const visibleCount=Math.min(rows.length,120),count=$('#connectionsVisibleCount');if(count)count.textContent=rows.length>visibleCount?`Mostrando ${visibleCount} de ${rows.length} registros filtrados.`:`${rows.length} registro(s) en lista y mapa`;
+    const summary=$('#connectionsMapFilterSummary');if(summary)summary.textContent=`${rows.length} equipo(s) coinciden con los filtros actuales y ${rows.filter(row=>row.LATITUD!==''&&row.LONGITUD!=='').length} tienen ubicación visible.`;
+    const tbody=$('#connectionsTableBody');if(tbody)tbody.innerHTML=connectionRows(rows);
+    const quick=$('#connectionsQuickList');if(quick)quick.innerHTML=connectionQuickList(rows);
+    const sync=$('#connectionsLastSync');if(sync)sync.textContent=`Última consulta: ${fmtDate(ultimoResumenConexiones.serverTime||new Date(),true)}`;
+    const markers=rows.filter(row=>row.LATITUD!==''&&row.LONGITUD!=='').slice(0,200).map(row=>({id:row.DISPOSITIVO_ID||row.ID,latitud:Number(row.LATITUD),longitud:Number(row.LONGITUD),nombre:`${row.USUARIO_NOMBRE||'Usuario'} · ${row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo'}`,activo:Boolean(row.EN_LINEA),detalle:`<b>${esc(row.USUARIO_NOMBRE||'Usuario')}</b><span>${esc(row.CONDUCTOR_NOMBRE||'Sin conductor asociado')}</span><span>${esc(row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo')}</span><span>${esc(direccionConexion(row))}</span><span>${row.GPS_ACTIVO==='SI'?'GPS declarado activo':'GPS inactivo'} · precisión ${row.PRECISION_METROS!==''?`±${number(row.PRECISION_METROS)} m`:'sin dato'}${row.CALIDAD_GPS?` · calidad ${esc(row.CALIDAD_GPS)}`:''}</span><small>${row.EN_LINEA?'Activo':'Desconectado'} · ${fmtDate(row.FECHA_GPS||'',true)}</small>`}));
+    mapaFlota?.actualizarMarcadores(markers,adjust);
     $$('[data-connection-focus]').forEach(btn=>btn.addEventListener('click',()=>{const [lat,lng]=btn.dataset.connectionFocus.split(',').map(Number);mapaFlota?.establecerVista(lat,lng,16);}));
   }
   function asegurarComponenteMapa(){
@@ -1666,7 +1735,7 @@
         return;
       }
       const script=document.createElement('script');
-      script.src='mapa.js?v=3.14.4';
+      script.src='mapa.js?v=3.14.7';
       script.async=true;
       script.dataset.mapaFlotas='dinamico';
       script.onload=comprobar;
@@ -1723,7 +1792,7 @@
         connectionsFailureCount=0;
         ultimoResumenConexiones=result;
         paintConnectionsOnline(result,adjust);
-        if(showToast)toast('Conexiones actualizadas',`${result.totales?.activos||0} equipos activos y ${result.totales?.desconectados||0} desconectados.`);
+        if(showToast){const totals=totalesConexionesFiltradas(conexionesFiltradasCliente(result));toast('Filtros aplicados al mapa',`${totals.equipos} equipos visibles: ${totals.activos} activos y ${totals.desconectados} desconectados.`);}
         return result;
       }catch(error){
         if(generation===connectionsRequestGeneration){
@@ -2442,8 +2511,8 @@
     vozEscuchando=false;actualizarEstadoVoz('Control de voz detenido.');
   }
   function notificacionesActuales(){return (cacheListasFormulario.get('notifications')||[]).slice().sort((a,b)=>new Date(b.FECHA_ENVIO||0)-new Date(a.FECHA_ENVIO||0));}
-  function leerNotificacionesVoz(){const unread=notificacionesActuales().filter(item=>item.LEIDA!=='SI');if(!unread.length){hablar('No tiene notificaciones pendientes.');actualizarEstadoVoz('No hay notificaciones pendientes.');return;}const limit=unread.slice(0,10),text=`Tiene ${unread.length} notificaciones pendientes. `+limit.map((item,index)=>`Notificación ${index+1}. ${item.TITULO}. ${item.MENSAJE}`).join('. ');hablar(text);actualizarEstadoVoz(`Leyendo ${limit.length} de ${unread.length} notificaciones pendientes.`);}
-  async function marcarTodasNotificacionesLeidas(){const unread=notificacionesActuales().filter(item=>item.LEIDA!=='SI');if(!unread.length){hablar('No hay notificaciones pendientes.');return;}actualizarEstadoVoz('Marcando notificaciones como leídas…');for(const item of unread){await api.request('readNotification',{id:item.ID});}invalidarListasFormulario('notifications');cacheVistasModulo.delete('notifications');hablar(`${unread.length} notificaciones fueron marcadas como leídas.`);toast('Notificaciones actualizadas',`${unread.length} mensajes marcados como leídos.`);actualizarSeccionEnSegundoPlano('notifications');}
+  function leerNotificacionesVoz(){const unread=deduplicarAvisos(notificacionesActuales().filter(item=>item.LEIDA!=='SI'),'notification');if(!unread.length){hablar('No tiene notificaciones pendientes.');actualizarEstadoVoz('No hay notificaciones pendientes.');return;}const limit=unread.slice(0,10),text=`Tiene ${unread.length} notificaciones pendientes. `+limit.map((item,index)=>`Notificación ${index+1}. ${item.TITULO}. ${item.MENSAJE}`).join('. ');hablar(text);actualizarEstadoVoz(`Leyendo ${limit.length} de ${unread.length} notificaciones pendientes.`);}
+  async function marcarTodasNotificacionesLeidas(){const unread=notificacionesActuales().filter(item=>item.LEIDA!=='SI');if(!unread.length){hablar('No hay notificaciones pendientes.');return;}actualizarEstadoVoz('Marcando notificaciones como leídas…');for(const item of unread){await api.request('readNotification',{id:item.ID});}invalidarListasFormulario('notifications');cacheVistasModulo.delete('notifications');cacheVistasModulo.delete('dashboard');await refreshNotificationBadge();hablar(`${unread.length} notificaciones fueron marcadas como leídas.`);toast('Notificaciones actualizadas',`${unread.length} mensajes marcados como leídos.`);actualizarSeccionEnSegundoPlano('notifications');}
   async function ejecutarComandoVoz(transcript){const command=String(transcript||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();actualizarEstadoVoz(`Comando detectado: “${transcript}”`);if(/detener|parar|silencio/.test(command)){detenerVoz();return;}if(/leer.*(notificacion|pendiente)|notificacion.*leer/.test(command)){leerNotificacionesVoz();return;}if(/marcar.*todas.*leida/.test(command)){await marcarTodasNotificacionesLeidas();return;}if(/crear|nueva|enviar/.test(command)&&/notificacion|mensaje/.test(command)){openNotificationModal();hablar('Formulario de notificación abierto. Puede usar los micrófonos para dictar el título y el mensaje.');return;}hablar('Comando no reconocido. Diga leer notificaciones, marcar todas como leídas, crear notificación o detener lectura.');actualizarEstadoVoz('Comando no reconocido. Revise los ejemplos disponibles.');}
   function iniciarComandoVoz(){
     const Recognition=reconocimientoDisponible();
@@ -2672,9 +2741,9 @@
     $('#notificationForm').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());await conCargaBoton(button,'Enviando…',async()=>{try{await api.request('sendNotification',{data});invalidarListasFormulario('notifications');cacheVistasModulo.delete('notifications');cacheVistasModulo.delete('dashboard');closeModal();toast('Notificación enviada','El mensaje aparecerá en la cuenta del conductor.');actualizarSeccionEnSegundoPlano('notifications');}catch(error){toast('No se pudo enviar',translateError(error),'error');}});};
     prepararListasModal(token,['drivers']);
   }
-  async function readNotification(id){try{await api.request('readNotification',{id});invalidarListasFormulario('notifications');cacheVistasModulo.delete(currentSection);await refreshNotificationBadge();if(currentSection==='notifications'||currentSection==='dashboard')actualizarSeccionEnSegundoPlano(currentSection);}catch(error){toast('No se pudo actualizar',translateError(error),'error');}}
-  async function readAlert(id){try{await api.request('update',{resource:'alerts',id,data:{LEIDA:'SI'}});invalidarListasFormulario('alerts');cacheVistasModulo.delete('alerts');toast('Alerta atendida','El evento quedó marcado como leído.');actualizarSeccionEnSegundoPlano('alerts');}catch(error){toast('No se pudo actualizar la alerta',translateError(error),'error');}}
-  async function markAllAlertsRead(){const rows=(cacheListasFormulario.get('alerts')||[]).filter(row=>row.LEIDA!=='SI');for(const row of rows)await api.request('update',{resource:'alerts',id:row.ID,data:{LEIDA:'SI'}});invalidarListasFormulario('alerts');cacheVistasModulo.delete('alerts');toast('Alertas actualizadas',`${rows.length} alertas marcadas como leídas.`);actualizarSeccionEnSegundoPlano('alerts');}
+  async function readNotification(id){try{const result=await api.request('readNotification',{id});if(result&&!result.persistenciaConfirmada)throw new Error('LECTURA_NOTIFICACION_NO_CONFIRMADA');notificationCenterState.notifications=(notificationCenterState.notifications||[]).filter(row=>String(row.ID)!==String(id));knownNotificationIds.delete(String(id));invalidarListasFormulario('notifications');cacheVistasModulo.delete('notifications');cacheVistasModulo.delete('dashboard');closeModal();await refreshNotificationBadge();if(currentSection==='notifications'||currentSection==='dashboard')actualizarSeccionEnSegundoPlano(currentSection);toast('Notificación leída','El estado quedó confirmado en la base central.');}catch(error){toast('No se pudo actualizar',translateError(error),'error');}}
+  async function readAlert(id){try{const result=await api.request('readAlert',{id});if(result&&!result.persistenciaConfirmada)throw new Error('LECTURA_ALERTA_NO_CONFIRMADA');notificationCenterState.alerts=(notificationCenterState.alerts||[]).filter(row=>String(row.ID)!==String(id));knownAlertIds.delete(String(id));invalidarListasFormulario('alerts');cacheVistasModulo.delete('alerts');cacheVistasModulo.delete('dashboard');closeModal();await refreshNotificationBadge();toast('Alerta atendida','El estado leído quedó confirmado en la base central.');if(currentSection==='alerts'||currentSection==='dashboard')actualizarSeccionEnSegundoPlano(currentSection);}catch(error){toast('No se pudo actualizar la alerta',translateError(error),'error');}}
+  async function markAllAlertsRead(){const rows=deduplicarAvisos((cacheListasFormulario.get('alerts')||[]).filter(row=>row.LEIDA!=='SI'),'alert');for(const row of rows)await api.request('readAlert',{id:row.ID});invalidarListasFormulario('alerts');cacheVistasModulo.delete('alerts');cacheVistasModulo.delete('dashboard');await refreshNotificationBadge();toast('Alertas actualizadas',`${rows.length} alertas marcadas como leídas.`);actualizarSeccionEnSegundoPlano('alerts');}
   function systemDiagnosticMarkup(data){const modules=data?.modules||{};const entries=Object.entries(modules);const issues=entries.filter(([,item])=>item.estado!=='OK');return `<div class="system-health-summary ${issues.length?'warning':'ok'}"><i>${issues.length?'!':'✓'}</i><div><b>${issues.length?`${issues.length} elementos requieren atención`:'Estructura lista para operar'}</b><span>Versión ${esc(data?.version||'—')} · ${fmtDate(data?.fecha||new Date(),true)}</span></div></div><div class="system-health-grid">${entries.map(([key,item])=>`<article class="${item.estado==='OK'?'ok':'warning'}"><span>${esc(item.nombre||key)}</span><b>${esc(item.estado||'REVISAR')}</b><small>${esc(item.detalle||'')}</small></article>`).join('')}</div>`;}
   async function runSystemDiagnostic(){try{const result=await api.request('diagnoseSystem',{cache:false,force:true});const node=$('#systemHealthResult'),statusNode=$('#systemHealthStatus');if(node)node.innerHTML=systemDiagnosticMarkup(result);if(statusNode){const issues=Object.values(result.modules||{}).filter(item=>item.estado!=='OK').length;statusNode.textContent=issues?'Requiere atención':'Sistema correcto';statusNode.className=`status ${issues?'warning':'ok'}`;}toast('Diagnóstico completado',result.correcto?'Los módulos críticos están listos.':'Se encontraron elementos que pueden repararse desde esta pantalla.',result.correcto?'success':'error');return result;}catch(error){toast('No se pudo diagnosticar',translateError(error),'error');throw error;}}
   async function repairSystem(){try{const result=await api.request('repairSystem',{});api.invalidate();invalidarListasFormulario();cacheVistasModulo.clear();const node=$('#systemHealthResult'),statusNode=$('#systemHealthStatus');if(node)node.innerHTML=systemDiagnosticMarkup(result.diagnostico||result);if(statusNode){statusNode.textContent='Estructura reparada';statusNode.className='status ok';}toast('Sistema reparado','Se verificaron hojas, columnas, permisos y catálogos sin borrar información.');return result;}catch(error){toast('No se pudo reparar',translateError(error),'error');throw error;}}
@@ -3143,18 +3212,27 @@
     }catch(_){return fallback;}
   }
 
+  function validarPosicionNavegador(position){
+    const c=position?.coords||{},lat=Number(c.latitude),lng=Number(c.longitude),precision=Number(c.accuracy||0);
+    const fecha=Number(position?.timestamp||Date.now()),edad=Math.max(0,Math.round((Date.now()-fecha)/1000));
+    if(!Number.isFinite(lat)||!Number.isFinite(lng)||lat<-90||lat>90||lng<-180||lng>180||(Math.abs(lat)<0.000001&&Math.abs(lng)<0.000001))throw new Error('COORDENADAS_INVALIDAS');
+    if(!Number.isFinite(precision)||precision<=0)throw new Error('PRECISION_GPS_REQUERIDA');
+    if(precision>120)throw new Error('UBICACION_GPS_IMPRECISA');
+    if(edad>180)throw new Error('UBICACION_GPS_ANTIGUA');
+    return{lat,lng,precision,fecha,edad};
+  }
   async function procesarColaGps(position,source,forzar) {
-    const c=position.coords,ahora=Date.now();
-    if(!forzar&&ultimaUbicacionEnviada){const tiempo=ahora-ultimaUbicacionEnviada.tiempo,movimiento=distanciaMetros(ultimaUbicacionEnviada.latitud,ultimaUbicacionEnviada.longitud,c.latitude,c.longitude);if(tiempo<config.INTERVALO_GPS_MILISEGUNDOS&&movimiento<Number(config.DISTANCIA_MINIMA_ENVIO_GPS_METROS||6))return;}
-    const fallback=`${Number(c.latitude).toFixed(6)}, ${Number(c.longitude).toFixed(6)}`;
-    const cachedAddress=lastAddressLookup.address&&distanciaMetros(c.latitude,c.longitude,lastAddressLookup.latitude,lastAddressLookup.longitude)<50?lastAddressLookup.address:fallback;
-    await api.request('saveLocation',{data:{LATITUD:c.latitude,LONGITUD:c.longitude,PRECISION_METROS:c.accuracy||0,VELOCIDAD_KMH:c.speed==null?0:c.speed*3.6,RUMBO:c.heading||0,DIRECCION:cachedAddress,BATERIA_PORCENTAJE:batteryLevel,DISPOSITIVO_ID:deviceId,SESION_CLIENTE_ID:clientSessionId,SECCION_ACTUAL:currentSection,PAGINA_VISIBLE:document.hidden?'NO':'SI',TIPO_RED:connectionType(),PLATAFORMA:navigator.platform||'',NAVEGADOR:navigator.userAgent,FECHA_HORA:new Date(position.timestamp).toISOString(),FUENTE:source,RUTA_ID:routeTrackingContext?.RUTA_ID||'',OPERACION_ID:routeTrackingContext?.OPERACION_ID||'',VEHICULO_ID:routeTrackingContext?.VEHICULO_ID||'',CONDUCTOR_ID:routeTrackingContext?.CONDUCTOR_ID||'',CONTEXTO_RUTA_EXPLICITO:'SI'}});
-    ultimaUbicacionEnviada={tiempo:ahora,latitud:c.latitude,longitud:c.longitude};setSave('Ubicación sincronizada');
-    resolveAddress(c.latitude,c.longitude).catch(()=>{});
+    const c=position.coords,ahora=Date.now(),validacion=validarPosicionNavegador(position);
+    guardarUltimaUbicacionDispositivo({latitud:validacion.lat,longitud:validacion.lng,precision:validacion.precision,fecha:validacion.fecha,fuente:source||'GPS del dispositivo'});
+    if(!forzar&&ultimaUbicacionEnviada){const tiempo=ahora-ultimaUbicacionEnviada.tiempo,movimiento=distanciaMetros(ultimaUbicacionEnviada.latitud,ultimaUbicacionEnviada.longitud,validacion.lat,validacion.lng);if(tiempo<config.INTERVALO_GPS_MILISEGUNDOS&&movimiento<Number(config.DISTANCIA_MINIMA_ENVIO_GPS_METROS||6))return;}
+    const fallback=`${validacion.lat.toFixed(6)}, ${validacion.lng.toFixed(6)}`;
+    const cachedAddress=lastAddressLookup.address&&distanciaMetros(validacion.lat,validacion.lng,lastAddressLookup.latitude,lastAddressLookup.longitude)<50?lastAddressLookup.address:fallback;
+    await api.request('saveLocation',{data:{LATITUD:validacion.lat,LONGITUD:validacion.lng,PRECISION_METROS:validacion.precision,VELOCIDAD_KMH:c.speed==null?0:c.speed*3.6,RUMBO:c.heading||0,DIRECCION:cachedAddress,BATERIA_PORCENTAJE:batteryLevel,DISPOSITIVO_ID:deviceId,SESION_CLIENTE_ID:clientSessionId,SECCION_ACTUAL:currentSection,PAGINA_VISIBLE:document.hidden?'NO':'SI',TIPO_RED:connectionType(),PLATAFORMA:navigator.platform||'',NAVEGADOR:navigator.userAgent,FECHA_HORA:new Date(validacion.fecha).toISOString(),TIEMPO_CAPTURA_MS:validacion.fecha,EDAD_SEGUNDOS:validacion.edad,PROVEEDOR:'BROWSER_HIGH_ACCURACY',ES_SIMULADA:'NO',FUENTE:source,RUTA_ID:routeTrackingContext?.RUTA_ID||'',OPERACION_ID:routeTrackingContext?.OPERACION_ID||'',VEHICULO_ID:routeTrackingContext?.VEHICULO_ID||'',CONDUCTOR_ID:routeTrackingContext?.CONDUCTOR_ID||'',CONTEXTO_RUTA_EXPLICITO:'SI'}});
+    ultimaUbicacionEnviada={tiempo:ahora,latitud:validacion.lat,longitud:validacion.lng};setSave('Ubicación sincronizada');
+    resolveAddress(validacion.lat,validacion.lng).catch(()=>{});
     if(currentSection==='gps')refreshLocations(false,false);if(currentSection==='connections')refreshConnectionsOnline(false,false);
   }
   async function sendPosition(position,source,forzar=false) {
-    if(position?.coords)guardarUltimaUbicacionDispositivo({latitud:position.coords.latitude,longitud:position.coords.longitude,precision:position.coords.accuracy||9999,fecha:position.timestamp||Date.now(),fuente:source||'GPS del dispositivo'});
     gpsPendingPosition={position,source,forzar};
     if(gpsSendPending)return;
     gpsSendPending=true;

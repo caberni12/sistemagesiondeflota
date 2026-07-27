@@ -396,7 +396,7 @@ body.dark .operation-location-status.valid.imprecise{background:#3d3218;color:#f
 .permission-boolean-legend{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin:0 0 12px;color:var(--muted);font-size:.84rem}.permission-boolean-legend span{display:inline-flex;align-items:center;gap:6px}.permission-legend-check,.permission-legend-empty{width:18px;height:18px;border:1px solid var(--border);border-radius:4px;display:inline-grid;place-items:center;font-style:normal}.permission-legend-check{background:var(--primary);color:#fff;border-color:var(--primary)}.permission-row input[type=checkbox]{accent-color:var(--primary);cursor:pointer}.permission-row input[type=checkbox]:checked{outline:2px solid color-mix(in srgb,var(--primary) 28%,transparent);outline-offset:1px}.permission-row input[type=checkbox][disabled]{cursor:not-allowed}
 
 
-/* === Ajustes móviles de Usuarios y Conexiones 3.14.4 === */
+/* === Ajustes móviles de Usuarios y Conexiones 3.14.5 === */
 .user-permission-summary{display:inline-grid;gap:3px;min-width:148px;padding:8px 10px;border-radius:11px;background:var(--surface-soft);white-space:normal}.user-permission-summary b{font-size:11px}.user-permission-summary small{font-size:9px;color:var(--muted);line-height:1.35}.user-permission-summary.full{background:var(--primary-soft);color:var(--primary)}
 .permission-boolean-legend{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 12px}.permission-boolean-legend span{display:inline-flex;align-items:center;gap:7px;padding:7px 9px;border-radius:10px;background:var(--surface-soft);font-size:11px}.permission-legend-check,.permission-legend-empty{width:18px;height:18px;border:1px solid var(--border);border-radius:5px;display:grid;place-items:center;font-style:normal}.permission-legend-check{background:var(--primary);border-color:var(--primary);color:#fff}
 .connections-opening-card{display:flex;align-items:center;gap:16px;min-height:150px}.connections-opening-card h3,.connections-opening-card p,.connections-opening-card small{display:block;margin:0}.connections-opening-card p{margin-top:5px;color:var(--muted)}.connections-opening-card small{margin-top:8px;color:var(--muted)}.connections-opening-card.error>i{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:var(--red-soft);color:var(--red);font-style:normal;font-weight:900}.connections-opening-spinner{width:40px;height:40px;flex:0 0 40px;border:4px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:connectionsSpin .85s linear infinite}@keyframes connectionsSpin{to{transform:rotate(360deg)}}
@@ -407,5 +407,13 @@ body.dark .operation-location-status.valid.imprecise{background:#3d3218;color:#f
 }
 @media(max-width:420px){.resource-users .user-row,.connections-table-wrap .connection-detail-row{grid-template-columns:1fr}.resource-users .user-row td,.connections-table-wrap .connection-detail-row td{grid-column:1/-1}.permission-row{grid-template-columns:repeat(2,minmax(0,1fr))}.permission-boolean-legend{grid-template-columns:1fr}}
 
-/* === Estabilidad de Conexiones en línea 3.14.4 === */
+/* === Estabilidad de Conexiones en línea 3.14.5 === */
 #connectionsLoadNotice:empty{display:none}.connections-opening-card{margin-bottom:16px}.connections-map{contain:layout paint;content-visibility:auto}.connections-detail-card{content-visibility:auto;contain-intrinsic-size:600px}.connections-quick-list{overscroll-behavior:contain}@media(max-width:560px){.connections-map{min-height:330px}.connections-opening-card{min-height:auto}.connections-dashboard-grid{gap:12px}}
+
+
+/* 3.14.7 · Conexiones: filtros reflejados en mapa y dirección legible */
+.connections-map-filter-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0 0;padding:11px 14px;border:1px solid var(--border);border-radius:13px;background:var(--surface);color:var(--text-secondary)}
+.connections-map-filter-summary b{color:var(--text)}
+.connection-address{display:block;min-width:210px;max-width:360px;white-space:normal;line-height:1.35;overflow-wrap:anywhere}
+.connection-quick-address{display:-webkit-box!important;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.25}
+@media(max-width:860px){.connections-map-filter-summary{align-items:flex-start;flex-direction:column}.connection-address{min-width:0;max-width:none}}

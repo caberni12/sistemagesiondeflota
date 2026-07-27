@@ -36,14 +36,20 @@
       this.nivel = limitar(Number(opciones.nivel || 12), 3, 19);
       this.marcadores = [];
       this.circulos = [];
+      this.rastros = [];
       this.arrastrando = false;
       this.movimientoInicial = null;
       this.centroInicial = null;
       this.ajustadoUnaVez = false;
       this.vistaActual = null;
+      this.firmaMarcadores = '';
+      this.firmaCirculos = '';
+      this.firmaRastros = '';
+      this.firmaBaldosas = '';
+      this.cuadroDibujo = null;
       this.crearEstructura();
       this.vincularEventos();
-      this.manejadorCambioTamano = () => this.dibujar();
+      this.manejadorCambioTamano = () => this.programarDibujo();
       if ('ResizeObserver' in window) {
         this.observador = new ResizeObserver(this.manejadorCambioTamano);
         this.observador.observe(this.contenedor);
@@ -61,6 +67,9 @@
       this.capaBaldosas.className = 'mapa-baldosas';
       this.capaCirculos = document.createElement('div');
       this.capaCirculos.className = 'mapa-circulos';
+      this.capaRastros = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      this.capaRastros.setAttribute('class', 'mapa-rastros');
+      this.capaRastros.setAttribute('aria-hidden', 'true');
       this.capaMarcadores = document.createElement('div');
       this.capaMarcadores.className = 'mapa-marcadores';
       this.aviso = document.createElement('div');
@@ -69,7 +78,7 @@
       this.controles = document.createElement('div');
       this.controles.className = 'mapa-controles';
       this.controles.innerHTML = '<button type="button" data-mapa-acercar aria-label="Acercar">＋</button><button type="button" data-mapa-alejar aria-label="Alejar">−</button><button type="button" data-mapa-centrar aria-label="Centrar ubicaciones">⌖</button>';
-      this.contenedor.append(this.capaBaldosas, this.capaCirculos, this.capaMarcadores, this.aviso, this.controles);
+      this.contenedor.append(this.capaBaldosas, this.capaCirculos, this.capaRastros, this.capaMarcadores, this.aviso, this.controles);
     }
 
     vincularEventos() {
@@ -94,7 +103,7 @@
         const dy = evento.clientY - this.movimientoInicial.y;
         const nuevo = mundoALatitudLongitud(this.centroInicial.x - dx, this.centroInicial.y - dy, this.nivel);
         this.centro = [nuevo.latitud, nuevo.longitud];
-        this.dibujar();
+        this.programarDibujo();
       });
       const terminar = () => { this.arrastrando = false; this.contenedor.classList.remove('arrastrando'); };
       this.contenedor.addEventListener('pointerup', terminar);
@@ -108,16 +117,35 @@
       this.dibujar();
     }
 
+    programarDibujo() {
+      if (this.cuadroDibujo !== null) return;
+      this.cuadroDibujo = requestAnimationFrame(() => {
+        this.cuadroDibujo = null;
+        this.dibujar();
+      });
+    }
+
     establecerVista(latitud, longitud, nivel = this.nivel) {
       if (!Number.isFinite(Number(latitud)) || !Number.isFinite(Number(longitud))) return;
-      this.centro = [Number(latitud), Number(longitud)];
-      this.nivel = limitar(Number(nivel), 3, 19);
+      const centroNuevo = [Number(latitud), Number(longitud)];
+      const nivelNuevo = limitar(Number(nivel), 3, 19);
+      if (this.centro[0] === centroNuevo[0] && this.centro[1] === centroNuevo[1] && this.nivel === nivelNuevo) return;
+      this.centro = centroNuevo;
+      this.nivel = nivelNuevo;
       this.dibujar();
     }
 
     actualizarMarcadores(marcadores, ajustar = false) {
-      this.marcadores = (marcadores || []).filter(item => Number.isFinite(Number(item.latitud)) && Number.isFinite(Number(item.longitud)));
+      const nuevos = (marcadores || []).filter(item => Number.isFinite(Number(item.latitud)) && Number.isFinite(Number(item.longitud)));
+      const firma = JSON.stringify(nuevos.map(item => [
+        item.id || '', Number(item.latitud), Number(item.longitud), item.nombre || '',
+        Boolean(item.activo), Boolean(item.seguido), item.detalle || ''
+      ]));
+      const sinCambios = firma === this.firmaMarcadores;
+      this.firmaMarcadores = firma;
+      this.marcadores = nuevos;
       this.aviso.hidden = this.marcadores.length > 0;
+      if (sinCambios && !ajustar && this.vistaActual) return;
       if ((ajustar || !this.ajustadoUnaVez) && this.marcadores.length) {
         this.ajustarAMarcadores();
         this.ajustadoUnaVez = true;
@@ -129,12 +157,32 @@
     }
 
     actualizarCirculos(circulos = []) {
-      this.circulos = (circulos || []).filter(item =>
+      const nuevos = (circulos || []).filter(item =>
         Number.isFinite(Number(item.latitud)) &&
         Number.isFinite(Number(item.longitud)) &&
         Number.isFinite(Number(item.radio)) && Number(item.radio) > 0
       );
+      const firma = JSON.stringify(nuevos.map(item => [item.id || '', Number(item.latitud), Number(item.longitud), Number(item.radio), item.clase || '', item.etiqueta || '']));
+      if (firma === this.firmaCirculos && this.vistaActual) return;
+      this.firmaCirculos = firma;
+      this.circulos = nuevos;
       if (this.vistaActual) this.dibujarCirculos(this.vistaActual.izquierda, this.vistaActual.arriba);
+      else this.dibujar();
+    }
+
+    actualizarRastros(rastros = []) {
+      const nuevos = (rastros || []).map(item => ({
+        ...item,
+        puntos:(item.puntos || []).filter(punto =>
+          Number.isFinite(Number(punto.latitud)) &&
+          Number.isFinite(Number(punto.longitud))
+        ).slice(-40)
+      })).filter(item => item.puntos.length > 1);
+      const firma = JSON.stringify(nuevos.map(item => [item.id || '', item.clase || '', item.puntos.map(punto => [Number(punto.latitud), Number(punto.longitud)])]));
+      if (firma === this.firmaRastros && this.vistaActual) return;
+      this.firmaRastros = firma;
+      this.rastros = nuevos;
+      if (this.vistaActual) this.dibujarRastros(this.vistaActual.izquierda, this.vistaActual.arriba);
       else this.dibujar();
     }
 
@@ -171,6 +219,10 @@
     }
 
     dibujar() {
+      if (this.cuadroDibujo !== null) {
+        cancelAnimationFrame(this.cuadroDibujo);
+        this.cuadroDibujo = null;
+      }
       const ancho = this.contenedor.clientWidth || 800;
       const alto = this.contenedor.clientHeight || 480;
       const centroMundo = latitudLongitudAMundo(this.centro[0], this.centro[1], this.nivel);
@@ -179,16 +231,26 @@
       this.vistaActual = { izquierda, arriba, ancho, alto, nivel:this.nivel };
       this.dibujarBaldosas(izquierda, arriba, ancho, alto);
       this.dibujarCirculos(izquierda, arriba);
+      this.dibujarRastros(izquierda, arriba);
       this.dibujarMarcadores(izquierda, arriba);
     }
 
     dibujarBaldosas(izquierda, arriba, ancho, alto) {
-      this.capaBaldosas.innerHTML = '';
       const total = Math.pow(2, this.nivel);
       const inicioX = Math.floor(izquierda / TAMANO_BALDOSA);
       const finX = Math.floor((izquierda + ancho) / TAMANO_BALDOSA);
       const inicioY = Math.floor(arriba / TAMANO_BALDOSA);
       const finY = Math.floor((arriba + alto) / TAMANO_BALDOSA);
+      const firma = `${this.nivel}|${inicioX}|${finX}|${inicioY}|${finY}`;
+      if (firma === this.firmaBaldosas && this.capaBaldosas.childElementCount) {
+        [...this.capaBaldosas.children].forEach(imagen => {
+          imagen.style.left = `${Number(imagen.dataset.mapaX) * TAMANO_BALDOSA - izquierda}px`;
+          imagen.style.top = `${Number(imagen.dataset.mapaY) * TAMANO_BALDOSA - arriba}px`;
+        });
+        return;
+      }
+      this.firmaBaldosas = firma;
+      this.capaBaldosas.innerHTML = '';
       const fragmento = document.createDocumentFragment();
       for (let x = inicioX; x <= finX; x += 1) {
         for (let y = inicioY; y <= finY; y += 1) {
@@ -199,6 +261,8 @@
           imagen.draggable = false;
           imagen.loading = 'eager';
           imagen.referrerPolicy = 'origin-when-cross-origin';
+          imagen.dataset.mapaX = String(x);
+          imagen.dataset.mapaY = String(y);
           let proveedor = 0;
           const cargarProveedor = () => { imagen.src = PROVEEDORES_BALDOSAS[proveedor](this.nivel,xNormalizado,y); };
           imagen.style.left = `${x * TAMANO_BALDOSA - izquierda}px`;
@@ -242,6 +306,36 @@
       this.capaCirculos.appendChild(fragmento);
     }
 
+    dibujarRastros(izquierda, arriba) {
+      if (!this.capaRastros) return;
+      const ancho = this.vistaActual?.ancho || this.contenedor.clientWidth || 800;
+      const alto = this.vistaActual?.alto || this.contenedor.clientHeight || 480;
+      this.capaRastros.replaceChildren();
+      this.capaRastros.setAttribute('viewBox', `0 0 ${ancho} ${alto}`);
+      this.capaRastros.setAttribute('width', String(ancho));
+      this.capaRastros.setAttribute('height', String(alto));
+      this.rastros.forEach(item => {
+        const coordenadas = item.puntos.map(punto => {
+          const mundo = latitudLongitudAMundo(punto.latitud, punto.longitud, this.nivel);
+          return `${mundo.x - izquierda},${mundo.y - arriba}`;
+        }).join(' ');
+        const linea = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        linea.setAttribute('points', coordenadas);
+        linea.setAttribute('class', `mapa-rastro ${item.clase || ''}`.trim());
+        linea.setAttribute('vector-effect', 'non-scaling-stroke');
+        this.capaRastros.appendChild(linea);
+        item.puntos.forEach((punto, indice) => {
+          const mundo = latitudLongitudAMundo(punto.latitud, punto.longitud, this.nivel);
+          const circulo = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          circulo.setAttribute('cx', String(mundo.x - izquierda));
+          circulo.setAttribute('cy', String(mundo.y - arriba));
+          circulo.setAttribute('r', indice === item.puntos.length - 1 ? '4.5' : '2.5');
+          circulo.setAttribute('class', indice === item.puntos.length - 1 ? 'mapa-rastro-punto actual' : 'mapa-rastro-punto');
+          this.capaRastros.appendChild(circulo);
+        });
+      });
+    }
+
     dibujarMarcadores(izquierda, arriba) {
       this.capaMarcadores.innerHTML = '';
       const fragmento = document.createDocumentFragment();
@@ -249,7 +343,7 @@
         const punto = latitudLongitudAMundo(item.latitud, item.longitud, this.nivel);
         const boton = document.createElement('button');
         boton.type = 'button';
-        boton.className = `mapa-marcador ${item.activo ? 'activo' : 'antiguo'}`;
+        boton.className = `mapa-marcador ${item.activo ? 'activo' : 'antiguo'} ${item.seguido ? 'seguido' : ''}`.trim();
         boton.style.left = `${punto.x - izquierda}px`;
         boton.style.top = `${punto.y - arriba}px`;
         boton.setAttribute('aria-label', `Ubicación de ${item.nombre || 'conductor'}`);
@@ -271,6 +365,8 @@
     redibujar() { this.dibujar(); }
 
     eliminar() {
+      if (this.cuadroDibujo !== null) cancelAnimationFrame(this.cuadroDibujo);
+      this.cuadroDibujo = null;
       if (this.observador) this.observador.disconnect();
       if (!this.observador && this.manejadorCambioTamano) window.removeEventListener('resize', this.manejadorCambioTamano);
       this.contenedor.innerHTML = '';

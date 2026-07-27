@@ -6,7 +6,7 @@
  * Si el proyecto Apps Script está vinculado a la hoja, instalarSistema() guardará
  * automáticamente el ID. Para un proyecto independiente, pegue el ID aquí.
  */
-const VERSION_APLICACION = '3.14.7';
+const VERSION_APLICACION = '3.15.0';
 
 const CONFIGURACION_APLICACION = Object.freeze({
   ID_HOJA_CALCULO: '1onJJEN1rgz0N9GXOiUqV7ong4-nlbdAjzMyW_rumXCM',
@@ -29,6 +29,8 @@ const CONFIGURACION_APLICACION = Object.freeze({
   SEGUNDOS_GPS_RECIENTE_PREFERIDO: 120,
   SEGUNDOS_CACHE_METADATOS_TIEMPO_REAL: 10,
   MAXIMO_CONEXIONES_EN_LINEA_RESPUESTA: 120,
+  MAXIMO_GEOCODIFICACIONES_CONEXIONES_POR_CONSULTA: 2,
+  SEGUNDOS_CACHE_RASTRO_CONEXIONES: 21600,
   MAXIMO_FILAS_IMPORTACION: 1500,
   TOLERANCIA_GPS_IMPRECISA_FIN_METROS: 500,
   ID_CARPETA_DOCUMENTOS_FOTOS: '1lWKDp7E28XU2D45ihvZctIq29Ji_aoq9',
@@ -157,6 +159,9 @@ function normalizarAccionSolicitud_(request) {
     connectionsonline:'resumenConexionesAdministrador',
     consultarconexiones:'resumenConexionesAdministrador',
     consultarconexionesenlinea:'resumenConexionesAdministrador',
+    guardarseguimientoconexionusuario:'guardarSeguimientoConexionUsuario',
+    guardarseguimientousuario:'guardarSeguimientoConexionUsuario',
+    saveconnectiontracking:'guardarSeguimientoConexionUsuario',
     marcarnotificacionleida:'marcarNotificacionLeida',
     readnotification:'marcarNotificacionLeida',
     marcaralertaleida:'marcarAlertaLeida',
@@ -230,6 +235,7 @@ function enrutarSolicitud_(request, event) {
     case 'listarConexionesEnLinea':
     case 'onlineConnections':
     case 'connectionsOnline': return resumenConexionesAdministrador_(request, session);
+    case 'guardarSeguimientoConexionUsuario': return guardarSeguimientoConexionUsuario_(request, session);
     case 'resumenCombustible': return resumenCombustible_(request, session);
     case 'solicitarEliminacionCombustible': return solicitarEliminacionCombustible_(request, session);
     case 'resolverSolicitudEliminacionCombustible': return resolverSolicitudEliminacionCombustible_(request, session);
@@ -1397,7 +1403,7 @@ function actualizarSistema() {
   try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
   try { resultado.reinicioGpsActual = reiniciarInstantaneasGpsVersion_(); } catch (error) { Logger.log('Reinicio de posiciones actuales: ' + error.message); }
   reiniciarCachesEjecucion_();
-  resultado.message = 'Sistema 3.14.7 actualizado: los filtros de Conexiones en línea controlan simultáneamente la lista, los contadores y el mapa; se agregó filtro por Conductor y dirección legible con caché.';
+  resultado.message = 'Sistema 3.15.0 actualizado: motor rápido con consultas agrupadas, filtros inmediatos, mapa optimizado, direcciones con presupuesto controlado y rastro de seguimiento cacheado.';
   return resultado;
 }
 
@@ -5131,6 +5137,126 @@ function buscarUltimaUbicacionConexion_(conexion, mapas) {
   return null;
 }
 
+function clavePreferenciaSeguimientoConexion_(usuarioSolicitanteId) {
+  return 'CONEXIONES_SEGUIMIENTO_USUARIO_' + String(usuarioSolicitanteId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 90);
+}
+
+function obtenerPreferenciaSeguimientoConexion_(session) {
+  if (!session || !session.user || !session.user.ID) return '';
+  return String(PropertiesService.getScriptProperties().getProperty(clavePreferenciaSeguimientoConexion_(session.user.ID)) || '').trim();
+}
+
+function guardarSeguimientoConexionUsuario_(request, session) {
+  exigirAdministradorConexiones_(session);
+  const data = request.datos || request || {};
+  const usuarioSeguidoId = String(data.USUARIO_ID || data.usuarioId || '').trim();
+  let usuarioSeguido = null;
+  if (usuarioSeguidoId) {
+    usuarioSeguido = obtenerRegistro_('USUARIOS', usuarioSeguidoId);
+    if (!usuarioSeguido || String(usuarioSeguido.ELIMINADO || 'NO') === 'SI') throw new Error('USUARIO_SEGUIMIENTO_NO_ENCONTRADO');
+  }
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const properties = PropertiesService.getScriptProperties();
+    const key = clavePreferenciaSeguimientoConexion_(session.user.ID);
+    if (usuarioSeguidoId) properties.setProperty(key, usuarioSeguidoId);
+    else properties.deleteProperty(key);
+  } finally {
+    lock.releaseLock();
+  }
+  registrarBitacora_(session.user,
+    usuarioSeguidoId ? 'INICIAR_SEGUIMIENTO_USUARIO' : 'DETENER_SEGUIMIENTO_USUARIO',
+    'CONEXIONES',
+    usuarioSeguidoId,
+    usuarioSeguidoId
+      ? 'Seguimiento individual activado para ' + (usuarioSeguido.NOMBRE || usuarioSeguido.CORREO || usuarioSeguidoId) + '.'
+      : 'Seguimiento individual detenido desde Conexiones en línea.');
+  return ok_({
+    seguimiento:{
+      USUARIO_ID:usuarioSeguidoId,
+      USUARIO_NOMBRE:usuarioSeguido ? usuarioSeguido.NOMBRE || usuarioSeguidoId : '',
+      USUARIO_CORREO:usuarioSeguido ? usuarioSeguido.CORREO || '' : '',
+      VISIBLE:false,
+      RASTRO:[]
+    },
+    persistenciaConfirmada:true
+  });
+}
+
+function construirRastroSeguimientoConexion_(usuarioSeguidoId, equiposBase, filaVisible) {
+  if (!usuarioSeguidoId || !filaVisible) return [];
+  const equiposUsuario = (equiposBase || []).filter(function(row) { return String(row.USUARIO_ID || '') === String(usuarioSeguidoId); });
+  const dispositivos = {};
+  const conductores = {};
+  const vehiculos = {};
+  equiposUsuario.forEach(function(row) {
+    if (row.DISPOSITIVO_ID) dispositivos[String(row.DISPOSITIVO_ID)] = true;
+    if (row.CONDUCTOR_ID) conductores[String(row.CONDUCTOR_ID)] = true;
+    if (row.VEHICULO_ID) vehiculos[String(row.VEHICULO_ID)] = true;
+  });
+  const identidad = [
+    Object.keys(dispositivos).sort().join(','),
+    Object.keys(conductores).sort().join(','),
+    Object.keys(vehiculos).sort().join(',')
+  ].join('|');
+  const claveCache = ('rastro_cnx_' + VERSION_APLICACION + '_' + usuarioSeguidoId).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 220);
+  const cache = CacheService.getScriptCache();
+  const agregarPosicionVisible = function(puntos) {
+    const fechaVisible = String(filaVisible.FECHA_GPS || '');
+    const latitudVisible = Number(filaVisible.LATITUD);
+    const longitudVisible = Number(filaVisible.LONGITUD);
+    const repetida = puntos.some(function(row) {
+      if (fechaVisible && String(row.FECHA_HORA || '') === fechaVisible) return true;
+      return Number(row.LATITUD) === latitudVisible && Number(row.LONGITUD) === longitudVisible;
+    });
+    if (!repetida) puntos.push({
+      LATITUD:latitudVisible,
+      LONGITUD:longitudVisible,
+      FECHA_HORA:fechaVisible,
+      PRECISION_METROS:Number(filaVisible.PRECISION_METROS || 0),
+      VELOCIDAD_KMH:Number(filaVisible.VELOCIDAD_KMH || 0)
+    });
+    return puntos.slice(-40);
+  };
+  try {
+    const guardado = JSON.parse(cache.get(claveCache) || 'null');
+    if (guardado && guardado.identidad === identidad && Array.isArray(guardado.puntos)) {
+      const puntosCacheados = agregarPosicionVisible(guardado.puntos.filter(function(row) {
+        return row && coordenadasGpsValidas_(row.LATITUD, row.LONGITUD);
+      }));
+      cache.put(claveCache, JSON.stringify({ identidad:identidad, puntos:puntosCacheados }), Number(CONFIGURACION_APLICACION.SEGUNDOS_CACHE_RASTRO_CONEXIONES || 21600));
+      return puntosCacheados;
+    }
+  } catch (_) {}
+  let historial = [];
+  try { historial = listarRegistrosCacheadosTiempoReal_('GPS', 10); } catch (_) { historial = []; }
+  const tieneDispositivos = Object.keys(dispositivos).length > 0;
+  const puntos = historial.filter(function(row) {
+    if (!coordenadasGpsValidas_(row.LATITUD, row.LONGITUD)) return false;
+    if (String(row.ES_SIMULADA || '').toUpperCase() === 'SI') return false;
+    const precision = Number(row.PRECISION_METROS || 0);
+    if (!Number.isFinite(precision) || precision <= 0 || precision > Number(CONFIGURACION_APLICACION.PRECISION_MAPA_CONFIABLE_METROS || 250)) return false;
+    if (tieneDispositivos) return Boolean(dispositivos[String(row.DISPOSITIVO_ID || '')]);
+    return Boolean(conductores[String(row.CONDUCTOR_ID || '')] || vehiculos[String(row.VEHICULO_ID || '')]);
+  }).sort(function(a,b) {
+    return fechaGpsMs_(a.FECHA_HORA || a.CREADO_EN) - fechaGpsMs_(b.FECHA_HORA || b.CREADO_EN);
+  }).slice(-40).map(function(row) {
+    return {
+      LATITUD:Number(row.LATITUD),
+      LONGITUD:Number(row.LONGITUD),
+      FECHA_HORA:row.FECHA_HORA || row.CREADO_EN || '',
+      PRECISION_METROS:Number(row.PRECISION_METROS || 0),
+      VELOCIDAD_KMH:Number(row.VELOCIDAD_KMH || 0)
+    };
+  });
+  const puntosFinales = agregarPosicionVisible(puntos);
+  try {
+    cache.put(claveCache, JSON.stringify({ identidad:identidad, puntos:puntosFinales }), Number(CONFIGURACION_APLICACION.SEGUNDOS_CACHE_RASTRO_CONEXIONES || 21600));
+  } catch (_) {}
+  return puntosFinales;
+}
+
 function resumenConexionesAdministrador_(request, session) {
   exigirAdministradorConexiones_(session);
   const data = request.datos || request || {};
@@ -5150,6 +5276,7 @@ function resumenConexionesAdministrador_(request, session) {
   const limiteRespuesta = Math.max(20, Math.min(250, Number(data.LIMITE || data.limite || CONFIGURACION_APLICACION.MAXIMO_CONEXIONES_EN_LINEA_RESPUESTA || 120)));
   const limiteActivo = Date.now() - Number(CONFIGURACION_APLICACION.SEGUNDOS_CONEXION_ACTIVA || 90) * 1000;
   const limiteGpsActivo = Date.now() - 2 * 60 * 1000;
+  const usuarioSeguidoId = obtenerPreferenciaSeguimientoConexion_(session);
 
   const usuarios = listarRegistrosCacheadosTiempoReal_('USUARIOS', 10);
   const conductores = listarRegistrosCacheadosTiempoReal_('CONDUCTORES', 10);
@@ -5234,6 +5361,7 @@ function resumenConexionesAdministrador_(request, session) {
       BATERIA_GPS: ubicacion.BATERIA_PORCENTAJE || row.BATERIA_PORCENTAJE || '',
     });
   });
+  const equiposBaseSeguimiento = equipos.slice();
 
   equipos = equipos.filter(function(row) {
     const fecha = new Date(row.ULTIMA_CONEXION || row.ACTUALIZADO_EN || 0);
@@ -5260,23 +5388,54 @@ function resumenConexionesAdministrador_(request, session) {
   });
 
   equipos.sort(function(a,b) {
+    const aSeguido = usuarioSeguidoId && String(a.USUARIO_ID || '') === usuarioSeguidoId;
+    const bSeguido = usuarioSeguidoId && String(b.USUARIO_ID || '') === usuarioSeguidoId;
+    if (aSeguido !== bSeguido) return aSeguido ? -1 : 1;
     if (a.EN_LINEA !== b.EN_LINEA) return a.EN_LINEA ? -1 : 1;
     return new Date(b.ULTIMA_CONEXION || 0).getTime() - new Date(a.ULTIMA_CONEXION || 0).getTime();
   });
 
-  // La dirección se resuelve solamente para resultados ya filtrados. Se usa
-  // caché y un presupuesto por consulta para no ralentizar el módulo ni agotar cuotas.
-  let presupuestoDirecciones = incluirDirecciones ? 20 : 0;
-  equipos.slice(0, limiteRespuesta).forEach(function(row) {
+  // Primero se aprovecha toda dirección ya guardada o cacheada. Las consultas
+  // nuevas quedan limitadas a un presupuesto muy pequeño y priorizan al usuario
+  // seguido y a los equipos activos para mantener la respuesta rápida.
+  const filasRespuesta = equipos.slice(0, limiteRespuesta);
+  const pendientesDireccion = [];
+  const clavesDireccion = filasRespuesta.filter(function(row) {
+    return row.LATITUD !== '' && row.LONGITUD !== '' && direccionSoloCoordenadas_(row.DIRECCION);
+  }).map(function(row) {
+    return claveCacheDireccion_(row.LATITUD, row.LONGITUD);
+  });
+  let direccionesCacheadas = {};
+  try {
+    direccionesCacheadas = clavesDireccion.length ? CacheService.getScriptCache().getAll(clavesDireccion) : {};
+  } catch (_) { direccionesCacheadas = {}; }
+  filasRespuesta.forEach(function(row) {
     if (row.LATITUD === '' || row.LONGITUD === '') return;
     if (!direccionSoloCoordenadas_(row.DIRECCION)) return;
-    const cached = obtenerDireccionCoordenadasCache_(row.LATITUD, row.LONGITUD, false);
+    const cached = direccionesCacheadas[claveCacheDireccion_(row.LATITUD, row.LONGITUD)] || '';
     if (cached) { row.DIRECCION = cached; return; }
-    if (presupuestoDirecciones > 0) {
-      row.DIRECCION = obtenerDireccionCoordenadas_(row.LATITUD, row.LONGITUD);
-      presupuestoDirecciones--;
-    }
+    pendientesDireccion.push(row);
   });
+  pendientesDireccion.sort(function(a,b) {
+    const aSeguido = usuarioSeguidoId && String(a.USUARIO_ID || '') === usuarioSeguidoId;
+    const bSeguido = usuarioSeguidoId && String(b.USUARIO_ID || '') === usuarioSeguidoId;
+    if (aSeguido !== bSeguido) return aSeguido ? -1 : 1;
+    if (a.EN_LINEA !== b.EN_LINEA) return a.EN_LINEA ? -1 : 1;
+    return new Date(b.FECHA_GPS || b.ULTIMA_CONEXION || 0).getTime() - new Date(a.FECHA_GPS || a.ULTIMA_CONEXION || 0).getTime();
+  });
+  const presupuestoDirecciones = incluirDirecciones ? Math.max(0, Number(CONFIGURACION_APLICACION.MAXIMO_GEOCODIFICACIONES_CONEXIONES_POR_CONSULTA || 2)) : 0;
+  pendientesDireccion.slice(0, presupuestoDirecciones).forEach(function(row) {
+    row.DIRECCION = obtenerDireccionCoordenadas_(row.LATITUD, row.LONGITUD);
+  });
+  const filaSeguidaVisible = equipos.filter(function(row) {
+    return usuarioSeguidoId
+      && String(row.USUARIO_ID || '') === usuarioSeguidoId
+      && row.LATITUD !== '' && row.LONGITUD !== '';
+  }).sort(function(a,b) {
+    return new Date(b.FECHA_GPS || b.ULTIMA_CONEXION || 0).getTime() - new Date(a.FECHA_GPS || a.ULTIMA_CONEXION || 0).getTime();
+  })[0] || null;
+  const cuentaSeguida = usuariosPorId[usuarioSeguidoId] || {};
+  const rastroSeguimiento = construirRastroSeguimientoConexion_(usuarioSeguidoId, equiposBaseSeguimiento, filaSeguidaVisible);
 
   const ubicaciones = equipos.filter(function(row) {
     return row.LATITUD !== '' && row.LONGITUD !== '';
@@ -5326,6 +5485,16 @@ function resumenConexionesAdministrador_(request, session) {
       dispositivos: opcionesUnicas('DISPOSITIVO_ID'),
       redes: opcionesUnicas('TIPO_RED'),
       plataformas: opcionesUnicas('PLATAFORMA'),
+    },
+    seguimiento: {
+      USUARIO_ID:usuarioSeguidoId,
+      USUARIO_NOMBRE:cuentaSeguida.NOMBRE || (filaSeguidaVisible && filaSeguidaVisible.USUARIO_NOMBRE) || usuarioSeguidoId,
+      USUARIO_CORREO:cuentaSeguida.CORREO || (filaSeguidaVisible && filaSeguidaVisible.USUARIO_CORREO) || '',
+      VISIBLE:Boolean(filaSeguidaVisible),
+      DIRECCION:filaSeguidaVisible ? filaSeguidaVisible.DIRECCION || '' : '',
+      DISPOSITIVO_ID:filaSeguidaVisible ? filaSeguidaVisible.DISPOSITIVO_ID || '' : '',
+      FECHA_GPS:filaSeguidaVisible ? filaSeguidaVisible.FECHA_GPS || '' : '',
+      RASTRO:rastroSeguimiento,
     },
     filtros: {
       FECHA_DESDE: data.FECHA_DESDE || data.fechaDesde || '',
@@ -5409,4 +5578,3 @@ function deserializarFecha_(value) {
 function normalizarEmail_(email) {
   return String(email || '').trim().toLowerCase();
 }
-

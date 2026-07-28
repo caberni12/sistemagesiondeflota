@@ -7,7 +7,7 @@ window.CONFIGURACION_FLOTAS = Object.freeze({
   GPS_AUTOMATICO_OBLIGATORIO: true,
   MODO: 'automatico',
   MODO_MODULAR: true,
-  DIRECCION_APLICACION: 'https://script.google.com/macros/s/AKfycbwI-mQN74AG3IS1c0efXbOqUL9OFM1DgY4VeeGhS4soLbg6pMt8Ru9mdW1gKO75I1fU/exec',
+  DIRECCION_APLICACION: 'https://script.google.com/macros/s/AKfycbyB_c_EmMmFiVwtBn4vzolJU8Tylm5zWySNqDPdRlDSaAlMIfikdjt3VhVd6V8PvvEN/exec',
   CLAVE_ALMACENAMIENTO_LOCAL: 'sistema_gestion_flotas_base_local_v3',
   CLAVE_SESION_LOCAL: 'sistema_gestion_flotas_sesion_v3',
   TIEMPO_ESPERA_MILISEGUNDOS: 30000,

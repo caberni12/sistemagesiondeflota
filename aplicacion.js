@@ -518,6 +518,7 @@
 
   async function refreshNotificationBadge(){
     if(!currentUser)return;
+    if(embeddedMode){postParent({tipo:'flotas:actualizar-avisos'});return;}
     try{
       const canNotifications=hasPermission('NOTIFICACIONES','LEER'),canAlerts=hasPermission('ALERTAS','LEER');
       const [notificationResult,alertResult]=await Promise.all([
@@ -1971,7 +1972,7 @@
         return;
       }
       const script=document.createElement('script');
-      script.src='mapa.js?v=3.18.3';
+      script.src='mapa.js?v=3.18.5';
       script.async=true;
       script.dataset.mapaFlotas='dinamico';
       script.onload=comprobar;

@@ -2,7 +2,7 @@
   'use strict';
   const $=(selector,root=document)=>root.querySelector(selector);
   const api=window.ConexionFlotas;
-  const VERSION='3.18.3';
+  const VERSION='3.18.5';
   const grupos=[
     ['GENERAL',[
       ['dashboard','⌂','Panel principal','panel-principal.html','PANEL_PRINCIPAL'],
@@ -51,6 +51,11 @@
   let idsAlertasConocidas=new Set();
   let estadoAvisos={notifications:[],alerts:[]};
   let cargandoModoOficina=false;
+  let consultaAvisosPendiente=null;
+  let firmaAvisosRenderizada='';
+  let consultaOficinaPendiente=null;
+  let oficinaConsultadaEn=0;
+  let oficinaUsuarioConsultado='';
 
   function iniciales(nombre='Usuario'){
     return String(nombre).trim().split(/\s+/).slice(0,2).map(parte=>parte[0]||'').join('').toUpperCase()||'US';
@@ -149,7 +154,7 @@
     $('#rolUsuarioMenu').textContent=usuario.ROL_NOMBRE||usuario.ROL_ID||'Usuario';
     $('#avatarMenu').textContent=iniciales(usuario.NOMBRE);
     construirMenu();
-    actualizarInterruptorOficinaVirtual();
+    programarInterruptorOficinaVirtual();
     actualizarInterruptorAvisosEmergentes();
   }
   function esAdministradorMenu(){const rol=String(usuario?.ROL_ID||usuario?.ROL_NOMBRE||'').trim().toUpperCase();return rol==='ROL-ADMIN'||rol==='ADMINISTRADOR';}
@@ -175,19 +180,35 @@
     cambiarEstado(activo?'Avisos emergentes activados':'Avisos emergentes silenciados · pendientes en el icono','listo');
     window.dispatchEvent(new CustomEvent('flotas:avisos-emergentes',{detail:{activo}}));
   }
-  async function actualizarInterruptorOficinaVirtual(){
+  function programarInterruptorOficinaVirtual(){
     const contenedor=$('#modoAutoOficinaMenu'),input=$('#interruptorModoAutoOficina');
     if(!contenedor||!input||!usuario)return;
     contenedor.hidden=!esAdministradorMenu();
     if(contenedor.hidden)return;
-    try{const result=await api.request('officeQuickStatus');input.checked=Boolean(result.modoAutomatico);}
-    catch(_){input.checked=false;}
+    const ejecutar=()=>actualizarInterruptorOficinaVirtual();
+    if('requestIdleCallback' in window)window.requestIdleCallback(ejecutar,{timeout:1200});
+    else setTimeout(ejecutar,700);
+  }
+  async function actualizarInterruptorOficinaVirtual(){
+    const contenedor=$('#modoAutoOficinaMenu'),input=$('#interruptorModoAutoOficina');
+    if(!contenedor||!input||!usuario||!esAdministradorMenu())return;
+    const usuarioId=String(usuario.ID||usuario.USUARIO_ID||'sin_usuario');
+    if(oficinaUsuarioConsultado!==usuarioId){oficinaUsuarioConsultado=usuarioId;oficinaConsultadaEn=0;consultaOficinaPendiente=null;}
+    if(Date.now()-oficinaConsultadaEn<60000)return;
+    if(!consultaOficinaPendiente)consultaOficinaPendiente=api.request('officeQuickStatus');
+    try{
+      const result=await consultaOficinaPendiente;
+      input.checked=Boolean(result.modoAutomatico);
+      oficinaConsultadaEn=Date.now();
+    }catch(_){input.checked=false;}
+    finally{consultaOficinaPendiente=null;}
   }
   async function cambiarModoOficinaVirtual(){
     const input=$('#interruptorModoAutoOficina');if(!input||cargandoModoOficina||!esAdministradorMenu())return;
     cargandoModoOficina=true;input.disabled=true;const active=input.checked;
     try{
       await api.request('officeAutoMode',{data:{ACTIVO:active?'SI':'NO'}});
+      oficinaConsultadaEn=Date.now();
       cambiarEstado(active?'Oficina Virtual automática':'Oficina Virtual manual','listo');
       if(seccionActual==='office')abrirModulo('office',{forzar:true});
     }catch(_){input.checked=!active;cambiarEstado('No se pudo cambiar Oficina Virtual','advertencia');}
@@ -199,8 +220,48 @@
   function fechaOrdenAviso(item){return new Date(item.FECHA_ENVIO||item.FECHA_HORA||item.CREADO_EN||0).getTime();}
   function mostrarToastAviso(item,tipo){if(!avisosEmergentesActivosMenu())return;const contenedor=$('#toastAvisosMenu'),nodo=document.createElement('article');nodo.className=`toast-aviso-menu ${tipo}`;nodo.innerHTML=`<i>${tipo==='alerta'?'!':'🔔'}</i><div><b>${escapar(tipo==='alerta'?'Nueva alerta':'Nueva notificación')}</b><small>${escapar(item.TITULO||item.MENSAJE||'Existe un nuevo aviso pendiente.')}</small></div><button type="button" aria-label="Cerrar">×</button>`;contenedor.append(nodo);nodo.querySelector('button').addEventListener('click',()=>nodo.remove());setTimeout(()=>nodo.remove(),5200);}
   function renderizarAvisos(){const notifications=estadoAvisos.notifications||[],alerts=estadoAvisos.alerts||[],mezclados=[...alerts.map(item=>({item,tipo:'alerta'})),...notifications.map(item=>({item,tipo:'notificacion'}))].sort((a,b)=>fechaOrdenAviso(b.item)-fechaOrdenAviso(a.item)).slice(0,14);$('#totalNotificacionesMenu').textContent=notifications.length;$('#totalAlertasMenu').textContent=alerts.length;$('#listaAvisosMenu').innerHTML=mezclados.length?mezclados.map(({item,tipo})=>`<article class="aviso-menu-item ${tipo}" data-modulo-aviso="${tipo==='alerta'?'alerts':'notifications'}"><i>${tipo==='alerta'?'!':'🔔'}</i><div><b>${escapar(item.TITULO|| (tipo==='alerta'?'Alerta':'Notificación'))}</b><span>${escapar(item.MENSAJE||'')}</span><small>${escapar(fechaAviso(item))}</small></div></article>`).join(''):'<p class="sin-avisos-menu">No existen avisos pendientes.</p>';document.querySelectorAll('[data-modulo-aviso]').forEach(item=>item.addEventListener('click',()=>{cerrarPanelAvisos();abrirModulo(item.dataset.moduloAviso);}));}
-  async function actualizarAvisos(){if(!usuario)return;try{const [notificaciones,alertas]=await Promise.all([puedeAvisos('NOTIFICACIONES')?api.request('list',{resource:'notifications',cache:false}):Promise.resolve({rows:[]}),puedeAvisos('ALERTAS')?api.request('list',{resource:'alerts',cache:false}):Promise.resolve({rows:[]})]);const notifications=(notificaciones.rows||[]).filter(item=>item.LEIDA!=='SI'),alerts=(alertas.rows||[]).filter(item=>item.LEIDA!=='SI');const nuevasNotificaciones=notifications.filter(item=>!idsNotificacionesConocidas.has(String(item.ID))),nuevasAlertas=alerts.filter(item=>!idsAlertasConocidas.has(String(item.ID)));if(avisosInicializados){[...nuevasAlertas.map(item=>({item,tipo:'alerta'})),...nuevasNotificaciones.map(item=>({item,tipo:'notificacion'}))].sort((a,b)=>fechaOrdenAviso(a.item)-fechaOrdenAviso(b.item)).slice(-3).forEach(({item,tipo})=>mostrarToastAviso(item,tipo));}idsNotificacionesConocidas=new Set(notifications.map(item=>String(item.ID)));idsAlertasConocidas=new Set(alerts.map(item=>String(item.ID)));estadoAvisos={notifications,alerts};avisosInicializados=true;const total=notifications.length+alerts.length,contador=$('#contadorAvisosMenu');contador.textContent=total>99?'99+':String(total);contador.hidden=total===0;$('#notificacionesMenu').setAttribute('aria-label',total?`Abrir ${total} avisos pendientes`:'Abrir centro de notificaciones');renderizarAvisos();}catch(_){}}
-  function iniciarAvisos(){if(temporizadorAvisos)return;actualizarAvisos();temporizadorAvisos=setInterval(actualizarAvisos,window.CONFIGURACION_FLOTAS.INTERVALO_NOTIFICACIONES_MILISEGUNDOS||10000);}
+  function firmaColeccionAvisos(rows){return rows.map(item=>`${item.ID}:${item.ACTUALIZADO_EN||item.FECHA_LECTURA||item.FECHA_ENVIO||item.FECHA_HORA||''}`).join('|');}
+  async function actualizarAvisos(){
+    if(!usuario)return;
+    if(consultaAvisosPendiente)return consultaAvisosPendiente;
+    consultaAvisosPendiente=(async()=>{
+      const consultas=[];
+      if(puedeAvisos('NOTIFICACIONES'))consultas.push({key:'notifications',action:'list',payload:{resource:'notifications',cache:false}});
+      if(puedeAvisos('ALERTAS'))consultas.push({key:'alerts',action:'list',payload:{resource:'alerts',cache:false}});
+      const lote=consultas.length?await api.requestBatch(consultas,{force:true}):{};
+      const notifications=(lote.notifications?.rows||[]).filter(item=>item.LEIDA!=='SI');
+      const alerts=(lote.alerts?.rows||[]).filter(item=>item.LEIDA!=='SI');
+      const nuevasNotificaciones=notifications.filter(item=>!idsNotificacionesConocidas.has(String(item.ID)));
+      const nuevasAlertas=alerts.filter(item=>!idsAlertasConocidas.has(String(item.ID)));
+      if(avisosInicializados){
+        [...nuevasAlertas.map(item=>({item,tipo:'alerta'})),...nuevasNotificaciones.map(item=>({item,tipo:'notificacion'}))]
+          .sort((a,b)=>fechaOrdenAviso(a.item)-fechaOrdenAviso(b.item)).slice(-3)
+          .forEach(({item,tipo})=>mostrarToastAviso(item,tipo));
+      }
+      idsNotificacionesConocidas=new Set(notifications.map(item=>String(item.ID)));
+      idsAlertasConocidas=new Set(alerts.map(item=>String(item.ID)));
+      estadoAvisos={notifications,alerts};
+      avisosInicializados=true;
+      const firma=`N:${firmaColeccionAvisos(notifications)}|A:${firmaColeccionAvisos(alerts)}`;
+      if(firma===firmaAvisosRenderizada)return;
+      firmaAvisosRenderizada=firma;
+      const total=notifications.length+alerts.length,contador=$('#contadorAvisosMenu');
+      contador.textContent=total>99?'99+':String(total);
+      contador.hidden=total===0;
+      $('#notificacionesMenu').setAttribute('aria-label',total?`Abrir ${total} avisos pendientes`:'Abrir centro de notificaciones');
+      renderizarAvisos();
+    })().catch(()=>{}).finally(()=>{consultaAvisosPendiente=null;});
+    return consultaAvisosPendiente;
+  }
+  function programarAvisos(retraso){
+    if(temporizadorAvisos)clearTimeout(temporizadorAvisos);
+    temporizadorAvisos=setTimeout(async()=>{
+      temporizadorAvisos=null;
+      await actualizarAvisos();
+      if(!cerrandoSesion&&usuario)programarAvisos(document.hidden?30000:(window.CONFIGURACION_FLOTAS.INTERVALO_NOTIFICACIONES_MILISEGUNDOS||10000));
+    },Math.max(100,Number(retraso||0)));
+  }
+  function iniciarAvisos(){if(temporizadorAvisos||consultaAvisosPendiente)return;programarAvisos(900);}
   function abrirPanelAvisos(){$('#panelAvisosMenu').classList.add('abierto');$('#panelAvisosMenu').setAttribute('aria-hidden','false');actualizarAvisos();}
   function cerrarPanelAvisos(){$('#panelAvisosMenu').classList.remove('abierto');$('#panelAvisosMenu').setAttribute('aria-hidden','true');}
   function alternarPanelAvisos(){if($('#panelAvisosMenu').classList.contains('abierto'))cerrarPanelAvisos();else abrirPanelAvisos();}
@@ -267,6 +328,7 @@
       if(desdeModulo)cambiarEstado('Comprobando sesión');
 
       try{
+        if(auth.user&&!desdeModulo)await esperar(350);
         const resultado=await api.request('me',{cache:false});
         if(!resultado?.user)throw new Error('SESION_INVALIDA');
         api.setAuth({...auth,user:resultado.user});
@@ -314,6 +376,7 @@
       }
     }
     if(data.tipo==='flotas:navegar'&&modulos.has(data.seccion))abrirModulo(data.seccion);
+    if(data.tipo==='flotas:actualizar-avisos')actualizarAvisos();
     if(data.tipo==='flotas:sesion-cerrada'){api.setAuth({});irAcceso('cerrada');}
     if(data.tipo==='flotas:autenticacion-requerida')validarSesion({desdeModulo:true});
     if(data.tipo==='flotas:error-modulo')cambiarEstado(data.mensaje||'Error del módulo','error');
@@ -360,6 +423,7 @@
   $('#cambiarTemaMenu').addEventListener('click',()=>{oscuro=!oscuro;localStorage.setItem('flotas_tema',oscuro?'dark':'light');aplicarTema();});
   document.addEventListener('keydown',event=>{if(event.key==='Escape'){cerrarMenu();cerrarPanelAvisos();}});
   document.addEventListener('click',event=>{if(!$('#panelAvisosMenu').contains(event.target)&&!$('#notificacionesMenu').contains(event.target))cerrarPanelAvisos();});
+  document.addEventListener('visibilitychange',()=>{if(usuario&&!cerrandoSesion)programarAvisos(document.hidden?30000:150);});
   window.addEventListener('storage',event=>{
     if(event.key===window.CONFIGURACION_FLOTAS.CLAVE_SESION_LOCAL&&!event.newValue)irAcceso('cerrada');
   });

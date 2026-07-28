@@ -83,12 +83,9 @@
   const estadoSincronizacionModulos = {};
   const modulosSincronizadosSesion = new Set();
   const actualizacionesModuloPendientes = new Map();
-  let conversacionOficinaVirtual = [];
-  let cargaPendientesOficinaVirtual = null;
   try { localStorage.removeItem(claveEstadoSincronizacion); } catch (_) {}
   const dependenciasCacheSeccion = Object.freeze({
     dashboard:{ actions:['dashboard','realtimeSummary'], resources:['operations','routes','notifications','vehicles','drivers','connections'] },
-    office:{ actions:['officeQuickStatus','officeTasks','officeStatus'], resources:['notifications','alerts','documents','routes','checkins'] },
     routes:{ actions:['dashboard','realtimeSummary'], resources:['routes','drivers','vehicles','notifications','companies'] },
     checkin:{ actions:['dashboard'], resources:['checkins','vehicles','drivers'] },
     checkinApprovals:{ actions:['dashboard'], resources:['checkins','vehicles','drivers','notifications'] },
@@ -153,7 +150,7 @@
 
   const navGroups = [
     ['GENERAL', [
-      ['dashboard','⌂','Panel principal'], ['office','◆','Oficina Virtual'], ['routes','➜','Rutas asignadas'], ['checkin','✓','Check-in vehicular'], ['operations','⇄','Operaciones'], ['gps','⌖','GPS en tiempo real'],
+      ['dashboard','⌂','Panel principal'], ['routes','➜','Rutas asignadas'], ['checkin','✓','Check-in vehicular'], ['operations','⇄','Operaciones'], ['gps','⌖','GPS en tiempo real'],
       ['notifications','🔔','Notificaciones']
     ]],
     ['GESTIÓN', [
@@ -221,18 +218,18 @@
   });
 
   const labels = {
-    dashboard:'Panel principal',office:'Oficina Virtual',routes:'Rutas asignadas',vehicles:'Vehículos',drivers:'Conductores',checkin:'Check-in vehicular',checkinApprovals:'Aprobación de check-ins',checkinHistory:'Historial de check-in',operations:'Operaciones',gps:'GPS en tiempo real',maintenance:'Mantenciones',fuel:'Combustible',
+    dashboard:'Panel principal',routes:'Rutas asignadas',vehicles:'Vehículos',drivers:'Conductores',checkin:'Check-in vehicular',checkinApprovals:'Aprobación de check-ins',checkinHistory:'Historial de check-in',operations:'Operaciones',gps:'GPS en tiempo real',maintenance:'Mantenciones',fuel:'Combustible',
     notifications:'Notificaciones',documents:'Documentos',history:'Historial',alerts:'Alertas',connections:'Conexiones en línea',users:'Usuarios',reports:'Reportes',audit:'Auditoría',company:'Empresa',settings:'Configuración'
   };
 
   const navPermission = {
-    dashboard:'PANEL_PRINCIPAL',office:'OFICINA_VIRTUAL',routes:'RUTAS',checkin:'CHECKIN',checkinApprovals:'CHECKIN_APROBACIONES',checkinHistory:'CHECKIN',operations:'OPERACIONES',gps:'GPS',notifications:'NOTIFICACIONES',
+    dashboard:'PANEL_PRINCIPAL',routes:'RUTAS',checkin:'CHECKIN',checkinApprovals:'CHECKIN_APROBACIONES',checkinHistory:'CHECKIN',operations:'OPERACIONES',gps:'GPS',notifications:'NOTIFICACIONES',
     vehicles:'VEHICULOS',drivers:'CONDUCTORES',maintenance:'MANTENCIONES',fuel:'COMBUSTIBLE',documents:'DOCUMENTOS',history:'HISTORIAL',
     alerts:'ALERTAS',connections:'CONEXIONES',users:'USUARIOS',company:'CONFIGURACION',reports:'REPORTES',audit:'BITACORA',settings:'CONFIGURACION'
   };
   const resourcePermission={vehicles:'VEHICULOS',drivers:'CONDUCTORES',maintenance:'MANTENCIONES',fuel:'COMBUSTIBLE',documents:'DOCUMENTOS',alerts:'ALERTAS',users:'USUARIOS'};
   const permissionCatalog = Object.freeze([
-    ['PANEL_PRINCIPAL','Panel principal'],['OFICINA_VIRTUAL','Oficina Virtual'],['USUARIOS','Usuarios'],['VEHICULOS','Vehículos'],['CONDUCTORES','Conductores'],
+    ['PANEL_PRINCIPAL','Panel principal'],['USUARIOS','Usuarios'],['VEHICULOS','Vehículos'],['CONDUCTORES','Conductores'],
     ['OPERACIONES','Operaciones'],['CHECKIN','Check-in'],['CHECKIN_APROBACIONES','Aprobar check-ins'],['GPS','Ubicación en tiempo real'],
     ['HISTORIAL','Historial'],['MANTENCIONES','Mantenciones'],['COMBUSTIBLE','Combustible'],['DOCUMENTOS','Documentos'],['ALERTAS','Alertas'],
     ['REPORTES','Reportes'],['BITACORA','Auditoría'],['CONFIGURACION','Configuración'],['QR','QR'],['RUTAS','Rutas'],
@@ -265,12 +262,6 @@
   function puedeAdministrarPuntoOperacion(){return ['ROL-ADMIN','ROL-SUPERVISOR'].includes(String(currentUser?.ROL_ID||''));}
   function puedeCierreExcepcional(){return ['ROL-ADMIN','ROL-SUPERVISOR'].includes(String(currentUser?.ROL_ID||''));}
   function esAdministrador(){const rol=String(currentUser?.ROL_ID||currentUser?.ROL_NOMBRE||'').trim().toUpperCase();return rol==='ROL-ADMIN'||rol==='ADMINISTRADOR'||(Array.isArray(currentUser?.PERMISOS)&&currentUser.PERMISOS.includes('*:*'));}
-  function claveAvisosEmergentes(){return `flotas_avisos_emergentes_admin_v1_${String(currentUser?.ID||currentUser?.USUARIO_ID||'sin_usuario')}`;}
-  function avisosEmergentesActivos(){
-    if(!esAdministrador())return true;
-    try{return localStorage.getItem(claveAvisosEmergentes())!=='NO';}
-    catch(_){return true;}
-  }
   function puedeFinalizarOperacion(){return ['ROL-ADMIN','ROL-SUPERVISOR','ROL-CONDUCTOR'].includes(String(currentUser?.ROL_ID||''));}
   function postParent(message){
     if(!embeddedMode||window.parent===window)return;
@@ -336,7 +327,6 @@
       ID_HOJA_NO_CONFIGURADO:'La base de datos central no está configurada correctamente.', CONFIRMACION_REQUERIDA:'Debe escribir exactamente “LIMPIAR DATOS”.',
       CONDUCTOR_NO_ASOCIADO:'La cuenta no está asociada a un conductor.', CONDUCTOR_NO_ENCONTRADO:'El conductor seleccionado no existe.', VEHICULO_NO_ENCONTRADO:'El vehículo seleccionado no existe.',
       QR_NO_RECONOCIDO:'El código QR no corresponde a un vehículo registrado.', CODIGO_QR_REQUERIDO:'Ingrese o escanee un código QR.', RUTA_NO_ENCONTRADA:'La ruta no existe.',
-      ALERTA_OPERACIONAL_REQUIERE_ADMINISTRADOR:'Esta alerta operacional debe ser validada y cerrada por un Administrador real después de comprobar la situación en terreno.',
       ESTADO_RUTA_INVALIDO:'El estado solicitado para la ruta no es válido.', DESTINATARIO_REQUERIDO:'Seleccione un destinatario.', USUARIO_DESTINATARIO_NO_ENCONTRADO:'El usuario destinatario no existe o no está activo.', SIN_DESTINATARIOS_PARA_EL_ALCANCE:'No existen cuentas activas que coincidan con el grupo seleccionado.', TITULO_Y_MENSAJE_REQUERIDOS:'Complete el título y el mensaje.', TIPO_AVISO_INVALIDO:'Seleccione una clase de aviso válida.', ALCANCE_AVISO_INVALIDO:'Seleccione un grupo de destinatarios válido.', NOTIFICACION_NO_ENCONTRADA:'La notificación no existe.', ALERTA_NO_ENCONTRADA:'La alerta no existe.', LECTURA_NOTIFICACION_NO_CONFIRMADA:'La notificación no confirmó su estado leído en la base central.', LECTURA_ALERTA_NO_CONFIRMADA:'La alerta no confirmó su estado leído en la base central.',
       COORDENADAS_INVALIDAS:'Las coordenadas recibidas no son válidas.', AUTORIZACION_QR_INVALIDA:'Valide nuevamente el QR del vehículo. La autorización dura cinco minutos.',
       ACCION_ESPECIAL_REQUERIDA:'Utilice el botón específico del módulo para realizar esta acción.',
@@ -494,7 +484,6 @@
   }
   function alertItemDate(item){return new Date(item.FECHA_ENVIO||item.FECHA_HORA||item.CREADO_EN||0).getTime();}
   function showIncomingNotice(item,kind){
-    if(embeddedMode||!avisosEmergentesActivos())return;
     const critical=kind==='alert'&&String(item.NIVEL||'').toLowerCase().includes('cr')||['Urgente','Alta'].includes(item.PRIORIDAD);
     toast(kind==='alert'?'Nueva alerta':'Nueva notificación',item.TITULO||item.MENSAJE||'Existe un nuevo aviso pendiente.',critical?'error':'success');
   }
@@ -529,9 +518,9 @@
       notificationCenterState={notifications,alerts};
       const newNotifications=notifications.filter(row=>!knownNotificationIds.has(String(row.ID)));
       const newAlerts=alerts.filter(row=>!knownAlertIds.has(String(row.ID)));
-      if(notificationSnapshotReady&&avisosEmergentesActivos()){
+      if(notificationSnapshotReady){
         [...newAlerts,...newNotifications].sort((a,b)=>alertItemDate(a)-alertItemDate(b)).slice(-3).forEach(item=>showIncomingNotice(item,alerts.includes(item)?'alert':'notification'));
-        const extra=newAlerts.length+newNotifications.length-3;if(extra>0&&!embeddedMode)toast('Nuevos avisos',`${extra} aviso${extra===1?'':'s'} adicional${extra===1?'':'es'} en el centro de notificaciones.`);
+        const extra=newAlerts.length+newNotifications.length-3;if(extra>0)toast('Nuevos avisos',`${extra} aviso${extra===1?'':'s'} adicional${extra===1?'':'es'} en el centro de notificaciones.`);
       }
       knownNotificationIds=new Set(notifications.map(row=>String(row.ID)));
       knownAlertIds=new Set(alerts.map(row=>String(row.ID)));
@@ -545,7 +534,7 @@
   function openNotificationCenter(){
     if(!currentUser)return;
     const notifications=notificationCenterState.notifications||[],alerts=notificationCenterState.alerts||[];
-    const alertRows=alerts.slice(0,8).map(row=>`<article class="notification-card"><header><div><h4>${esc(row.TITULO||'Alerta')}</h4><p>${esc(row.MENSAJE||'')}</p></div>${status(row.NIVEL||'Alerta')}</header><div class="route-meta"><span>${fmtDate(row.FECHA_HORA||row.CREADO_EN,true)}</span><span>${esc(row.MODULO||'Sistema')}</span></div>${esAdministrador()?`<button class="link-button" data-read-alert="${row.ID}" type="button">Validar y cerrar</button>`:'<span class="status warning">Pendiente del Administrador</span>'}</article>`).join('');
+    const alertRows=alerts.slice(0,8).map(row=>`<article class="notification-card"><header><div><h4>${esc(row.TITULO||'Alerta')}</h4><p>${esc(row.MENSAJE||'')}</p></div>${status(row.NIVEL||'Alerta')}</header><div class="route-meta"><span>${fmtDate(row.FECHA_HORA||row.CREADO_EN,true)}</span><span>${esc(row.MODULO||'Sistema')}</span></div><button class="link-button" data-read-alert="${row.ID}" type="button">Marcar como leída</button></article>`).join('');
     const notificationRows=notifications.slice(0,8).map(notificationCard).join('');
     $('#modalEyebrow').textContent='AVISOS AUTOMÁTICOS';$('#modalTitle').textContent='Centro de notificaciones';
     $('#modalBody').innerHTML=`<div class="notification-center-summary"><div class="info-item"><span>Notificaciones pendientes</span><b>${notifications.length}</b></div><div class="info-item"><span>Alertas pendientes</span><b>${alerts.length}</b></div></div><div class="notification-dashboard"><article class="card"><div class="card-header"><div><h3>Notificaciones</h3><p>Mensajes dirigidos a su usuario.</p></div></div><div class="notification-list">${notificationRows||empty('✓','Sin notificaciones','No hay mensajes pendientes.')}</div><button class="btn soft full" type="button" data-center-nav="notifications">Abrir notificaciones</button></article><article class="card"><div class="card-header"><div><h3>Alertas</h3><p>Eventos generados automáticamente por el sistema.</p></div></div><div class="notification-list">${alertRows||empty('✓','Sin alertas','No hay alertas pendientes.')}</div><button class="btn soft full" type="button" data-center-nav="alerts">Abrir alertas</button></article></div>`;
@@ -752,7 +741,7 @@
     $('#pageTitle').textContent=labels[section]; $('#breadcrumb').textContent=`Sistema / ${labels[section]}`;
     closeSidebar();
 
-    const cargaAutomaticaPermitida = section === 'gps' || section === 'connections' || section === 'office';
+    const cargaAutomaticaPermitida = section === 'gps' || section === 'connections';
     if (cargaManualModulos && !cargaAutomaticaPermitida && !options.force && !modulosSincronizadosSesion.has(section)) {
       $('#content').innerHTML=moduloVacioSinSincronizar(section);
       bindSection();
@@ -864,7 +853,6 @@
         `<div class="dashboard-grid"><article class="card"><div class="card-header"><div><h3>Operaciones recientes</h3><p>Movimientos creados en el sistema</p></div></div>${operations?table(['Operación','Vehículo','Conductor','Inicio','Estado','Ruta'],operations):empty('⇄','Aún no hay operaciones','No existen recorridos visibles para esta cuenta.',hasPermission('OPERACIONES','CREAR')?'<button class="btn primary" data-nav="operations">Crear operación</button>':'')}</article>`+
         `<article class="card"><div class="card-header"><div><h3>Notificaciones pendientes</h3><p>Mensajes dirigidos al usuario</p></div><button class="link-button" data-nav="notifications">Ver todas</button></div><div class="notification-list">${notifications||empty('✓','Sin notificaciones','No existen mensajes pendientes.')}</div></article></div>`;
     },
-    async office(){return renderOficinaVirtual();},
     async vehicles(){return renderResourcePage('vehicles','FLOTA','Vehículos','Administre las unidades, patentes, kilometraje y códigos QR.',vehicleRows,['Vehículo','Patente','Año','Kilometraje','Estado','QR','']);},
     async drivers(){return renderResourcePage('drivers','PERSONAL','Conductores','Gestione licencias, disponibilidad y usuarios asociados.',driverRows,['Conductor','RUT','Licencia','Vencimiento','Estado','Usuario','']);},
     async maintenance(){return renderResourcePage('maintenance','PREVENCIÓN','Mantenciones','Programe trabajos preventivos y correctivos.',maintenanceRows,['Trabajo','Vehículo','Tipo','Fecha','Costo','Estado','']);},
@@ -1495,10 +1483,10 @@
     guardarListaFormulario('alerts',alerts);
     const unread=alerts.filter(row=>row.LEIDA!=='SI');
     const critical=unread.filter(row=>String(row.NIVEL||'').toLowerCase().includes('cr'));
-    const rows=alerts.map(row=>`<tr data-filter-date="${esc(row.FECHA_HORA||row.CREADO_EN||'')}" data-search-row="${esc(`${row.NIVEL} ${row.TITULO} ${row.MENSAJE} ${row.MODULO}`.toLowerCase())}"><td>${status(row.NIVEL||'Info')}</td><td><strong>${esc(row.TITULO||'Alerta')}</strong><span class="muted">${esc(row.MENSAJE||'')}</span></td><td>${esc(row.MODULO||'Sistema')}</td><td>${esc(row.REGISTRO_ID||'—')}</td><td>${fmtDate(row.FECHA_HORA||row.CREADO_EN,true)}</td><td>${row.LEIDA==='SI'?status('Cerrada'):(esAdministrador()?`<button class="btn soft small" data-read-alert="${row.ID}">Validar y cerrar</button>`:'<span class="status warning">Requiere Administrador</span>')}</td></tr>`).join('');
-    return heading('CENTRO DE ATENCIÓN','Alertas','Eventos operacionales, fallas críticas y avisos generados por el sistema.',`<button class="btn soft" data-sync>↻ Sincronizar</button><button class="btn soft" data-run-alert-engine>⚡ Revisar anomalías</button>${unread.length&&esAdministrador()?'<button class="btn soft" data-read-all-alerts>✓ Validar y cerrar todas</button>':''}${hasPermission('ALERTAS','CREAR')?'<button class="btn primary" data-add="alerts">＋ Crear alerta</button>':''}`)+
+    const rows=alerts.map(row=>`<tr data-filter-date="${esc(row.FECHA_HORA||row.CREADO_EN||'')}" data-search-row="${esc(`${row.NIVEL} ${row.TITULO} ${row.MENSAJE} ${row.MODULO}`.toLowerCase())}"><td>${status(row.NIVEL||'Info')}</td><td><strong>${esc(row.TITULO||'Alerta')}</strong><span class="muted">${esc(row.MENSAJE||'')}</span></td><td>${esc(row.MODULO||'Sistema')}</td><td>${esc(row.REGISTRO_ID||'—')}</td><td>${fmtDate(row.FECHA_HORA||row.CREADO_EN,true)}</td><td>${row.LEIDA==='SI'?status('Leída'):`<button class="btn soft small" data-read-alert="${row.ID}">Marcar leída</button>`}</td></tr>`).join('');
+    return heading('CENTRO DE ATENCIÓN','Alertas','Eventos operacionales, fallas críticas y avisos generados por el sistema.',`<button class="btn soft" data-sync>↻ Sincronizar</button><button class="btn soft" data-run-alert-engine>⚡ Revisar anomalías</button>${unread.length?'<button class="btn soft" data-read-all-alerts>✓ Marcar todas</button>':''}${hasPermission('ALERTAS','CREAR')?'<button class="btn primary" data-add="alerts">＋ Crear alerta</button>':''}`)+
       `<div class="live-strip">${liveStat('!','Pendientes',unread.length,unread.length?'warning':'online')}${liveStat('⚠','Críticas',critical.length,critical.length?'warning':'')}${liveStat('✓','Atendidas',alerts.length-unread.length,'online')}${liveStat('▤','Total',alerts.length)}</div>`+
-      `<div class="automatic-alert-banner"><i>⚡</i><div><b>Motor automático activo</b><span>Revisa cada 5 minutos y mantiene informados a los Administradores. Las alertas operacionales permanecen abiertas hasta su validación en terreno.</span></div></div>`+
+      `<div class="automatic-alert-banner"><i>⚡</i><div><b>Motor automático activo</b><span>Revisa cada 5 minutos: GPS ausente o impreciso, documentos vencidos, check-ins críticos y mantenciones próximas o atrasadas.</span></div></div>`+
       `<article class="card"><div class="toolbar"><label class="search-box"><span>⌕</span><input data-table-search placeholder="Buscar alerta, módulo o registro"></label><button class="btn soft push" data-export="alerts">Exportar CSV</button></div><div data-filter-table>${table(['Nivel','Alerta','Módulo','Registro','Fecha','Acción'],rows,'No existen alertas registradas.')}</div></article>`;
   }
 
@@ -1971,7 +1959,7 @@
         return;
       }
       const script=document.createElement('script');
-      script.src='mapa.js?v=3.18.3';
+      script.src='mapa.js?v=3.17.0';
       script.async=true;
       script.dataset.mapaFlotas='dinamico';
       script.onload=comprobar;
@@ -2303,126 +2291,6 @@
     `<div class="danger-zone" style="margin-top:18px"><h3>Limpiar datos operativos</h3><p>Elimina vehículos, conductores, operaciones, check-ins, GPS, rutas, conexiones, mantenciones, documentos, notificaciones, alertas, reportes y bitácora. Conserva usuarios, roles, empresa y colores.</p><button class="btn danger" data-clear-data>Limpiar datos operativos</button></div>`;
   }
 
-  function seccionTareaOficinaVirtual(modulo){
-    return ({DOCUMENTOS:'documents',RUTAS:'routes',CHECKIN:'checkin',CONDUCTORES:'drivers',GPS:'gps',CONFIGURACION:'settings',OPERACIONES:'operations'}[String(modulo||'').toUpperCase()]||'notifications');
-  }
-
-  function prioridadTareaOficinaVirtual(valor){
-    const value=String(valor||'Normal').toLowerCase();
-    return value==='urgente'?'critical':value==='alta'?'warning':'ok';
-  }
-
-  function markupTareasOficinaVirtual(tasks){
-    return (tasks||[]).map(task=>{
-      const section=seccionTareaOficinaVirtual(task.modulo);
-      const canOpen=hasPermission(navPermission[section]||'NOTIFICACIONES','LEER');
-      return `<article class="office-task ${prioridadTareaOficinaVirtual(task.prioridad)}"><i>${task.prioridad==='Urgente'?'!':'✓'}</i><div><span>${esc(task.tipo||'Tarea')} · ${esc(task.prioridad||'Normal')}</span><b>${esc(task.titulo||'Pendiente')}</b><p>${esc(task.detalle||'')}</p></div>${canOpen?`<button class="btn soft small" type="button" data-office-open="${esc(section)}">Resolver</button>`:''}</article>`;
-    }).join('');
-  }
-
-  function markupConversacionOficinaVirtual(){
-    return conversacionOficinaVirtual.map(message=>`<div class="office-message ${message.tipo==='usuario'?'user':'assistant'}"><i>${message.tipo==='usuario'?initials(currentUser.NOMBRE):'OV'}</i><div><b>${message.tipo==='usuario'?'Tú':'Oficina Virtual'}</b><p>${esc(message.texto||'')}</p></div></div>`).join('');
-  }
-
-  function pintarConversacionOficinaVirtual(){
-    const chat=$('#officeChat');if(!chat)return;
-    chat.innerHTML=markupConversacionOficinaVirtual();
-    requestAnimationFrame(()=>{chat.scrollTop=chat.scrollHeight;});
-  }
-
-  function pintarPendientesOficinaVirtual(data){
-    const tasks=Array.isArray(data?.tareas)?data.tareas:[];
-    const list=$('#officeTaskList'),count=$('#officeTaskCount'),total=$('#officeTotalTasks'),urgent=$('#officeUrgentTasks');
-    if(list)list.innerHTML=markupTareasOficinaVirtual(tasks)||empty('✓','No tienes pendientes','No se detectaron documentos, licencias, rutas o revisiones pendientes para tu usuario.');
-    if(count){count.textContent=String(tasks.length);count.className=`status ${tasks.length?'warn':'ok'}`;}
-    if(total)total.textContent=String(Number(data?.totalTareas??tasks.length));
-    if(urgent)urgent.textContent=String(Number(data?.tareasUrgentes??tasks.filter(item=>item.prioridad==='Urgente').length));
-    $$('[data-office-open]',list||document).forEach(btn=>btn.addEventListener('click',()=>navigateSection(btn.dataset.officeOpen)));
-  }
-
-  async function cargarPendientesOficinaVirtual({force=false}={}){
-    if(cargaPendientesOficinaVirtual&&!force)return cargaPendientesOficinaVirtual;
-    const task=(async()=>{
-      try{
-        const data=await api.request('officeTasks',force?{force:true}:{});
-        if(currentSection==='office'&&$('#officeTaskList'))pintarPendientesOficinaVirtual(data);
-        return data;
-      }catch(error){
-        const list=$('#officeTaskList');
-        if(list)list.innerHTML=empty('!','No se pudieron actualizar los pendientes',translateError(error),'<button class="btn soft" type="button" data-office-retry-tasks>Reintentar</button>');
-        $('[data-office-retry-tasks]')?.addEventListener('click',()=>cargarPendientesOficinaVirtual({force:true}));
-        return null;
-      }finally{if(cargaPendientesOficinaVirtual===task)cargaPendientesOficinaVirtual=null;}
-    })();
-    cargaPendientesOficinaVirtual=task;
-    return task;
-  }
-
-  async function renderOficinaVirtual(){
-    const data=await api.request('officeQuickStatus');
-    if(!conversacionOficinaVirtual.length){
-      conversacionOficinaVirtual=[{tipo:'asistente',texto:`Hola, ${currentUser.NOMBRE.split(' ')[0]}. Soy Oficina Virtual. Puedo explicarte el sistema, revisar tus pendientes y orientarte paso a paso.`}];
-    }
-    const canConfigure=Boolean(data.puedeConfigurar)&&esAdministrador();
-    const state=String(data.estado||'PENDIENTE').toUpperCase();
-    const stateLabel=state==='CRITICO'?'Requiere atención inmediata':state==='ATENCION'?'Hay aspectos por revisar':state==='PENDIENTE'?'Esperando primera revisión':'Sistema en orden';
-    const suggestions=['¿Qué tengo pendiente?','¿Cómo funciona el GPS?','¿Cómo uso un QR?','Revisar estado del sistema'];
-    const reviewLabel=currentUser?.ROL_ID==='ROL-CONDUCTOR'?'⚑ Informar revisión':'↻ Revisar ahora';
-    return heading('ASISTENTE DEL SISTEMA','Oficina Virtual','Respuestas en español, pendientes personales, diagnóstico preventivo y reparaciones técnicas seguras.',`<button class="btn soft" type="button" data-office-review>${reviewLabel}</button>${canConfigure?'<button class="btn primary" type="button" data-office-repair>⚒ Reparación segura</button>':''}`)+
-      `<section class="office-hero"><article class="card office-identity"><div class="office-avatar">OV</div><div><span>OFICINA VIRTUAL</span><h3>${esc(stateLabel)}</h3><p>Última revisión: ${data.ultimaRevision?fmtDate(data.ultimaRevision,true):'pendiente'} · ${Number(data.avisosCreados||0)} aviso(s) nuevo(s) en la última ejecución.</p></div><span class="status ${state==='CORRECTO'?'ok':state==='CRITICO'?'bad':'warn'}">${esc(state)}</span></article><article class="card office-auto-card"><div><span>MODO AUTOMÁTICO</span><h3>${data.modoAutomatico?'Activado':'Desactivado'}</h3><p>${data.modoAutomatico?'Revisa cada cinco minutos y aplica solo correcciones técnicas seguras.':'Diagnostica y alerta; las reparaciones esperan autorización.'}</p></div>${canConfigure?`<label class="switch office-auto-switch"><input type="checkbox" data-office-auto ${data.modoAutomatico?'checked':''}><i></i></label>`:'<span class="office-lock">Solo Administrador</span>'}</article></section>`+
-      `<div class="office-metrics"><article class="metric-card"><i class="metric-icon">✓</i><div><span>Pendientes</span><b id="officeTotalTasks">${Number(data.totalTareas||0)}</b><small><span id="officeUrgentTasks">${Number(data.tareasUrgentes||0)}</span> urgente(s)</small></div></article>${metric('!','Problemas técnicos',Number(data.problemas||0),stateLabel)}${metric('⚒','Reparaciones',Number(data.reparaciones||0),'Última revisión')}</div>`+
-      `<section class="office-layout"><article class="card office-chat-card"><div class="card-header"><div><h3>Pregúntale a Oficina Virtual</h3><p>Explica módulos y responde según tu rol y tus datos visibles.</p></div><span class="status ok">En línea</span></div><div class="office-chat" id="officeChat">${markupConversacionOficinaVirtual()}</div><div class="office-suggestions">${suggestions.map(text=>`<button type="button" data-office-suggestion="${esc(text)}">${esc(text)}</button>`).join('')}</div><form class="office-form" id="officeForm"><textarea name="MENSAJE" rows="2" maxlength="1200" required placeholder="Ejemplo: ¿Cómo hago el check-in del vehículo?"></textarea><button class="btn primary" type="submit">Enviar</button></form><p class="helper">Oficina Virtual no solicita contraseñas ni envía datos de la flota a servicios externos.</p></article>`+
-      `<article class="card office-tasks-card"><div class="card-header"><div><h3>Lo que tienes por hacer</h3><p>Un solo aviso por tarea; si cambia su estado, se actualiza el mismo registro.</p></div><span class="status" id="officeTaskCount">…</span></div><div class="office-task-list" id="officeTaskList">${empty('↻','Actualizando pendientes','La pantalla ya está disponible mientras Oficina Virtual consulta únicamente los datos necesarios.')}</div></article></section>`;
-  }
-
-  async function ejecutarRevisionOficinaVirtual(button){
-    try{
-      const result=await api.request('officeRun',{force:true});
-      invalidarListasFormulario('notifications','alerts','documents','routes','checkins');
-      api.invalidate({actions:['officeQuickStatus','officeTasks','officeStatus']});
-      cacheVistasModulo.delete('dashboard');cacheVistasModulo.delete('notifications');
-      if(result.solicitudAdministrador)toast('Administradores informados','La solicitud quedó pendiente para validación administrativa; el Conductor no ejecutó cambios.');
-      else toast('Revisión iniciada','Oficina Virtual ya está revisando el sistema en segundo plano; puedes seguir trabajando.');
-      cargarPendientesOficinaVirtual({force:true});
-      setTimeout(()=>refreshNotificationBadge(),2500);
-      return result;
-    }catch(error){toast('No se pudo revisar',translateError(error),'error');}
-  }
-
-  async function repararConOficinaVirtual(button){
-    if(!confirm('Se verificarán estructura, catálogos, cachés y activadores. No se eliminarán datos ni se modificarán operaciones. ¿Continuar?'))return;
-    try{
-      const result=await api.request('officeRepair',{});
-      api.invalidate();invalidarListasFormulario();cacheVistasModulo.clear();
-      toast('Reparación segura completada',`Estado posterior: ${result.diagnostico?.estado||'verificado'}.`);
-      return go('office',{force:true});
-    }catch(error){toast('No se pudo reparar',translateError(error),'error');}
-  }
-
-  async function configurarModoAutomaticoOficinaVirtual(input){
-    const active=Boolean(input.checked);input.disabled=true;
-    try{
-      await api.request('officeAutoMode',{data:{ACTIVO:active?'SI':'NO'}});
-      api.invalidate({actions:['officeQuickStatus','officeStatus']});
-      toast(active?'Modo automático activado':'Modo automático desactivado',active?'Oficina Virtual revisará el sistema cada cinco minutos.':'Las reparaciones volverán a requerir autorización.');
-      window.dispatchEvent(new CustomEvent('flotas:oficina-virtual-modo',{detail:{activo:active}}));
-      postParent({tipo:'flotas:oficina-virtual-modo',activo:active});
-    }catch(error){input.checked=!active;toast('No se pudo cambiar el modo',translateError(error),'error');}
-    finally{input.disabled=false;}
-  }
-
-  async function enviarConsultaOficinaVirtual(text,button){
-    const question=String(text||'').trim();if(!question)return;
-    conversacionOficinaVirtual.push({tipo:'usuario',texto:question});
-    pintarConversacionOficinaVirtual();
-    const form=$('#officeForm');if(form)form.elements.MENSAJE.value='';
-    try{
-      const result=await api.request('officeAsk',{data:{MENSAJE:question}});
-      conversacionOficinaVirtual.push({tipo:'asistente',texto:result.respuesta||'No pude generar una respuesta.'});
-    }catch(error){conversacionOficinaVirtual.push({tipo:'asistente',texto:`No pude responder: ${translateError(error)}`});}
-    pintarConversacionOficinaVirtual();
-  }
-
   async function sincronizarSistema(button) {
     if (sincronizacionPendiente) return sincronizacionPendiente;
     const section = currentSection;
@@ -2576,13 +2444,6 @@
 
   function bindSection() {
     $$('[data-nav]').forEach(btn=>btn.addEventListener('click',()=>navigateSection(btn.dataset.nav)));
-    $('[data-office-review]')?.addEventListener('click',event=>conCargaBoton(event.currentTarget,'Revisando…',()=>ejecutarRevisionOficinaVirtual(event.currentTarget)));
-    $('[data-office-repair]')?.addEventListener('click',event=>conCargaBoton(event.currentTarget,'Reparando…',()=>repararConOficinaVirtual(event.currentTarget)));
-    $('[data-office-auto]')?.addEventListener('change',event=>configurarModoAutomaticoOficinaVirtual(event.currentTarget));
-    $$('[data-office-open]').forEach(btn=>btn.addEventListener('click',()=>navigateSection(btn.dataset.officeOpen)));
-    $$('[data-office-suggestion]').forEach(btn=>btn.addEventListener('click',()=>enviarConsultaOficinaVirtual(btn.dataset.officeSuggestion,btn)));
-    const officeForm=$('#officeForm');if(officeForm)officeForm.addEventListener('submit',event=>{event.preventDefault();const button=$('button[type="submit"]',officeForm),message=officeForm.elements.MENSAJE.value;conCargaBoton(button,'Pensando…',()=>enviarConsultaOficinaVirtual(message,button));});
-    if($('#officeTaskList'))setTimeout(()=>cargarPendientesOficinaVirtual(),0);
     $('[data-new-fuel]')?.addEventListener('click',event=>conCargaBoton(event.currentTarget,'Preparando…',()=>openFuelModal()));
     $$('[data-edit-fuel]').forEach(btn=>btn.addEventListener('click',event=>conCargaBoton(event.currentTarget,'Preparando…',()=>openFuelModal(registroFormulario('fuel',btn.dataset.editFuel)))));
     $$('[data-request-fuel-delete]').forEach(btn=>btn.addEventListener('click',()=>openFuelReasonModal(btn.dataset.requestFuelDelete,'request')));
@@ -3245,8 +3106,8 @@
     };
   }
   async function readNotification(id){try{const result=await api.request('readNotification',{id});if(result&&!result.persistenciaConfirmada)throw new Error('LECTURA_NOTIFICACION_NO_CONFIRMADA');notificationCenterState.notifications=(notificationCenterState.notifications||[]).filter(row=>String(row.ID)!==String(id));knownNotificationIds.delete(String(id));invalidarListasFormulario('notifications');cacheVistasModulo.delete('notifications');cacheVistasModulo.delete('dashboard');closeModal();await refreshNotificationBadge();if(currentSection==='notifications'||currentSection==='dashboard')actualizarSeccionEnSegundoPlano(currentSection);toast('Notificación leída','El estado quedó confirmado en la base central.');}catch(error){toast('No se pudo actualizar',translateError(error),'error');}}
-  async function readAlert(id){try{const result=await api.request('readAlert',{id});if(result&&!result.persistenciaConfirmada)throw new Error('LECTURA_ALERTA_NO_CONFIRMADA');notificationCenterState.alerts=(notificationCenterState.alerts||[]).filter(row=>String(row.ID)!==String(id));knownAlertIds.delete(String(id));invalidarListasFormulario('alerts');cacheVistasModulo.delete('alerts');cacheVistasModulo.delete('dashboard');closeModal();await refreshNotificationBadge();toast('Alerta validada y cerrada','La validación del Administrador quedó confirmada en la base central.');if(currentSection==='alerts'||currentSection==='dashboard')actualizarSeccionEnSegundoPlano(currentSection);}catch(error){toast('No se pudo cerrar la alerta',translateError(error),'error');}}
-  async function markAllAlertsRead(){if(!esAdministrador())throw new Error('SOLO_ADMINISTRADOR');const rows=deduplicarAvisos((cacheListasFormulario.get('alerts')||[]).filter(row=>row.LEIDA!=='SI'),'alert');for(const row of rows)await api.request('readAlert',{id:row.ID});invalidarListasFormulario('alerts');cacheVistasModulo.delete('alerts');cacheVistasModulo.delete('dashboard');await refreshNotificationBadge();toast('Alertas cerradas',`${rows.length} alerta(s) validada(s) por el Administrador.`);actualizarSeccionEnSegundoPlano('alerts');}
+  async function readAlert(id){try{const result=await api.request('readAlert',{id});if(result&&!result.persistenciaConfirmada)throw new Error('LECTURA_ALERTA_NO_CONFIRMADA');notificationCenterState.alerts=(notificationCenterState.alerts||[]).filter(row=>String(row.ID)!==String(id));knownAlertIds.delete(String(id));invalidarListasFormulario('alerts');cacheVistasModulo.delete('alerts');cacheVistasModulo.delete('dashboard');closeModal();await refreshNotificationBadge();toast('Alerta atendida','El estado leído quedó confirmado en la base central.');if(currentSection==='alerts'||currentSection==='dashboard')actualizarSeccionEnSegundoPlano(currentSection);}catch(error){toast('No se pudo actualizar la alerta',translateError(error),'error');}}
+  async function markAllAlertsRead(){const rows=deduplicarAvisos((cacheListasFormulario.get('alerts')||[]).filter(row=>row.LEIDA!=='SI'),'alert');for(const row of rows)await api.request('readAlert',{id:row.ID});invalidarListasFormulario('alerts');cacheVistasModulo.delete('alerts');cacheVistasModulo.delete('dashboard');await refreshNotificationBadge();toast('Alertas actualizadas',`${rows.length} alertas marcadas como leídas.`);actualizarSeccionEnSegundoPlano('alerts');}
   function systemDiagnosticMarkup(data){const modules=data?.modules||{};const entries=Object.entries(modules);const issues=entries.filter(([,item])=>item.estado!=='OK');return `<div class="system-health-summary ${issues.length?'warning':'ok'}"><i>${issues.length?'!':'✓'}</i><div><b>${issues.length?`${issues.length} elementos requieren atención`:'Estructura lista para operar'}</b><span>Versión ${esc(data?.version||'—')} · ${fmtDate(data?.fecha||new Date(),true)}</span></div></div><div class="system-health-grid">${entries.map(([key,item])=>`<article class="${item.estado==='OK'?'ok':'warning'}"><span>${esc(item.nombre||key)}</span><b>${esc(item.estado||'REVISAR')}</b><small>${esc(item.detalle||'')}</small></article>`).join('')}</div>`;}
   async function runSystemDiagnostic(){try{const result=await api.request('diagnoseSystem',{cache:false,force:true});const node=$('#systemHealthResult'),statusNode=$('#systemHealthStatus');if(node)node.innerHTML=systemDiagnosticMarkup(result);if(statusNode){const issues=Object.values(result.modules||{}).filter(item=>item.estado!=='OK').length;statusNode.textContent=issues?'Requiere atención':'Sistema correcto';statusNode.className=`status ${issues?'warning':'ok'}`;}toast('Diagnóstico completado',result.correcto?'Los módulos críticos están listos.':'Se encontraron elementos que pueden repararse desde esta pantalla.',result.correcto?'success':'error');return result;}catch(error){toast('No se pudo diagnosticar',translateError(error),'error');throw error;}}
   async function repairSystem(){try{const result=await api.request('repairSystem',{});api.invalidate();invalidarListasFormulario();cacheVistasModulo.clear();const node=$('#systemHealthResult'),statusNode=$('#systemHealthStatus');if(node)node.innerHTML=systemDiagnosticMarkup(result.diagnostico||result);if(statusNode){statusNode.textContent='Estructura reparada';statusNode.className='status ok';}toast('Sistema reparado','Se verificaron hojas, columnas, permisos y catálogos sin borrar información.');return result;}catch(error){toast('No se pudo reparar',translateError(error),'error');throw error;}}
@@ -3780,78 +3641,51 @@
   function normalizarContextoQr(value){const context=String(value||'vehiculo-operacion').trim().toLowerCase();return['vehiculo-operacion','combustible','checkin'].includes(context)?context:'vehiculo-operacion';}
   function textoContextoQr(context){return context==='combustible'?'la carga de combustible':context==='checkin'?'el check-in vehicular':'la operación';}
   function prepararTextosQr(context){const header=$('#qrBackdrop .modal-header');if(!header)return;const eyebrow=$('.eyebrow',header),title=$('h3',header);if(eyebrow)eyebrow.textContent=context==='combustible'?'COMBUSTIBLE QR':context==='checkin'?'CHECK-IN QR':'OPERACIÓN QR';if(title)title.textContent=context==='combustible'?'Escanear vehículo para carga':context==='checkin'?'Escanear vehículo para revisión':'Escanear vehículo';}
-  const QR_ANDROID_NATIVO_EXCLUSIVO=true;
-  let qrNativoSolicitado=false;
-  let ultimoQrNativoProcesado='';
-  let ultimoQrNativoMomento=0;
   function lectorQrNativoDisponible(){try{return Boolean(window.AndroidConfig&&AndroidConfig.esLectorQrNativoDisponible&&AndroidConfig.esLectorQrNativoDisponible());}catch(_){return false;}}
-  function liberarSolicitudQrNativo(){qrNativoSolicitado=false;}
   function iniciarQrNativo(contexto=qrContextoActual){
     if(!lectorQrNativoDisponible())return false;
-    if(qrNativoSolicitado)return true;
-    qrNativoSolicitado=true;
     try{
       stopCamera();
+      $('#cameraEmpty')?.classList.remove('hidden');
+      $('#scannerStatus')?.classList.add('active');
+      if($('#scannerStatus span'))$('#scannerStatus span').textContent='Abriendo lector QR nativo…';
       AndroidConfig.iniciarEscaneoQr(normalizarContextoQr(contexto));
-      setTimeout(()=>{qrNativoSolicitado=false;},120000);
       return true;
-    }catch(error){
-      qrNativoSolicitado=false;
-      toast('No se pudo abrir el lector QR nativo',String(error?.message||error),'error');
-      return false;
-    }
+    }catch(error){toast('No se pudo abrir el lector QR',String(error?.message||error),'error');return false;}
   }
-  function prepararModalQrManual(){
-    openQrBackdrop();
-    const empty=$('#cameraEmpty');
-    if(empty){empty.classList.remove('hidden');empty.innerHTML=`<b>▦</b><span>El lector nativo no está disponible. Ingrese el código QR para ${textoContextoQr(qrContextoActual)}.</span>`;}
-    $('#scannerStatus')?.classList.remove('active');
-    if($('#scannerStatus span'))$('#scannerStatus span').textContent='Ingreso manual de QR';
-    ['#qrVideo','.scan-frame','#cameraSelect','#switchCamera','#startCamera'].forEach(sel=>{const el=$(sel);if(el)el.hidden=true;});
-  }
-  async function openQr(contexto='vehiculo-operacion'){
-    qrContextoActual=normalizarContextoQr(contexto);
-    prepararTextosQr(qrContextoActual);
-    if($('#manualQr'))$('#manualQr').value='';
-    if(iniciarQrNativo(qrContextoActual))return;
-    prepararModalQrManual();
-  }
+  async function openQr(contexto='vehiculo-operacion'){qrContextoActual=normalizarContextoQr(contexto);prepararTextosQr(qrContextoActual);if($('#manualQr'))$('#manualQr').value='';openQrBackdrop();if(iniciarQrNativo(qrContextoActual))return;await enumerateCameras();}
   function openQrBackdrop(){$('#qrBackdrop').classList.add('open');document.body.classList.add('modal-open');}
   function closeQr(){stopCamera();$('#qrBackdrop').classList.remove('open');if(!$('#modalBackdrop').classList.contains('open'))document.body.classList.remove('modal-open');}
-  async function enumerateCameras(){return [];}
-  async function startCamera(){
-    if(iniciarQrNativo(qrContextoActual))return;
-    prepararModalQrManual();
-    toast('Lector QR nativo no disponible','Ingrese el código manualmente. La cámara web está desactivada dentro de Android.','error');
+  async function enumerateCameras(){try{const devices=await navigator.mediaDevices?.enumerateDevices();const cameras=(devices||[]).filter(d=>d.kind==='videoinput');$('#cameraSelect').innerHTML=cameras.length?cameras.map((c,i)=>`<option value="${c.deviceId}">${esc(c.label||`Cámara ${i+1}`)}</option>`).join(''):'<option value="">Cámara predeterminada</option>';}catch(_) {}}
+  async function startCamera(deviceId=''){
+    if(iniciarQrNativo())return;
+    if(!navigator.mediaDevices?.getUserMedia)return toast('Lector QR no compatible','Ingrese el código manualmente o utilice la aplicación Android.','error');
+    stopCamera();
+    try{
+      mediaStream=await navigator.mediaDevices.getUserMedia({video:deviceId?{deviceId:{exact:deviceId}}:{facingMode:{ideal:facingMode}},audio:false});
+      $('#qrVideo').srcObject=mediaStream;await $('#qrVideo').play();$('#cameraEmpty').classList.add('hidden');$('#scannerStatus').classList.add('active');$('#scannerStatus span').textContent=`Buscando QR para ${textoContextoQr(qrContextoActual)}…`;await enumerateCameras();
+      if('BarcodeDetector'in window){barcodeDetector=new BarcodeDetector({formats:['qr_code']});scanFrame();}
+      else {barcodeDetector=null;$('#scannerStatus span').textContent='Este navegador no incluye decodificador QR. Use el código manual o la aplicación Android.';}
+    }catch(error){toast('No se pudo abrir la cámara','Revise el permiso de cámara del navegador.','error');}
   }
-  async function scanFrame(){return;}
-  function stopCamera(){if(scanFrameId)cancelAnimationFrame(scanFrameId);scanFrameId=null;if(mediaStream)mediaStream.getTracks().forEach(track=>track.stop());mediaStream=null;barcodeDetector=null;if($('#qrVideo'))$('#qrVideo').srcObject=null;}
+  async function scanFrame(){if(!barcodeDetector||!mediaStream)return;try{if($('#qrVideo').readyState>=2){const codes=await barcodeDetector.detect($('#qrVideo'));if(codes.length){const value=String(codes[0].rawValue||'').trim();if(value)return processQr(value);}}}catch(_){}scanFrameId=requestAnimationFrame(scanFrame);}
+  function stopCamera(){if(scanFrameId)cancelAnimationFrame(scanFrameId);scanFrameId=null;if(mediaStream)mediaStream.getTracks().forEach(track=>track.stop());mediaStream=null;barcodeDetector=null;if($('#qrVideo'))$('#qrVideo').srcObject=null;$('#cameraEmpty')?.classList.remove('hidden');$('#scannerStatus')?.classList.remove('active');if($('#scannerStatus span'))$('#scannerStatus span').textContent='Cámara detenida';}
   async function processQr(code,contexto=qrContextoActual){
     const limpio=String(code||'').trim();
     if(!limpio)return toast('Código QR vacío','No se recibió información del lector.','error');
     const context=normalizarContextoQr(contexto);qrContextoActual=context;
-    const ahora=Date.now();
-    if(`${context}:${limpio}`===ultimoQrNativoProcesado&&ahora-ultimoQrNativoMomento<4000)return;
-    ultimoQrNativoProcesado=`${context}:${limpio}`;
-    ultimoQrNativoMomento=ahora;
-    liberarSolicitudQrNativo();
     try{
+      if($('#scannerStatus span'))$('#scannerStatus span').textContent='Validando vehículo…';
       const result=await api.request('validateVehicleQr',{codigo:limpio,contexto:context});const vehicle=result.row;if(!vehicle)throw new Error('QR_NO_RECONOCIDO');
       vehicle.AUTORIZACION_QR=result.autorizacionQr||'';closeQr();
       if(context==='combustible'){toast('Vehículo validado',`${vehicle.PATENTE} quedó asociado a la carga de combustible.`);openFuelModal(null,vehicle);}
       else if(context==='checkin'){toast('Vehículo validado',`${vehicle.PATENTE} quedó seleccionado para la revisión.`);aplicarVehiculoQrCheckin(vehicle);}
       else {toast('Vehículo validado',`${vehicle.PATENTE} quedó listo para asociarlo a la operación.`);openOperationModal(vehicle);}
-    }catch(error){toast('No se pudo validar el QR',translateError(error),'error');}
+    }catch(error){if($('#scannerStatus span'))$('#scannerStatus span').textContent='QR no reconocido';toast('No se pudo validar el QR',translateError(error),'error');}
   }
-  window.FlotasQrNativoResultado=function(codigo,contexto){
-    const limpio=String(codigo||'').trim();
-    if(!limpio){liberarSolicitudQrNativo();toast('Lector QR','El código leído está vacío.','error');return false;}
-    processQr(limpio,contexto||qrContextoActual);
-    return true;
-  };
-  window.addEventListener('flotas:qr-nativo-resultado',event=>{window.FlotasQrNativoResultado(event?.detail?.codigo,event?.detail?.contexto||qrContextoActual);});
-  window.addEventListener('flotas:qr-nativo-estado',event=>{const estado=String(event?.detail?.estado||'');if(estado==='cancelado'||estado==='cerrado')liberarSolicitudQrNativo();});
-  window.addEventListener('flotas:qr-nativo-error',event=>{liberarSolicitudQrNativo();const mensaje=String(event?.detail?.mensaje||'No se pudo leer el código QR.');toast('Lector QR nativo',mensaje,'error');});
+  window.addEventListener('flotas:qr-nativo-resultado',event=>{const codigo=String(event?.detail?.codigo||'').trim();if(codigo)processQr(codigo,event?.detail?.contexto||qrContextoActual);});
+  window.addEventListener('flotas:qr-nativo-estado',event=>{const mensaje=String(event?.detail?.mensaje||'');if($('#scannerStatus span')&&mensaje)$('#scannerStatus span').textContent=mensaje;});
+  window.addEventListener('flotas:qr-nativo-error',event=>{const mensaje=String(event?.detail?.mensaje||'No se pudo leer el código QR.');if($('#scannerStatus span'))$('#scannerStatus span').textContent='Error de lectura QR';toast('Lector QR',mensaje,'error');});
 
   function logout(){const cierre=api.request('logout',{data:{SESION_CLIENTE_ID:clientSessionId}}).catch(()=>{});forceLogout();return cierre;}
   function forceLogout(){cleanupSection();stopRealtimeServices();stopCamera();stopTracking({remember:false,silent:true});currentUser=null;connectionTrackedUserId='';connectionTrackedPositionKey='';connectionTrackingServerLoaded=false;connectionTrackingSavePending=false;connectionTrackedVisibility=null;notificationSnapshotReady=false;knownNotificationIds=new Set();knownAlertIds=new Set();notificationCenterState={notifications:[],alerts:[]};precargaIniciada=false;modulosSincronizadosSesion.clear();actualizacionesModuloPendientes.clear();cacheVistasModulo.clear();invalidarListasFormulario();api.setAuth({});postParent({tipo:'flotas:sesion-cerrada'});$('#appShell').classList.add('hidden');if(embeddedMode)return;$('#authScreen').classList.remove('hidden');checkSystem();}

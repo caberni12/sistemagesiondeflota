@@ -6,7 +6,7 @@
  * Si el proyecto Apps Script está vinculado a la hoja, instalarSistema() guardará
  * automáticamente el ID. Para un proyecto independiente, pegue el ID aquí.
  */
-const VERSION_APLICACION = '3.17.0';
+const VERSION_APLICACION = '3.18.3';
 
 const CONFIGURACION_APLICACION = Object.freeze({
   ID_HOJA_CALCULO: '1onJJEN1rgz0N9GXOiUqV7ong4-nlbdAjzMyW_rumXCM',
@@ -44,6 +44,13 @@ const CONFIGURACION_APLICACION = Object.freeze({
   DIAS_AVISO_DOCUMENTO: 30,
   HORAS_REPETICION_ALERTA: 8,
 });
+
+const OFICINA_VIRTUAL_MODO_AUTO_ = 'OFICINA_VIRTUAL_MODO_AUTO';
+const OFICINA_VIRTUAL_ULTIMA_REVISION_ = 'OFICINA_VIRTUAL_ULTIMA_REVISION';
+const OFICINA_VIRTUAL_ULTIMO_RESULTADO_ = 'OFICINA_VIRTUAL_ULTIMO_RESULTADO';
+const OFICINA_VIRTUAL_EJECUTANDO_ = 'OFICINA_VIRTUAL_EJECUTANDO';
+const OFICINA_VIRTUAL_CACHE_VERSION_ = 'OFICINA_VIRTUAL_CACHE_VERSION';
+const OFICINA_VIRTUAL_CACHE_SEGUNDOS_ = 300;
 
 const ESQUEMAS_APLICACION = Object.freeze({
   CONFIGURACION: ['CLAVE','VALOR','DESCRIPCION','ACTUALIZADO_EN'],
@@ -246,6 +253,13 @@ function enrutarSolicitud_(request, event) {
     case 'ejecutarAlertasAutomaticas': return ejecutarAlertasAutomaticasServicio_(request, session);
     case 'diagnosticoSistema': return diagnosticoSistema_(request, session);
     case 'repararSistema': return repararSistema_(request, session);
+    case 'estadoRapidoOficinaVirtual': return estadoRapidoOficinaVirtual_(request, session);
+    case 'pendientesOficinaVirtual': return consultarPendientesOficinaVirtual_(request, session);
+    case 'estadoOficinaVirtual': return estadoOficinaVirtual_(request, session);
+    case 'consultarOficinaVirtual': return consultarOficinaVirtual_(request, session);
+    case 'configurarModoOficinaVirtual': return configurarModoOficinaVirtual_(request, session);
+    case 'ejecutarRevisionOficinaVirtual': return ejecutarRevisionOficinaVirtual_(request, session);
+    case 'repararOficinaVirtual': return repararOficinaVirtual_(request, session);
     case 'cambiarContrasena': return cambiarPassword_(request, session);
     case 'actualizarPermisosUsuario': return actualizarPermisosUsuario_(request, session);
     case 'guardarEmpresa': return guardarEmpresaServicio_(request, session);
@@ -340,7 +354,7 @@ function servicioCrear_(request, session) {
   const data = normalizarEntradaRecurso_(resource.sheet, request.datos || {}, session.user);
   const row = insertarRegistro_(resource.sheet, data, resource.prefix);
   registrarBitacora_(session.user, 'CREAR', resource.module, row.ID, 'Registro creado. Datos: ' + respaldoAuditoria_(row));
-  if (['MANTENCIONES','DOCUMENTOS','VEHICULOS'].indexOf(resource.sheet) >= 0) { try { solicitarRevisionAlertasSegundoPlano_('Creación en ' + resource.sheet); } catch (_) {} }
+  if (['MANTENCIONES','DOCUMENTOS','VEHICULOS','CONDUCTORES'].indexOf(resource.sheet) >= 0) { try { solicitarRevisionAlertasSegundoPlano_('Creación en ' + resource.sheet); } catch (_) {} }
   return ok_({ row: limpiarSalidaRecurso_(resource.sheet, row) });
 }
 
@@ -374,7 +388,7 @@ function servicioActualizar_(request, session) {
   const row = actualizarRegistro_(resource.sheet, request.identificador, data);
   registrarBitacora_(session.user, 'ACTUALIZAR', resource.module, request.identificador,
     'Respaldo anterior: ' + respaldoAuditoria_(existing) + '. Datos posteriores: ' + respaldoAuditoria_(row));
-  if (['MANTENCIONES','DOCUMENTOS','VEHICULOS'].indexOf(resource.sheet) >= 0) { try { solicitarRevisionAlertasSegundoPlano_('Actualización en ' + resource.sheet); } catch (_) {} }
+  if (['MANTENCIONES','DOCUMENTOS','VEHICULOS','CONDUCTORES'].indexOf(resource.sheet) >= 0) { try { solicitarRevisionAlertasSegundoPlano_('Actualización en ' + resource.sheet); } catch (_) {} }
   return ok_({ row: limpiarSalidaRecurso_(resource.sheet, row) });
 }
 
@@ -651,7 +665,7 @@ function normalizarListaPermisos_(value) {
 }
 
 function catalogoClavesPermisosUsuario_() {
-  const modulos = ['PANEL_PRINCIPAL','USUARIOS','VEHICULOS','CONDUCTORES','OPERACIONES','CHECKIN','CHECKIN_APROBACIONES','GPS','HISTORIAL','MANTENCIONES','COMBUSTIBLE','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','CONFIGURACION','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
+  const modulos = ['PANEL_PRINCIPAL','OFICINA_VIRTUAL','USUARIOS','VEHICULOS','CONDUCTORES','OPERACIONES','CHECKIN','CHECKIN_APROBACIONES','GPS','HISTORIAL','MANTENCIONES','COMBUSTIBLE','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','CONFIGURACION','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
   const acciones = ['LEER','CREAR','ACTUALIZAR','ELIMINAR'];
   const claves = [];
   modulos.forEach(function(modulo) {
@@ -948,6 +962,7 @@ function insertarRegistro_(sheetName, data, prefix) {
     });
     sheet.getRange(Math.max(2, sheet.getLastRow() + 1), 1, 1, headers.length).setValues([row]);
     invalidarCacheHoja_(sheetName);
+    invalidarCacheTareasOficinaVirtualSiAplica_(sheetName);
     return limpiarSalidaRecurso_(sheetName, object);
   } finally {
     if (!lockYaAdquirido) lock.releaseLock();
@@ -979,6 +994,7 @@ function insertarRegistrosMasivos_(sheetName, registros, prefix) {
     });
     sheet.getRange(Math.max(2, sheet.getLastRow() + 1), 1, filas.length, headers.length).setValues(filas);
     invalidarCacheHoja_(sheetName);
+    invalidarCacheTareasOficinaVirtualSiAplica_(sheetName);
     return objetos.map(function(object) { return limpiarSalidaRecurso_(sheetName, object); });
   } finally {
     if (!lockYaAdquirido) lock.releaseLock();
@@ -1007,6 +1023,7 @@ function actualizarRegistro_(sheetName, id, data) {
     const newRow = headers.map(function(header) { return deserializarFecha_(current[header]); });
     sheet.getRange(rowNumber, 1, 1, headers.length).setValues([newRow]);
     invalidarCacheHoja_(sheetName);
+    invalidarCacheTareasOficinaVirtualSiAplica_(sheetName);
     return limpiarSalidaRecurso_(sheetName, current);
   } finally {
     if (!lockYaAdquirido) lock.releaseLock();
@@ -1024,6 +1041,7 @@ function limpiarHojaDatos_(sheetName) {
   const lastRow = sheet.getLastRow();
   if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).clearContent();
   invalidarCacheHoja_(sheetName);
+  invalidarCacheTareasOficinaVirtualSiAplica_(sheetName);
 }
 
 function obtenerRecurso_(resourceName) {
@@ -1379,6 +1397,7 @@ function instalarSistema() {
   migrarGpsActualDesdeHistorial_();
   asegurarCatalogos_();
   try { instalarActivadorAlertasAutomaticas_(); } catch (error) { Logger.log('Activador de alertas: ' + error.message); }
+  try { instalarActivadorOficinaVirtual_(); } catch (error) { Logger.log('Activador de Oficina Virtual: ' + error.message); }
   let duplicadosDepurados = { alertas:0, notificaciones:0 };
   try { duplicadosDepurados = depurarDuplicadosAvisos_(); } catch (error) { Logger.log('Depuración de avisos: ' + error.message); }
   const claveInstalacion = obtenerOCrearClaveInstalacion_();
@@ -1435,8 +1454,14 @@ function actualizarSistema() {
   try { repararModuloCheckin(); } catch (error) { Logger.log('Reparación de check-in: ' + error.message); }
   try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
   try { resultado.reinicioGpsActual = reiniciarInstantaneasGpsVersion_(); } catch (error) { Logger.log('Reinicio de posiciones actuales: ' + error.message); }
+  try { instalarActivadorOficinaVirtual_(); } catch (error) { Logger.log('Oficina Virtual: ' + error.message); }
+  try {
+    resultado.alertasTecnicasCerradas = cerrarAlertaTecnicaActivadorResueltaOficinaVirtual_({
+      problemasDetalle:activadorOficinaVirtualInstalado_() ? [] : [{ id:'ACTIVADOR-OFICINA' }]
+    });
+  } catch (error) { Logger.log('Cierre de alerta técnica: ' + error.message); }
   reiniciarCachesEjecucion_();
-  resultado.message = 'Sistema 3.17.0 actualizado: QR contextual para combustible, check-in vehicular y operaciones, con permisos, asignaciones y auditoría conservados.';
+  resultado.message = 'Sistema 3.18.3 actualizado con la nueva URL de despliegue, migración automática en Android y control administrativo de avisos emergentes, con Oficina Virtual, QR, GPS, permisos y auditoría conservados.';
   return resultado;
 }
 
@@ -1456,7 +1481,7 @@ function asegurarCatalogos_() {
   asegurarRol_('ROL-SUPERVISOR', 'Supervisor', 'Gestión operacional y reportes');
   asegurarRol_('ROL-CONDUCTOR', 'Conductor', 'Operaciones, rutas, GPS y notificaciones propias');
 
-  const modules = ['PANEL_PRINCIPAL','USUARIOS','VEHICULOS','CONDUCTORES','OPERACIONES','CHECKIN','CHECKIN_APROBACIONES','GPS','HISTORIAL','MANTENCIONES','COMBUSTIBLE','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','CONFIGURACION','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
+  const modules = ['PANEL_PRINCIPAL','OFICINA_VIRTUAL','USUARIOS','VEHICULOS','CONDUCTORES','OPERACIONES','CHECKIN','CHECKIN_APROBACIONES','GPS','HISTORIAL','MANTENCIONES','COMBUSTIBLE','DOCUMENTOS','ALERTAS','REPORTES','BITACORA','CONFIGURACION','QR','RUTAS','NOTIFICACIONES','CONEXIONES'];
   const actions = ['LEER','CREAR','ACTUALIZAR','ELIMINAR'];
   modules.forEach(function(moduleName) {
     actions.forEach(function(action) {
@@ -1480,6 +1505,15 @@ function asegurarCatalogos_() {
       asegurarPermisoCatalogo_('ROL-CONDUCTOR', moduleName, action, 'SI');
     });
   });
+
+  asegurarPermisoCatalogo_('ROL-SUPERVISOR', 'OFICINA_VIRTUAL', 'LEER', 'SI');
+  asegurarPermisoCatalogo_('ROL-SUPERVISOR', 'OFICINA_VIRTUAL', 'CREAR', 'SI');
+  asegurarPermisoCatalogo_('ROL-SUPERVISOR', 'OFICINA_VIRTUAL', 'ACTUALIZAR', 'NO');
+  asegurarPermisoCatalogo_('ROL-SUPERVISOR', 'OFICINA_VIRTUAL', 'ELIMINAR', 'NO');
+  asegurarPermisoCatalogo_('ROL-CONDUCTOR', 'OFICINA_VIRTUAL', 'LEER', 'SI');
+  asegurarPermisoCatalogo_('ROL-CONDUCTOR', 'OFICINA_VIRTUAL', 'CREAR', 'SI');
+  asegurarPermisoCatalogo_('ROL-CONDUCTOR', 'OFICINA_VIRTUAL', 'ACTUALIZAR', 'NO');
+  asegurarPermisoCatalogo_('ROL-CONDUCTOR', 'OFICINA_VIRTUAL', 'ELIMINAR', 'NO');
 
   // La lectura del panel de conexiones no pertenece a Supervisor ni Conductor.
   // Ambos conservan solo los permisos técnicos necesarios para reportar su propia presencia.
@@ -2762,12 +2796,19 @@ function crearAlertaUnica_(data){
     const existing=listarRegistros_('ALERTAS',{}).find(function(row){
       if(String(row.ELIMINADO||'NO')==='SI')return false;
       const mismaClave=String(row.CLAVE_UNICA||'')===clave;
+      const mismoEvento=Boolean(recordId)&&String(row.TIPO||'')===type&&String(row.MODULO||'')===moduleName&&String(row.REGISTRO_ID||'')===recordId&&String(row.USUARIO_ID||'')===String(data.USUARIO_ID||'');
       const legado=!row.CLAVE_UNICA&&String(row.TIPO||'')===type&&String(row.MODULO||'')===moduleName&&String(row.REGISTRO_ID||'')===recordId&&String(row.TITULO||'')===title;
-      return mismaClave||legado;
+      return mismaClave||mismoEvento||legado;
     });
     if(existing){
-      if(!existing.CLAVE_UNICA)try{actualizarRegistro_('ALERTAS',existing.ID,{CLAVE_UNICA:clave});}catch(_){ }
-      return{row:existing,created:false};
+      const changes={};
+      if(String(existing.CLAVE_UNICA||'')!==clave)changes.CLAVE_UNICA=clave;
+      if(String(existing.NIVEL||'')!==String(data.NIVEL||'Info'))changes.NIVEL=data.NIVEL||'Info';
+      if(String(existing.TITULO||'')!==title)changes.TITULO=title;
+      if(String(existing.MENSAJE||'')!==String(data.MENSAJE||''))changes.MENSAJE=data.MENSAJE||'';
+      if(String(existing.USUARIO_ID||'')!==String(data.USUARIO_ID||''))changes.USUARIO_ID=data.USUARIO_ID||'';
+      const actualizado=Object.keys(changes).length?actualizarRegistro_('ALERTAS',existing.ID,changes):existing;
+      return{row:actualizado,created:false,updated:Object.keys(changes).length>0};
     }
     alert=crearAlerta_(Object.assign({},data,{CLAVE_UNICA:clave}));
     created=true;
@@ -2786,7 +2827,9 @@ function ejecutarMotorAlertasAutomaticas_(options){
     const now=new Date(),maintenanceDays=Number(CONFIGURACION_APLICACION.DIAS_AVISO_MANTENCION||7),documentDays=Number(CONFIGURACION_APLICACION.DIAS_AVISO_DOCUMENTO||30),minutesWithoutGps=Number(CONFIGURACION_APLICACION.MINUTOS_SIN_GPS_ALERTA||5),precisionLimit=Number(CONFIGURACION_APLICACION.METROS_PRECISION_GPS_ALERTA||150),vehicles=listarRegistros_('VEHICULOS',{}),vehicleMap={};vehicles.forEach(function(row){vehicleMap[row.ID]=row;});
     listarRegistros_('MANTENCIONES',{}).forEach(function(row){if(['Realizada','Cancelada'].indexOf(String(row.ESTADO||''))>=0)return;const days=diasHasta_(row.FECHA_PROGRAMADA,now);if(days===null)return;const vehicle=vehicleMap[row.VEHICULO_ID]||{},label=vehicle.PATENTE||row.VEHICULO_ID||'Equipo';if(days<0){if(row.ESTADO!=='Atrasada')actualizarRegistro_('MANTENCIONES',row.ID,{ESTADO:'Atrasada'});if(crearAlertaUnica_({TIPO:'Mantención',NIVEL:'Crítica',TITULO:'Mantención atrasada',MENSAJE:label+' tiene la mantención "'+(row.TITULO||row.TIPO||row.ID)+'" atrasada por '+Math.abs(days)+' día(s).',MODULO:'MANTENCIONES',REGISTRO_ID:row.ID}).created)created++;}else if(days<=maintenanceDays){if(crearAlertaUnica_({TIPO:'Mantención',NIVEL:days<=2?'Crítica':'Advertencia',TITULO:'Mantención próxima',MENSAJE:label+' requiere "'+(row.TITULO||row.TIPO||row.ID)+'" en '+days+' día(s).',MODULO:'MANTENCIONES',REGISTRO_ID:row.ID}).created)created++;}});
     vehicles.forEach(function(row){const days=diasHasta_(row.PROXIMA_MANTENCION,now);if(days===null||days>maintenanceDays)return;if(crearAlertaUnica_({TIPO:'Mantención',NIVEL:days<0?'Crítica':'Advertencia',TITULO:days<0?'Equipo con mantención vencida':'Equipo próximo a mantención',MENSAJE:(row.PATENTE||row.ID)+(days<0?' superó la fecha de próxima mantención por '+Math.abs(days)+' día(s).':' debe entrar a mantención en '+days+' día(s).'),MODULO:'VEHICULOS',REGISTRO_ID:row.ID}).created)created++;});
-    listarRegistros_('DOCUMENTOS',{}).forEach(function(row){const days=diasHasta_(row.FECHA_VENCIMIENTO,now);if(days===null||days>documentDays)return;if(crearAlertaUnica_({TIPO:'Documento',NIVEL:days<0?'Crítica':'Advertencia',TITULO:days<0?'Documento vencido':'Documento próximo a vencer',MENSAJE:(row.TIPO||'Documento')+' '+(row.IDENTIFICACION||row.ID)+(days<0?' está vencido.':' vence en '+days+' día(s).'),MODULO:'DOCUMENTOS',REGISTRO_ID:row.ID}).created)created++;});
+    // Los vencimientos documentales se entregan como una única tarea personal
+    // mediante Oficina Virtual. No se crea una segunda alerta global.
+    actualizarEstadosDocumentos_();
     listarRegistros_('CHECKINS',{}).forEach(function(row){if(row.ESTADO_REVISION!=='Bloqueado'&&Number(row.FALLAS_CRITICAS||0)<=0)return;if(crearAlertaUnica_({TIPO:'Check-in',NIVEL:'Crítica',TITULO:'Vehículo bloqueado por inspección',MENSAJE:'El check-in '+row.ID+' registra '+Number(row.FALLAS_CRITICAS||0)+' falla(s) crítica(s).',MODULO:'CHECKIN',REGISTRO_ID:row.ID,USUARIO_ID:row.CREADO_POR||''}).created)created++;});
     const gpsRows=listarRegistros_('GPS_ACTUAL',{}),activeOperations=listarRegistros_('OPERACIONES',{}).filter(function(row){return row.ESTADO==='Activa';});
     activeOperations.forEach(function(operation){const gps=gpsRows.filter(function(row){return(operation.ID&&row.OPERACION_ID===operation.ID)||(operation.VEHICULO_ID&&row.VEHICULO_ID===operation.VEHICULO_ID)||(operation.CONDUCTOR_ID&&row.CONDUCTOR_ID===operation.CONDUCTOR_ID);}).sort(function(a,b){return new Date(b.FECHA_HORA||0)-new Date(a.FECHA_HORA||0);})[0],ageMinutes=gps?(now.getTime()-new Date(gps.FECHA_HORA||0).getTime())/60000:Infinity;if(!gps||!isFinite(ageMinutes)||ageMinutes>=minutesWithoutGps){if(crearAlertaUnica_({TIPO:'GPS',NIVEL:'Crítica',TITULO:'Operación activa sin ubicación reciente',MENSAJE:'La operación '+operation.ID+' no registra una ubicación válida desde hace '+(isFinite(ageMinutes)?Math.floor(ageMinutes)+' minutos':'varios minutos')+'.',MODULO:'GPS',REGISTRO_ID:operation.ID,USUARIO_ID:operation.CREADO_POR||''}).created)created++;}else if(Number(gps.PRECISION_METROS||0)>precisionLimit){if(crearAlertaUnica_({TIPO:'GPS',NIVEL:'Advertencia',TITULO:'Señal GPS con baja precisión',MENSAJE:'La operación '+operation.ID+' reporta una precisión aproximada de ±'+Math.round(Number(gps.PRECISION_METROS||0))+' metros.',MODULO:'GPS',REGISTRO_ID:operation.ID,USUARIO_ID:operation.CREADO_POR||''}).created)created++;}});
@@ -2806,6 +2849,9 @@ function depurarDuplicadosAvisos_(){
   function texto_(value){return String(value==null?'':value).trim().toUpperCase().replace(/\s+/g,' ');}
   function fechaMs_(row,campo){const ms=new Date(row[campo]||row.CREADO_EN||0).getTime();return isFinite(ms)?ms:0;}
   function firma_(hoja,row){
+    if(hoja==='ALERTAS'&&texto_(row.REGISTRO_ID||'')){
+      return ['ALT-EVENTO',row.TIPO,row.MODULO,row.REGISTRO_ID,row.USUARIO_ID].map(texto_).join('|');
+    }
     const clave=texto_(row.CLAVE_UNICA||'');
     if(clave){
       if(hoja==='NOTIFICACIONES')return ['CLAVE',clave,row.DESTINATARIO_USUARIO_ID,row.DESTINATARIO_CONDUCTOR_ID].map(texto_).join('|');
@@ -2849,7 +2895,19 @@ function depurarDuplicadosAvisos_(){
     const coincide=alertasActivas.some(function(alert){return texto_(alert.TITULO)===texto_(titulo)&&texto_(alert.MENSAJE)===texto_(notification.MENSAJE);});
     if(coincide){actualizarRegistro_('NOTIFICACIONES',notification.ID,{ELIMINADO:'SI'});espejosEliminados++;}
   });
-  return{alertas:alertas.eliminados,notificaciones:notificaciones.eliminados,gruposAlertas:alertas.gruposConsolidados,gruposNotificaciones:notificaciones.gruposConsolidados,notificacionesEspejoEliminadas:espejosEliminados};
+  // Desde 3.18.1 los documentos usan una tarea personal única. Se retiran
+  // únicamente las alertas globales heredadas que duplicaban ese mismo aviso.
+  let alertasDocumentosHeredadas=0;
+  listarRegistros_('ALERTAS',{}).filter(function(row){
+    return String(row.ELIMINADO||'NO')!=='SI'
+      && String(row.TIPO||'')==='Documento'
+      && String(row.MODULO||'')==='DOCUMENTOS'
+      && ['Documento vencido','Documento próximo a vencer'].indexOf(String(row.TITULO||''))>=0;
+  }).forEach(function(row){
+    actualizarRegistro_('ALERTAS',row.ID,{ELIMINADO:'SI'});
+    alertasDocumentosHeredadas++;
+  });
+  return{alertas:alertas.eliminados+alertasDocumentosHeredadas,notificaciones:notificaciones.eliminados,gruposAlertas:alertas.gruposConsolidados,gruposNotificaciones:notificaciones.gruposConsolidados,notificacionesEspejoEliminadas:espejosEliminados,alertasDocumentosHeredadas:alertasDocumentosHeredadas};
 }
 
 function instalarActivadorAlertasAutomaticas_(){
@@ -3663,13 +3721,18 @@ function marcarAlertaLeida_(request, session) {
   const alerta=obtenerRegistro_('ALERTAS',alertaId);
   if(!alerta)throw new Error('ALERTA_NO_ENCONTRADA');
   if(!filtrarPorUsuario_('ALERTAS',[alerta],session.user).length)throw new Error('PERMISO_DENEGADO');
+  const modulosOperacionales=['OPERACIONES','GPS','CHECKIN','MANTENCIONES','VEHICULOS','DOCUMENTOS','RUTAS','COMBUSTIBLE','CONEXIONES'];
+  const requiereAdministrador=modulosOperacionales.indexOf(String(alerta.MODULO||'').toUpperCase())>=0||String(alerta.TIPO||'')==='Reporte de conductor';
+  if(requiereAdministrador&&!esAdministradorSistema_(session.user)){
+    throw new Error('ALERTA_OPERACIONAL_REQUIERE_ADMINISTRADOR');
+  }
   if(String(alerta.LEIDA||'NO')==='SI')return ok_({row:limpiarSalidaRecurso_('ALERTAS',alerta),persistenciaConfirmada:true,yaEstabaLeida:true});
   actualizarRegistro_('ALERTAS',alerta.ID,{LEIDA:'SI',FECHA_LECTURA:new Date(),LEIDA_POR:session.user.ID});
   SpreadsheetApp.flush();
   invalidarCacheHoja_('ALERTAS');
   const confirmado=obtenerRegistro_('ALERTAS',alerta.ID);
   if(!confirmado||String(confirmado.LEIDA||'NO')!=='SI')throw new Error('LECTURA_ALERTA_NO_CONFIRMADA');
-  registrarBitacora_(session.user,'MARCAR_LEIDA','ALERTAS',alerta.ID,'Alerta marcada como leída.');
+  registrarBitacora_(session.user,'VALIDAR_Y_CERRAR','ALERTAS',alerta.ID,'Alerta validada y cerrada por '+(esAdministradorSistema_(session.user)?'Administrador':'usuario autorizado')+'. Módulo: '+String(alerta.MODULO||'Sistema')+'.');
   return ok_({row:limpiarSalidaRecurso_('ALERTAS',confirmado),persistenciaConfirmada:true});
 }
 
@@ -4455,6 +4518,782 @@ function repararSistema_(request, session) {
 }
 
 /** ============================================================
+ * ARCHIVO: 24_Oficina_Virtual.gs
+ * ============================================================ */
+/**
+ * Asistente interno del Sistema de Gestión de Flotas.
+ * No envía datos operativos a servicios externos: responde con conocimiento
+ * incorporado, permisos vigentes y datos visibles para la sesión.
+ */
+function usuarioSistemaOficinaVirtual_() {
+  return { ID:'SISTEMA', NOMBRE:'Oficina Virtual', CORREO:'', ROL_ID:'ROL-ADMIN' };
+}
+
+function modoAutomaticoOficinaVirtual_() {
+  return PropertiesService.getScriptProperties().getProperty(OFICINA_VIRTUAL_MODO_AUTO_) === 'SI';
+}
+
+function normalizarConsultaOficinaVirtual_(valor) {
+  return String(valor || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function leerUltimoResultadoOficinaVirtual_() {
+  const properties = PropertiesService.getScriptProperties();
+  let result = {};
+  try { result = JSON.parse(properties.getProperty(OFICINA_VIRTUAL_ULTIMO_RESULTADO_) || '{}'); }
+  catch (_) { result = {}; }
+  return result && typeof result === 'object' ? result : {};
+}
+
+function guardarUltimoResultadoOficinaVirtual_(result) {
+  const properties = PropertiesService.getScriptProperties();
+  const reducido = {
+    fecha:result.fecha || fechaIso_(),
+    estado:result.estado || 'CORRECTO',
+    modoAutomatico:Boolean(result.modoAutomatico),
+    problemas:Number(result.problemas || 0),
+    reparaciones:Number(result.reparaciones || 0),
+    avisosCreados:Number(result.avisosCreados || 0)
+  };
+  properties.setProperty(OFICINA_VIRTUAL_ULTIMA_REVISION_, reducido.fecha);
+  properties.setProperty(OFICINA_VIRTUAL_ULTIMO_RESULTADO_, JSON.stringify(reducido));
+  return reducido;
+}
+
+function obtenerDestinatarioDocumentoOficinaVirtual_(documento, usuariosPorId, usuariosPorCorreo, conductoresPorId) {
+  const userId = String(documento.USUARIO_ASOCIADO_ID || '').trim();
+  if (userId && usuariosPorId[userId]) return usuariosPorId[userId];
+  const conductorId = String(documento.CONDUCTOR_ASOCIADO_ID || (String(documento.ASOCIADO_TIPO || '').toUpperCase() === 'CONDUCTOR' ? documento.ASOCIADO_ID : '') || '').trim();
+  const conductor = conductoresPorId[conductorId];
+  if (conductor && conductor.USUARIO_ID && usuariosPorId[String(conductor.USUARIO_ID)]) return usuariosPorId[String(conductor.USUARIO_ID)];
+  const asociadoUsuario = String(documento.ASOCIADO_TIPO || '').toUpperCase() === 'USUARIO' ? String(documento.ASOCIADO_ID || '') : '';
+  if (asociadoUsuario && usuariosPorId[asociadoUsuario]) return usuariosPorId[asociadoUsuario];
+  const correo = normalizarEmail_(documento.CORREO_ASOCIADO || '');
+  return correo ? usuariosPorCorreo[correo] || null : null;
+}
+
+function crearTareaPersonalOficinaVirtual_(userId, conductorId, data, indiceNotificaciones) {
+  const id = String(userId || '').trim();
+  if (!id) return { created:false, row:null };
+  const claveBase = String(data.CLAVE_UNICA || '').trim() || huellaEvento_('OV-TAREA', [
+    id, data.MODULO || '', data.REGISTRO_ID || '', data.TITULO || ''
+  ]);
+  const clave = claveNotificacionUnica_({
+    CLAVE_UNICA:claveBase,
+    DESTINATARIO_USUARIO_ID:id,
+    DESTINATARIO_CONDUCTOR_ID:conductorId || ''
+  });
+  const existing = indiceNotificaciones
+    ? indiceNotificaciones[clave] || null
+    : listarRegistros_('NOTIFICACIONES', {}).find(function(row) {
+      return String(row.ELIMINADO || 'NO') !== 'SI'
+        && String(row.CLAVE_UNICA || '') === clave
+        && String(row.DESTINATARIO_USUARIO_ID || '') === id;
+    });
+  if (existing) {
+    const changes = {};
+    const fields = {
+      TITULO:data.TITULO || 'Tarea pendiente',
+      MENSAJE:data.MENSAJE || 'Tienes una tarea pendiente en el sistema.',
+      TIPO:data.TIPO || 'Oficina Virtual',
+      PRIORIDAD:data.PRIORIDAD || 'Normal',
+      RUTA_ID:data.RUTA_ID || '',
+      OPERACION_ID:data.OPERACION_ID || ''
+    };
+    Object.keys(fields).forEach(function(field) {
+      if (String(existing[field] || '') !== String(fields[field] || '')) changes[field] = fields[field];
+    });
+    if (Object.keys(changes).length && String(existing.LEIDA || 'NO') === 'SI') {
+      changes.LEIDA = 'NO';
+      changes.FECHA_LECTURA = '';
+      changes.LEIDA_POR = '';
+    }
+    const updated = Object.keys(changes).length ? actualizarRegistro_('NOTIFICACIONES', existing.ID, changes) : existing;
+    if (indiceNotificaciones) indiceNotificaciones[clave] = updated;
+    return { created:false, updated:Object.keys(changes).length > 0, row:updated };
+  }
+  const row = crearNotificacionInterna_({
+    DESTINATARIO_USUARIO_ID:id,
+    DESTINATARIO_CONDUCTOR_ID:conductorId || '',
+    TITULO:data.TITULO || 'Tarea pendiente',
+    MENSAJE:data.MENSAJE || 'Tienes una tarea pendiente en el sistema.',
+    TIPO:data.TIPO || 'Oficina Virtual',
+    PRIORIDAD:data.PRIORIDAD || 'Normal',
+    RUTA_ID:data.RUTA_ID || '',
+    OPERACION_ID:data.OPERACION_ID || '',
+    CLAVE_UNICA:claveBase,
+    CREADO_POR:'SISTEMA'
+  });
+  if (indiceNotificaciones && row) indiceNotificaciones[clave] = row;
+  return { created:Boolean(row), row:row || null };
+}
+
+function invalidarCacheTareasOficinaVirtualSiAplica_(sheetName) {
+  if (['DOCUMENTOS','VEHICULOS','CONDUCTORES','RUTAS','USUARIOS','CHECKINS'].indexOf(String(sheetName || '')) < 0) return false;
+  try {
+    PropertiesService.getScriptProperties().setProperty(OFICINA_VIRTUAL_CACHE_VERSION_, String(Date.now()));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function versionCacheTareasOficinaVirtual_() {
+  const properties = PropertiesService.getScriptProperties();
+  let version = properties.getProperty(OFICINA_VIRTUAL_CACHE_VERSION_);
+  if (!version) {
+    version = String(Date.now());
+    properties.setProperty(OFICINA_VIRTUAL_CACHE_VERSION_, version);
+  }
+  return version;
+}
+
+function claveCacheTareasOficinaVirtual_(usuario) {
+  return ('ovt_' + VERSION_APLICACION + '_' + versionCacheTareasOficinaVirtual_() + '_' + String(usuario && usuario.ID || 'sin_usuario'))
+    .replace(/[^A-Za-z0-9_-]/g, '').slice(0, 220);
+}
+
+function leerCacheTareasOficinaVirtual_(usuario) {
+  try {
+    const raw = CacheService.getScriptCache().get(claveCacheTareasOficinaVirtual_(usuario));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function guardarCacheTareasOficinaVirtual_(usuario, tareas) {
+  const tasks = Array.isArray(tareas) ? tareas.slice(0, 100) : [];
+  try {
+    CacheService.getScriptCache().put(claveCacheTareasOficinaVirtual_(usuario), JSON.stringify(tasks), OFICINA_VIRTUAL_CACHE_SEGUNDOS_);
+  } catch (_) {}
+  return tasks;
+}
+
+function agregarIndiceOficinaVirtual_(indice, clave, fila) {
+  const key = String(clave || '').trim();
+  if (!key) return;
+  if (!indice[key]) indice[key] = [];
+  indice[key].push(fila);
+}
+
+function prepararContextoTareasOficinaVirtual_(contexto) {
+  const context = contexto || {};
+  if (context.indiceOficinaVirtual) return context;
+  const documents = Array.isArray(context.documents) ? context.documents : listarRegistrosDiagnosticoSeguro_('DOCUMENTOS');
+  const vehicles = Array.isArray(context.vehicles) ? context.vehicles : listarRegistrosDiagnosticoSeguro_('VEHICULOS');
+  const drivers = Array.isArray(context.drivers) ? context.drivers : listarRegistrosDiagnosticoSeguro_('CONDUCTORES');
+  const routes = Array.isArray(context.routes) ? context.routes : listarRegistrosDiagnosticoSeguro_('RUTAS');
+  const clean = function(value) { return normalizarConsultaOficinaVirtual_(value).replace(/[^a-z0-9]/g, ''); };
+  const index = {
+    documentosPorUsuario:{},
+    documentosPorConductor:{},
+    documentosPorCorreo:{},
+    tiposDocumentoPorVehiculo:{},
+    licenciaPorConductor:{},
+    rutasPorConductor:{},
+    conductorPorUsuario:{}
+  };
+  const vehicleByPlate = {};
+  const driverByRut = {};
+  vehicles.forEach(function(vehicle) {
+    const plate = clean(vehicle.PATENTE);
+    if (plate) vehicleByPlate[plate] = String(vehicle.ID || '');
+  });
+  drivers.forEach(function(driver) {
+    const driverId = String(driver.ID || '');
+    const rut = clean(driver.RUT);
+    if (rut) driverByRut[rut] = driverId;
+    if (driver.USUARIO_ID && !index.conductorPorUsuario[String(driver.USUARIO_ID)]) {
+      index.conductorPorUsuario[String(driver.USUARIO_ID)] = driver;
+    }
+  });
+  routes.forEach(function(route) {
+    agregarIndiceOficinaVirtual_(index.rutasPorConductor, route.CONDUCTOR_ID, route);
+  });
+  documents.forEach(function(document) {
+    const associatedType = normalizarConsultaOficinaVirtual_(document.ASOCIADO_TIPO);
+    const associatedId = String(document.ASOCIADO_ID || '');
+    const userId = String(document.USUARIO_ASOCIADO_ID || (associatedType === 'usuario' ? associatedId : '') || '');
+    const driverId = String(document.CONDUCTOR_ASOCIADO_ID || (associatedType === 'conductor' ? associatedId : '') || driverByRut[clean(document.IDENTIFICACION)] || '');
+    const email = normalizarEmail_(document.CORREO_ASOCIADO || '');
+    agregarIndiceOficinaVirtual_(index.documentosPorUsuario, userId, document);
+    agregarIndiceOficinaVirtual_(index.documentosPorConductor, driverId, document);
+    agregarIndiceOficinaVirtual_(index.documentosPorCorreo, email, document);
+    const vehicleId = String((associatedType === 'vehiculo' ? associatedId : '') || vehicleByPlate[clean(document.IDENTIFICACION)] || '');
+    if (vehicleId) {
+      if (!index.tiposDocumentoPorVehiculo[vehicleId]) index.tiposDocumentoPorVehiculo[vehicleId] = {};
+      const type = normalizarConsultaOficinaVirtual_(document.TIPO);
+      if (type.indexOf('soap') >= 0) index.tiposDocumentoPorVehiculo[vehicleId].SOAP = true;
+      if (type.indexOf('revision tecnica') >= 0) index.tiposDocumentoPorVehiculo[vehicleId]['REVISION-TECNICA'] = true;
+      if (type.indexOf('permiso de circulacion') >= 0) index.tiposDocumentoPorVehiculo[vehicleId]['PERMISO-CIRCULACION'] = true;
+    }
+    if (driverId && normalizarConsultaOficinaVirtual_(document.TIPO).indexOf('licencia') >= 0) {
+      index.licenciaPorConductor[driverId] = true;
+    }
+  });
+  context.documents = documents;
+  context.vehicles = vehicles;
+  context.drivers = drivers;
+  context.routes = routes;
+  context.indiceOficinaVirtual = index;
+  return context;
+}
+
+function documentosVisiblesTareasOficinaVirtual_(usuario, conductorId, contexto) {
+  if (esAdministradorSistema_(usuario)) return contexto.documents;
+  const index = contexto.indiceOficinaVirtual;
+  const lists = [
+    index.documentosPorUsuario[String(usuario.ID || '')] || [],
+    index.documentosPorConductor[String(conductorId || '')] || [],
+    index.documentosPorCorreo[normalizarEmail_(usuario.CORREO || '')] || []
+  ];
+  const unique = {};
+  const result = [];
+  lists.forEach(function(list) {
+    list.forEach(function(row) {
+      const key = String(row.ID || '');
+      if (!key || unique[key]) return;
+      unique[key] = true;
+      result.push(row);
+    });
+  });
+  return result;
+}
+
+function tareasPendientesOficinaVirtual_(usuario, contexto) {
+  const user = usuario || {};
+  const context = prepararContextoTareasOficinaVirtual_(contexto || {});
+  const index = context.indiceOficinaVirtual;
+  const esAdmin = esAdministradorSistema_(user);
+  const driver = Object.prototype.hasOwnProperty.call(context, 'driver')
+    ? context.driver
+    : index.conductorPorUsuario[String(user.ID || '')] || null;
+  const driverId = driver ? String(driver.ID || '') : '';
+  const now = new Date();
+  const documentDays = Number(CONFIGURACION_APLICACION.DIAS_AVISO_DOCUMENTO || 30);
+  const tasks = [];
+  documentosVisiblesTareasOficinaVirtual_(user, driverId, context).forEach(function(row) {
+    const pendingReview = String(row.ESTADO || '') === 'Pendiente de revisión';
+    const days = diasHasta_(row.FECHA_VENCIMIENTO, now);
+    let task = null;
+    if (pendingReview && esAdmin) {
+      task = { id:'DOC-' + row.ID, tipo:'Documento', prioridad:'Alta', titulo:'Revisar documento pendiente', detalle:(row.TIPO || 'Documento') + ' ' + (row.IDENTIFICACION || row.ID) + ' requiere revisión.', modulo:'DOCUMENTOS', registroId:row.ID };
+    } else if (!String(row.DIRECCION_ARCHIVO || '').trim()) {
+      task = { id:'DOC-' + row.ID, tipo:'Documento', prioridad:'Alta', titulo:'Adjuntar archivo faltante', detalle:(row.TIPO || 'Documento') + ' no tiene un archivo cargado.', modulo:'DOCUMENTOS', registroId:row.ID };
+    } else if (days !== null && days < 0) {
+      task = { id:'DOC-' + row.ID, tipo:'Documento', prioridad:'Urgente', titulo:'Renovar documento vencido', detalle:(row.TIPO || 'Documento') + ' está vencido desde hace ' + Math.abs(days) + ' día(s).', modulo:'DOCUMENTOS', registroId:row.ID };
+    } else if (days !== null && days <= documentDays) {
+      task = { id:'DOC-' + row.ID, tipo:'Documento', prioridad:days <= 7 ? 'Alta' : 'Normal', titulo:'Renovar documento próximo a vencer', detalle:(row.TIPO || 'Documento') + ' vence en ' + days + ' día(s).', modulo:'DOCUMENTOS', registroId:row.ID };
+    }
+    if (task) tasks.push(task);
+  });
+  if (esAdmin) {
+    const requiredTypes = ['SOAP','REVISION-TECNICA','PERMISO-CIRCULACION'];
+    context.vehicles.filter(function(row) {
+      return String(row.ESTADO || '') !== 'Inactivo' && String(row.ELIMINADO || 'NO') !== 'SI';
+    }).forEach(function(vehicle) {
+      const registered = index.tiposDocumentoPorVehiculo[String(vehicle.ID || '')] || {};
+      requiredTypes.forEach(function(required) {
+        if (registered[required]) return;
+        tasks.push({
+          id:'FALTA-' + required + '-' + vehicle.ID,
+          tipo:'Documento',
+          prioridad:'Alta',
+          titulo:'Documento obligatorio faltante',
+          detalle:(vehicle.PATENTE || vehicle.ID) + ' no tiene registrado ' + required.replace(/-/g, ' ').toLowerCase() + '.',
+          modulo:'DOCUMENTOS',
+          registroId:vehicle.ID
+        });
+      });
+    });
+    context.drivers.filter(function(row) {
+      return String(row.ESTADO || '') !== 'Inactivo' && String(row.ELIMINADO || 'NO') !== 'SI';
+    }).forEach(function(conductor) {
+      if (index.licenciaPorConductor[String(conductor.ID || '')]) return;
+      tasks.push({
+        id:'FALTA-LICENCIA-' + conductor.ID,
+        tipo:'Licencia',
+        prioridad:'Alta',
+        titulo:'Licencia de conducir no cargada',
+        detalle:(conductor.NOMBRE || conductor.ID) + ' no tiene un documento de licencia asociado.',
+        modulo:'DOCUMENTOS',
+        registroId:conductor.ID
+      });
+    });
+  }
+  if (driver) {
+    if (!index.licenciaPorConductor[driverId]) {
+      const licenseDays = diasHasta_(driver.LICENCIA_VENCIMIENTO, now);
+      const expired = licenseDays !== null && licenseDays < 0;
+      tasks.push({
+        id:'FALTA-LICENCIA-' + driver.ID,
+        tipo:'Licencia',
+        prioridad:expired ? 'Urgente' : 'Alta',
+        titulo:expired ? 'Licencia vencida y documento no cargado' : 'Licencia de conducir no cargada',
+        detalle:expired
+          ? 'Tu licencia venció hace ' + Math.abs(licenseDays) + ' día(s) y falta cargar el documento renovado.'
+          : (!driver.LICENCIA_VENCIMIENTO ? 'Falta cargar tu licencia y registrar su fecha de vencimiento.' : 'Falta cargar el documento de tu licencia de conducir.'),
+        modulo:'DOCUMENTOS',
+        registroId:driver.ID
+      });
+    }
+    (index.rutasPorConductor[driverId] || []).filter(function(row) {
+      return String(row.ESTADO || '') === 'Asignada';
+    }).forEach(function(row) {
+      tasks.push({ id:'RUTA-' + row.ID, tipo:'Ruta', prioridad:'Normal', titulo:'Ruta asignada pendiente', detalle:(row.NOMBRE || row.ID) + ': ' + (row.ORIGEN || 'Origen') + ' → ' + (row.DESTINO || 'Destino') + '.', modulo:'RUTAS', registroId:row.ID, rutaId:row.ID });
+      if (!String(row.CHECKIN_ID || '').trim()) {
+        tasks.push({ id:'CHECKIN-RUTA-' + row.ID, tipo:'Check-in', prioridad:'Alta', titulo:'Realizar check-in vehicular', detalle:'Debes completar la revisión del vehículo antes de iniciar la ruta ' + (row.NOMBRE || row.ID) + '.', modulo:'CHECKIN', registroId:row.ID, rutaId:row.ID });
+      }
+    });
+  }
+  const unique = {};
+  return tasks.filter(function(task) {
+    if (unique[task.id]) return false;
+    unique[task.id] = true;
+    return true;
+  }).slice(0, 100);
+}
+
+function obtenerTareasOficinaVirtual_(usuario, opciones) {
+  const opts = opciones || {};
+  if (!opts.force) {
+    const cached = leerCacheTareasOficinaVirtual_(usuario);
+    if (cached) return cached;
+  }
+  const tasks = tareasPendientesOficinaVirtual_(usuario, opts.contexto || {});
+  return guardarCacheTareasOficinaVirtual_(usuario, tasks);
+}
+
+function generarAvisosPersonalesOficinaVirtual_() {
+  const users = listarRegistrosDiagnosticoSeguro_('USUARIOS').filter(function(row) {
+    return usuarioTieneAccesoConfigurado_(row);
+  });
+  const shared = prepararContextoTareasOficinaVirtual_({
+    documents:listarRegistrosDiagnosticoSeguro_('DOCUMENTOS'),
+    vehicles:listarRegistrosDiagnosticoSeguro_('VEHICULOS'),
+    drivers:listarRegistrosDiagnosticoSeguro_('CONDUCTORES'),
+    routes:listarRegistrosDiagnosticoSeguro_('RUTAS')
+  });
+  const driverByUser = shared.indiceOficinaVirtual.conductorPorUsuario;
+  let created = 0, updated = 0, closed = 0;
+  const activeKeys = {};
+  const existingNotifications = listarRegistrosDiagnosticoSeguro_('NOTIFICACIONES');
+  const notificationByKey = {};
+  existingNotifications.forEach(function(row) {
+    if (String(row.ELIMINADO || 'NO') !== 'SI' && row.CLAVE_UNICA) notificationByKey[String(row.CLAVE_UNICA)] = row;
+  });
+  users.forEach(function(user) {
+    const driver = driverByUser[String(user.ID)] || null;
+    const userTasks = tareasPendientesOficinaVirtual_(user, shared);
+    guardarCacheTareasOficinaVirtual_(user, userTasks);
+    userTasks.forEach(function(task) {
+      // La asignación de ruta ya crea su propia notificación dirigida.
+      // Se muestra en el panel de pendientes, pero no se duplica en avisos.
+      if (task.tipo === 'Ruta') return;
+      const baseKey = 'OV-TAREA-' + task.id;
+      const finalKey = claveNotificacionUnica_({
+        CLAVE_UNICA:baseKey,
+        DESTINATARIO_USUARIO_ID:user.ID,
+        DESTINATARIO_CONDUCTOR_ID:driver ? driver.ID : ''
+      });
+      activeKeys[finalKey] = true;
+      const result = crearTareaPersonalOficinaVirtual_(user.ID, driver ? driver.ID : '', {
+        TITULO:task.titulo,
+        MENSAJE:task.detalle + ' Abre ' + task.modulo + ' para resolverlo.',
+        TIPO:'Oficina Virtual',
+        PRIORIDAD:task.prioridad,
+        MODULO:task.modulo,
+        REGISTRO_ID:task.registroId,
+        RUTA_ID:task.rutaId || '',
+        CLAVE_UNICA:baseKey
+      }, notificationByKey);
+      if (result.created) created++;
+      if (result.updated) updated++;
+    });
+  });
+  existingNotifications.filter(function(row) {
+    return String(row.ELIMINADO || 'NO') !== 'SI'
+      && String(row.CREADO_POR || '') === 'SISTEMA'
+      && String(row.TIPO || '') === 'Oficina Virtual'
+      && !activeKeys[String(row.CLAVE_UNICA || '')]
+      && String(row.LEIDA || 'NO') !== 'SI';
+  }).forEach(function(row) {
+    actualizarRegistro_('NOTIFICACIONES', row.ID, { LEIDA:'SI', FECHA_LECTURA:new Date(), LEIDA_POR:'SISTEMA' });
+    closed++;
+  });
+  return { usuariosRevisados:users.length, creados:created, actualizados:updated, cerrados:closed };
+}
+
+function diagnosticoOficinaVirtualInterno_() {
+  const issues = [];
+  Object.keys(ESQUEMAS_APLICACION).forEach(function(sheetName) {
+    const status = diagnosticarHojaSistema_(sheetName);
+    if (!status.existe || !status.columnas) {
+      issues.push({
+        id:'ESTRUCTURA-' + sheetName,
+        nivel:'CRITICO',
+        titulo:'Estructura pendiente: ' + sheetName,
+        detalle:status.detalle,
+        modulo:'CONFIGURACION',
+        reparable:true
+      });
+    }
+  });
+  const company = obtenerEmpresaPrincipal_() || {};
+  const point = puntoOperacionDesdeEmpresa_(company) || obtenerRespaldoPuntoOperacion_();
+  if (!point || !isFinite(Number(point.LATITUD)) || !isFinite(Number(point.LONGITUD))) {
+    issues.push({ id:'PUNTO-OPERACIONAL', nivel:'ATENCION', titulo:'Falta configurar el punto operacional', detalle:'Las validaciones de inicio y término necesitan una base con coordenadas válidas.', modulo:'CONFIGURACION', reparable:false });
+  }
+  const now = Date.now();
+  const gpsRows = listarRegistrosDiagnosticoSeguro_('GPS_ACTUAL');
+  const latestGps = { operacion:{}, vehiculo:{}, conductor:{} };
+  const saveLatest = function(index, key, row) {
+    const id = String(key || '');
+    if (!id) return;
+    const current = index[id];
+    const currentTime = current ? new Date(current.FECHA_HORA || current.ACTUALIZADO_EN || 0).getTime() : 0;
+    const rowTime = new Date(row.FECHA_HORA || row.ACTUALIZADO_EN || 0).getTime();
+    if (!current || (isFinite(rowTime) ? rowTime : 0) > currentTime) index[id] = row;
+  };
+  gpsRows.forEach(function(row) {
+    saveLatest(latestGps.operacion, row.OPERACION_ID, row);
+    saveLatest(latestGps.vehiculo, row.VEHICULO_ID, row);
+    saveLatest(latestGps.conductor, row.CONDUCTOR_ID, row);
+  });
+  listarRegistrosDiagnosticoSeguro_('OPERACIONES').filter(function(row) {
+    return String(row.ESTADO || '') === 'Activa';
+  }).forEach(function(operation) {
+    const candidates = [
+      latestGps.operacion[String(operation.ID || '')],
+      latestGps.vehiculo[String(operation.VEHICULO_ID || '')],
+      latestGps.conductor[String(operation.CONDUCTOR_ID || '')]
+    ].filter(Boolean).sort(function(a, b) {
+      return new Date(b.FECHA_HORA || b.ACTUALIZADO_EN || 0) - new Date(a.FECHA_HORA || a.ACTUALIZADO_EN || 0);
+    });
+    const gps = candidates[0] || null;
+    const age = gps ? (now - new Date(gps.FECHA_HORA || 0).getTime()) / 60000 : Infinity;
+    if (!gps || !isFinite(age) || age >= Number(CONFIGURACION_APLICACION.MINUTOS_SIN_GPS_ALERTA || 5)) {
+      issues.push({ id:'GPS-' + operation.ID, nivel:'CRITICO', titulo:'Operación activa sin GPS reciente', detalle:'La operación ' + operation.ID + ' no está informando una posición reciente.', modulo:'GPS', reparable:false });
+    }
+  });
+  let hasTrigger = activadorOficinaVirtualInstalado_();
+  if (!hasTrigger) {
+    try {
+      instalarActivadorOficinaVirtual_();
+      hasTrigger = activadorOficinaVirtualInstalado_();
+    } catch (_) {}
+  }
+  if (!hasTrigger) issues.push({ id:'ACTIVADOR-OFICINA', nivel:'ATENCION', titulo:'Revisión automática sin activador', detalle:'Falta el activador periódico de Oficina Virtual.', modulo:'OFICINA_VIRTUAL', reparable:true });
+  const criticalUnread = listarRegistrosDiagnosticoSeguro_('ALERTAS').filter(function(row) {
+    return String(row.LEIDA || 'NO') !== 'SI' && String(row.NIVEL || '').toUpperCase().indexOf('CR') === 0;
+  }).length;
+  const critical = issues.filter(function(item) { return item.nivel === 'CRITICO'; }).length;
+  return {
+    nombre:'Oficina Virtual',
+    version:VERSION_APLICACION,
+    fecha:fechaIso_(),
+    modoAutomatico:modoAutomaticoOficinaVirtual_(),
+    estado:critical ? 'CRITICO' : (issues.length ? 'ATENCION' : 'CORRECTO'),
+    problemas:issues.length,
+    reparables:issues.filter(function(item) { return item.reparable; }).length,
+    alertasCriticasSinLeer:criticalUnread,
+    problemasDetalle:issues.slice(0, 60)
+  };
+}
+
+function aplicarReparacionesSegurasOficinaVirtual_() {
+  reiniciarCachesEjecucion_();
+  Object.keys(ESQUEMAS_APLICACION).forEach(function(sheetName) { asegurarHoja_(sheetName); });
+  reiniciarCachesEjecucion_();
+  asegurarCatalogos_();
+  migrarGpsActualDesdeHistorial_();
+  instalarActivadorAlertasAutomaticas_();
+  instalarActivadorOficinaVirtual_();
+  let duplicates = { alertas:0, notificaciones:0 };
+  try { duplicates = depurarDuplicadosAvisos_(); } catch (_) {}
+  reiniciarCachesEjecucion_();
+  return { aplicada:true, duplicadosDepurados:duplicates };
+}
+
+function procesarOficinaVirtual_(options) {
+  const opts = options || {};
+  const cache = CacheService.getScriptCache();
+  if (!opts.force && cache.get(OFICINA_VIRTUAL_EJECUTANDO_) === 'SI') {
+    return Object.assign({ omitida:true }, leerUltimoResultadoOficinaVirtual_());
+  }
+  cache.put(OFICINA_VIRTUAL_EJECUTANDO_, 'SI', 90);
+  let diagnostic = diagnosticoOficinaVirtualInterno_();
+  let repairs = 0;
+  diagnostic.problemasDetalle.filter(function(issue) {
+    return String(issue.id || '').indexOf('GPS-') !== 0;
+  }).forEach(function(issue) {
+    crearAlertaUnica_({
+      TIPO:'Oficina Virtual',
+      NIVEL:issue.nivel === 'CRITICO' ? 'Crítica' : 'Advertencia',
+      TITULO:'Oficina Virtual: ' + issue.titulo,
+      MENSAJE:issue.detalle,
+      MODULO:issue.modulo || 'OFICINA_VIRTUAL',
+      REGISTRO_ID:issue.id,
+      CLAVE_UNICA:'OV-DIAG-' + issue.id
+    });
+  });
+  if (diagnostic.modoAutomatico && diagnostic.reparables > 0) {
+    aplicarReparacionesSegurasOficinaVirtual_();
+    repairs = diagnostic.reparables;
+    diagnostic = diagnosticoOficinaVirtualInterno_();
+  }
+  const technicalAlertsClosed = cerrarAlertaTecnicaActivadorResueltaOficinaVirtual_(diagnostic);
+  let alerts = { creadas:0 };
+  let personal = { creados:0, usuariosRevisados:0 };
+  try { alerts = ejecutarMotorAlertasAutomaticas_({ force:true }); } catch (_) {}
+  try { personal = generarAvisosPersonalesOficinaVirtual_(); } catch (_) {}
+  const result = Object.assign({}, diagnostic, {
+    reparaciones:repairs,
+    avisosCreados:Number(alerts.creadas || 0) + Number(personal.creados || 0),
+    alertasTecnicasCerradas:technicalAlertsClosed,
+    avisosPersonales:personal
+  });
+  guardarUltimoResultadoOficinaVirtual_(result);
+  if (diagnostic.problemas || repairs || result.avisosCreados) {
+    registrarBitacora_(opts.usuario || usuarioSistemaOficinaVirtual_(), 'REVISION_AUTOMATICA', 'OFICINA_VIRTUAL', '', 'Estado ' + diagnostic.estado + ' · problemas ' + diagnostic.problemas + ' · reparaciones seguras ' + repairs + ' · avisos ' + result.avisosCreados);
+  }
+  return result;
+}
+
+function activadorOficinaVirtualInstalado_() {
+  try {
+    return ScriptApp.getProjectTriggers().some(function(trigger) {
+      return trigger.getHandlerFunction() === 'procesarOficinaVirtualProgramada_';
+    });
+  } catch (_) {
+    return false;
+  }
+}
+
+function cerrarAlertaTecnicaActivadorResueltaOficinaVirtual_(diagnostico) {
+  const issues = diagnostico && Array.isArray(diagnostico.problemasDetalle) ? diagnostico.problemasDetalle : [];
+  if (issues.some(function(issue) { return String(issue.id || '') === 'ACTIVADOR-OFICINA'; })) return 0;
+  let closed = 0;
+  listarRegistrosDiagnosticoSeguro_('ALERTAS').filter(function(row) {
+    return String(row.ELIMINADO || 'NO') !== 'SI'
+      && String(row.LEIDA || 'NO') !== 'SI'
+      && String(row.TIPO || '') === 'Oficina Virtual'
+      && String(row.MODULO || '') === 'OFICINA_VIRTUAL'
+      && String(row.REGISTRO_ID || '') === 'ACTIVADOR-OFICINA';
+  }).forEach(function(row) {
+    actualizarRegistro_('ALERTAS', row.ID, {
+      LEIDA:'SI',
+      FECHA_LECTURA:new Date(),
+      LEIDA_POR:'SISTEMA-VERIFICACION-TECNICA'
+    });
+    closed++;
+  });
+  return closed;
+}
+
+function instalarActivadorOficinaVirtual_() {
+  const handler = 'procesarOficinaVirtualProgramada_';
+  const triggers = ScriptApp.getProjectTriggers().filter(function(trigger) {
+    return trigger.getHandlerFunction() === handler;
+  });
+  triggers.slice(1).forEach(function(trigger) { try { ScriptApp.deleteTrigger(trigger); } catch (_) {} });
+  if (!triggers.length) ScriptApp.newTrigger(handler).timeBased().everyMinutes(5).create();
+  return true;
+}
+
+function procesarOficinaVirtualProgramada_() {
+  return procesarOficinaVirtual_({ force:false, origen:'PROGRAMADA', usuario:usuarioSistemaOficinaVirtual_() });
+}
+
+function resumenRapidoOficinaVirtual_(usuario) {
+  const ultimo = leerUltimoResultadoOficinaVirtual_();
+  const cachedTasks = leerCacheTareasOficinaVirtual_(usuario);
+  return {
+    nombre:'Oficina Virtual',
+    version:VERSION_APLICACION,
+    modoAutomatico:modoAutomaticoOficinaVirtual_(),
+    puedeConfigurar:esAdministradorSistema_(usuario) && tienePermiso_(usuario, 'OFICINA_VIRTUAL', 'ACTUALIZAR'),
+    estado:ultimo.estado || 'PENDIENTE',
+    ultimaRevision:ultimo.fecha || PropertiesService.getScriptProperties().getProperty(OFICINA_VIRTUAL_ULTIMA_REVISION_) || '',
+    problemas:Number(ultimo.problemas || 0),
+    reparaciones:Number(ultimo.reparaciones || 0),
+    avisosCreados:Number(ultimo.avisosCreados || 0),
+    pendientesEnCache:Boolean(cachedTasks),
+    totalTareas:cachedTasks ? cachedTasks.length : 0,
+    tareasUrgentes:cachedTasks ? cachedTasks.filter(function(item) { return item.prioridad === 'Urgente'; }).length : 0
+  };
+}
+
+function estadoRapidoOficinaVirtual_(request, session) {
+  exigirPermiso_(session.user, 'OFICINA_VIRTUAL', 'LEER');
+  return ok_(resumenRapidoOficinaVirtual_(session.user));
+}
+
+function consultarPendientesOficinaVirtual_(request, session) {
+  exigirPermiso_(session.user, 'OFICINA_VIRTUAL', 'LEER');
+  const force = request && (request.forzar === true || request.force === true || ['SI','TRUE','1'].indexOf(String(request.forzar || request.force || '').toUpperCase()) >= 0);
+  const tasks = obtenerTareasOficinaVirtual_(session.user, { force:force });
+  return ok_({
+    tareas:tasks,
+    totalTareas:tasks.length,
+    tareasUrgentes:tasks.filter(function(item) { return item.prioridad === 'Urgente'; }).length,
+    actualizadoEn:fechaIso_()
+  });
+}
+
+function estadoOficinaVirtual_(request, session) {
+  exigirPermiso_(session.user, 'OFICINA_VIRTUAL', 'LEER');
+  const tasks = obtenerTareasOficinaVirtual_(session.user, {});
+  return ok_(Object.assign({}, resumenRapidoOficinaVirtual_(session.user), {
+    tareas:tasks,
+    totalTareas:tasks.length,
+    tareasUrgentes:tasks.filter(function(item) { return item.prioridad === 'Urgente'; }).length
+  }));
+}
+
+function ejecutarRevisionOficinaVirtual_(request, session) {
+  exigirPermiso_(session.user, 'OFICINA_VIRTUAL', 'LEER');
+  if (normalizarRolSistema_(session.user.ROL_ID) === 'ROL-CONDUCTOR') {
+    const report = registrarReporteConductorOficinaVirtual_('Solicito una revisión general del sistema desde Oficina Virtual.', session);
+    return ok_(Object.assign({}, resumenRapidoOficinaVirtual_(session.user), {
+      solicitudAdministrador:true,
+      reporteCreado:Boolean(report && report.creado),
+      mensaje:'La solicitud quedó informada a los Administradores. No se ejecutó ningún cambio.'
+    }));
+  }
+  const jobId = encolarTrabajoSegundoPlano_('OFICINA_VIRTUAL_REVISION', {
+    motivo:'Revisión manual',
+    solicitadoPor:session.user.ID,
+    solicitadoEn:fechaIso_()
+  });
+  return ok_(Object.assign({}, resumenRapidoOficinaVirtual_(session.user), {
+    revisionEnCola:true,
+    trabajoId:jobId || '',
+    mensaje:'La revisión completa se inició en segundo plano.'
+  }));
+}
+
+function configurarModoOficinaVirtual_(request, session) {
+  exigirPermiso_(session.user, 'OFICINA_VIRTUAL', 'ACTUALIZAR');
+  if (!esAdministradorSistema_(session.user)) throw new Error('SOLO_ADMINISTRADOR');
+  const data = request.datos || request;
+  const active = data.ACTIVO === true || ['SI','TRUE','1','ACTIVO'].indexOf(String(data.ACTIVO || data.activo || '').toUpperCase()) >= 0;
+  PropertiesService.getScriptProperties().setProperty(OFICINA_VIRTUAL_MODO_AUTO_, active ? 'SI' : 'NO');
+  registrarBitacora_(session.user, active ? 'ACTIVAR_MODO_AUTO' : 'DESACTIVAR_MODO_AUTO', 'OFICINA_VIRTUAL', '', 'Modo automático ' + (active ? 'activado' : 'desactivado'));
+  try { encolarTrabajoSegundoPlano_('OFICINA_VIRTUAL_REVISION', { motivo:'Cambio de modo', solicitadoPor:session.user.ID }); } catch (_) {}
+  return ok_({ activo:active, modoAutomatico:active });
+}
+
+function repararOficinaVirtual_(request, session) {
+  exigirPermiso_(session.user, 'OFICINA_VIRTUAL', 'ACTUALIZAR');
+  if (!esAdministradorSistema_(session.user)) throw new Error('SOLO_ADMINISTRADOR');
+  const repair = aplicarReparacionesSegurasOficinaVirtual_();
+  const diagnostic = diagnosticoOficinaVirtualInterno_();
+  registrarBitacora_(session.user, 'REPARAR_SEGURO', 'OFICINA_VIRTUAL', '', 'Reparación segura aplicada. Estado posterior: ' + diagnostic.estado);
+  return ok_({ reparacion:repair, diagnostico:diagnostic });
+}
+
+function respuestaAyudaOficinaVirtual_(consulta, session) {
+  const text = normalizarConsultaOficinaVirtual_(consulta);
+  const role = normalizarRolSistema_(session.user.ROL_ID);
+  const suggestions = ['¿Qué tengo pendiente?', '¿Cómo funciona el GPS?', '¿Cómo uso un QR?', 'Revisar estado del sistema'];
+  if (!text) return { respuesta:'Hola, soy Oficina Virtual. Puedo explicarte el Sistema de Gestión de Flotas, revisar tus pendientes y orientarte paso a paso. ¿Qué necesitas hacer?', sugerencias:suggestions };
+  if (/(pendiente|por hacer|tarea|falta|vencid|document)/.test(text)) {
+    const tasks = obtenerTareasOficinaVirtual_(session.user, {});
+    if (!tasks.length) return { respuesta:'No tienes tareas ni documentos pendientes detectados en este momento.', sugerencias:['¿Cómo cargar un documento?', '¿Cómo iniciar una ruta?', 'Revisar estado del sistema'] };
+    const detail = tasks.slice(0, 8).map(function(task, index) { return (index + 1) + '. ' + task.titulo + ': ' + task.detalle; }).join('\n');
+    return { respuesta:'Encontré ' + tasks.length + ' pendiente(s) para tu usuario:\n' + detail + (tasks.length > 8 ? '\nHay ' + (tasks.length - 8) + ' pendiente(s) adicional(es) en el panel.' : ''), sugerencias:['Abrir Documentos', 'Abrir Rutas', '¿Cómo resuelvo un pendiente?'] };
+  }
+  if (/(estado|falla|error|diagnost|problema|lento|rapido)/.test(text)) {
+    const last = leerUltimoResultadoOficinaVirtual_();
+    return { respuesta:'La última revisión registra estado ' + (last.estado || 'sin revisión previa') + ', ' + Number(last.problemas || 0) + ' problema(s) y ' + Number(last.reparaciones || 0) + ' reparación(es) segura(s). Usa “Revisar ahora” para actualizar el diagnóstico.', sugerencias:['Revisar ahora', '¿Qué repara el modo automático?', '¿Qué tengo pendiente?'], accionSugerida:'REVISAR' };
+  }
+  if (/(gps|mapa|ubicacion|seguimiento|tiempo real)/.test(text)) {
+    return { respuesta:'El GPS registra la posición del conductor y actualiza el mapa. En Conexiones en línea puedes seleccionar un usuario con ubicación válida, activar “Seguir” y ver su rastro reciente. La velocidad real depende de la señal del teléfono, la red y el intervalo de envío; el sistema prioriza la posición actual para evitar retrasos.', sugerencias:['¿Cómo seguir a un usuario?', '¿Por qué aparece GPS impreciso?', '¿Cómo iniciar una operación?'] };
+  }
+  if (/(ruta|naveg|waze|maps|destino)/.test(text)) {
+    return { respuesta:'En Rutas se asignan conductor, vehículo, origen, destino y paradas. El conductor puede abrir la navegación compatible, registrar evidencias y completar la ruta. Si la ruta exige revisión vehicular, debe realizar el check-in antes de iniciarla.', sugerencias:['¿Cómo hago el check-in?', '¿Cómo escaneo el QR?', '¿Qué tengo pendiente?'] };
+  }
+  if (/(operacion|iniciar|finalizar|base|geocerca)/.test(text)) {
+    return { respuesta:'Una operación valida conductor, vehículo, check-in y ubicación. Para iniciar o finalizar, el teléfono debe entregar una coordenada reciente y suficientemente precisa. El cierre fuera de la base requiere justificación y autorización según los permisos.', sugerencias:['¿Cómo mejorar la precisión GPS?', '¿Cómo funciona el check-in?', '¿Qué es el punto operacional?'] };
+  }
+  if (/(check.?in|revision|inspeccion|vehicular)/.test(text)) {
+    return { respuesta:'El Check-in vehicular abre una lista de revisión del vehículo. El conductor marca cada punto, informa fallas y envía el formulario. Una falla crítica puede bloquear el vehículo hasta que un usuario autorizado revise y apruebe el registro.', sugerencias:['¿Cómo abrir el check-in con QR?', '¿Qué pasa si hay una falla crítica?', '¿Qué tengo pendiente?'] };
+  }
+  if (/(combust|carga|litro|boleta|estacion)/.test(text)) {
+    return { respuesta:'En Combustible se registra vehículo, conductor, litros, precio, kilometraje, estación y comprobante. También puedes abrir el formulario mediante el QR asociado y el sistema calcula consumo y distancia cuando existen lecturas anteriores válidas.', sugerencias:['¿Cómo usar el QR de combustible?', '¿Cómo adjunto la boleta?', '¿Cómo corregir una carga?'] };
+  }
+  if (/(qr|codigo|escan)/.test(text)) {
+    return { respuesta:'Los códigos QR identifican vehículos y pueden abrir formularios asociados, como Combustible y Check-in. Desde Android usa el lector QR, acepta el enlace interno y confirma los datos antes de guardar.', sugerencias:['Abrir formulario de combustible', 'Abrir check-in vehicular', '¿Qué hago si el QR no lee?'] };
+  }
+  if (/(notificacion|alerta|aviso)/.test(text)) {
+    return { respuesta:'Las notificaciones se dirigen a usuarios o conductores específicos. Oficina Virtual también crea avisos personales por documentos vencidos, próximos a vencer, archivos faltantes, licencias, rutas asignadas y check-ins pendientes. Cada aviso indica dónde resolverlo.', sugerencias:['¿Qué tengo pendiente?', '¿Cómo marco un aviso como leído?', 'Revisar estado del sistema'] };
+  }
+  if (/(permiso|usuario|rol|administrador|supervisor|conductor)/.test(text)) {
+    return { respuesta:'Los permisos dependen del rol y de la configuración individual. Tu perfil actual es ' + (session.user.ROL_NOMBRE || role) + '. Solo un Administrador puede activar el modo automático o aplicar reparaciones; cada usuario solo ve los datos autorizados para su cuenta.', sugerencias:['¿Qué puede hacer mi rol?', '¿Cómo funciona el modo automático?', '¿Qué tengo pendiente?'] };
+  }
+  if (/(login|sesion|entrar|contrasena)/.test(text)) {
+    return { respuesta:'Para iniciar sesión usa el correo y contraseña registrados. Android ya incluye la URL del sistema. Si el acceso falla, revisa conexión, URL terminada en /exec, estado del usuario y versión del despliegue; no compartas tu contraseña por mensajes.', sugerencias:['¿Cómo cambio mi contraseña?', 'Revisar estado del sistema', '¿Dónde veo la versión?'] };
+  }
+  if (/(modo automatic|automatico|auto)/.test(text)) {
+    return { respuesta:'El modo automático revisa el sistema cada cinco minutos, crea alertas y aplica únicamente reparaciones técnicas seguras: estructura de hojas, catálogos, cachés y activadores. No elimina datos ni modifica operaciones. Solo un Administrador puede activarlo o desactivarlo.', sugerencias:['Revisar estado del sistema', '¿Qué tengo pendiente?', '¿Qué reparaciones son seguras?'] };
+  }
+  if (/(que puedes|ayuda|funciona|explica|oficina virtual|hola|buen)/.test(text)) {
+    return { respuesta:'Soy Oficina Virtual, el asistente del Sistema de Gestión de Flotas. Puedo explicar módulos, mostrar tus pendientes, orientar el uso de GPS, rutas, operaciones, check-in, combustible, QR, documentos, alertas y permisos, además de revisar fallas técnicas.', sugerencias:suggestions };
+  }
+  return { respuesta:'Puedo ayudarte con el funcionamiento del sistema o con tus pendientes. Escribe el nombre del módulo o describe qué intentas hacer; por ejemplo: “¿Cómo inicio una ruta?”, “¿Qué documentos tengo vencidos?” o “Revisar estado del sistema”.', sugerencias:suggestions };
+}
+
+function registrarReporteConductorOficinaVirtual_(consulta, session) {
+  if (normalizarRolSistema_(session && session.user && session.user.ROL_ID) !== 'ROL-CONDUCTOR') return null;
+  const question = String(consulta || '').trim().slice(0, 1200);
+  const text = normalizarConsultaOficinaVirtual_(question);
+  const issue = /(falla|error|problema|no funciona|no puedo|se cae|lento|lentitud|trabado|bloqueado|riesgo|incidente)/.test(text);
+  const instruction = /(cambia|cambiar|modifica|modificar|configura|configurar|activa|activar|desactiva|desactivar|repara|reparar|elimina|eliminar|instala|instalar|actualiza|actualizar).*(sistema|permiso|usuario|modo|configuracion|alerta|oficina)/.test(text);
+  const explicitReview = /solicito una revision general del sistema/.test(text);
+  if (!issue && !instruction && !explicitReview) return null;
+  const day = Utilities.formatDate(new Date(), CONFIGURACION_APLICACION.ZONA_HORARIA, 'yyyyMMdd');
+  const key = huellaEvento_('OV-REPORTE', [session.user.ID, text.slice(0, 400), day]);
+  const result = crearAlertaUnica_({
+    TIPO:'Reporte de conductor',
+    NIVEL:issue ? 'Advertencia' : 'Info',
+    TITULO:'Oficina Virtual: reporte de ' + (session.user.NOMBRE || session.user.ID),
+    MENSAJE:'El Conductor informó: “' + question + '”. Oficina Virtual no ejecutó cambios. Un Administrador debe revisar y validar la situación.',
+    MODULO:'OFICINA_VIRTUAL',
+    REGISTRO_ID:session.user.ID,
+    CLAVE_UNICA:key,
+    USUARIO_ID:''
+  });
+  return { creado:Boolean(result && result.created), instruccion:instruction, alertaId:result && result.row ? result.row.ID : '' };
+}
+
+function consultarOficinaVirtual_(request, session) {
+  exigirPermiso_(session.user, 'OFICINA_VIRTUAL', 'CREAR');
+  const data = request.datos || request;
+  const question = String(data.MENSAJE || data.mensaje || data.PREGUNTA || data.pregunta || '').trim().slice(0, 1200);
+  if (!question) throw new Error('CONSULTA_REQUERIDA');
+  const report = registrarReporteConductorOficinaVirtual_(question, session);
+  const response = respuestaAyudaOficinaVirtual_(question, session);
+  if (report && report.instruccion) {
+    response.respuesta = 'Tu cuenta de Conductor no puede ordenar ni ejecutar cambios en el sistema. Registré tu solicitud como un reporte para los Administradores; Oficina Virtual solo sirve de puente y no modificó ninguna configuración.';
+    response.sugerencias = ['Explicar la falla', '¿Qué tengo pendiente?', '¿Cómo funciona mi módulo?'];
+  } else if (report) {
+    response.respuesta += '\n\nTu reporte quedó informado a los Administradores y permanecerá pendiente hasta que uno de ellos lo valide. No se ejecutó ningún cambio.';
+  }
+  registrarBitacora_(session.user, 'CONSULTAR_ASISTENTE', 'OFICINA_VIRTUAL', '', 'Consulta atendida por Oficina Virtual: ' + question.slice(0, 180));
+  return ok_({
+    nombre:'Oficina Virtual',
+    respuesta:response.respuesta,
+    sugerencias:response.sugerencias || [],
+    accionSugerida:response.accionSugerida || '',
+    generadoEn:fechaIso_()
+  });
+}
+
+/** ============================================================
  * ARCHIVO: 25_Importacion_Masiva_y_Seguridad.gs
  * ============================================================ */
 /** Importación masiva, registro de IP y reglas de seguridad adicionales. */
@@ -5099,7 +5938,8 @@ function procesarColaSegundoPlano_() {
 function procesarTrabajoSegundoPlano_(job) {
   if (!job || !job.tipo) return;
   const data = job.datos || {};
-  if (job.tipo === 'MOTOR_ALERTAS') { ejecutarMotorAlertasAutomaticas_({ force:true }); return; }
+  if (job.tipo === 'MOTOR_ALERTAS') { ejecutarMotorAlertasAutomaticas_({ force:true }); generarAvisosPersonalesOficinaVirtual_(); return; }
+  if (job.tipo === 'OFICINA_VIRTUAL_REVISION') { procesarOficinaVirtual_({ force:true, origen:'SEGUNDO_PLANO', usuario:usuarioSistemaOficinaVirtual_() }); return; }
   if (job.tipo === 'INICIO_OPERACION') {
     insertarRegistro_('HISTORIAL', { OPERACION_ID:data.operacionId, EVENTO:'INICIO', DETALLE:data.detalle, FECHA_HORA:new Date(), USUARIO_ID:data.usuario && data.usuario.ID || '', ELIMINADO:'NO' }, 'HIS');
     registrarBitacora_(data.usuario || {}, 'INICIAR', 'OPERACIONES', data.operacionId, (data.patente || '') + ' / ' + (data.conductor || '') + ' / ubicación validada', data.ip || '');

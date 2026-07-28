@@ -1,0 +1,14 @@
+Sistema de Gestión de Flotas web 3.18.2
+Validación técnica: 2026-07-28
+
+RESULTADO: CORRECTO
+
+- VERIFICAR_WEB_3.18.2.py: correcto.
+- JavaScript y Apps Script: sintaxis correcta.
+- Interruptor de avisos emergentes: exclusivo del Administrador.
+- Preferencia: individual por Administrador y guardada localmente.
+- Avisos flotantes: suprimidos inmediatamente al desactivar.
+- Alertas y notificaciones: permanecen no leídas en la cola.
+- Contador del icono: continúa actualizándose.
+- Panel modular: un solo emisor visual para evitar duplicados.
+- Oficina Virtual, permisos, QR, GPS, mapas, seguimiento y auditoría: conservados.

@@ -1,0 +1,22 @@
+Sistema de Gestión de Flotas web 3.18.1
+Validación técnica: 2026-07-28
+
+RESULTADO: CORRECTO
+
+- Verificador VERIFICAR_WEB_3.18.1.py: correcto.
+- JavaScript: sintaxis correcta.
+- Apps Script maestro: sintaxis correcta.
+- Codigo_Completo.gs: sintaxis correcta y sin declaraciones duplicadas.
+- Tres copias de Codigo_Completo.gs: SHA-256 idéntico.
+- Oficina Virtual: estado rápido, pendientes diferidos, caché por usuario e índices verificados.
+- Interfaz: el chat no reconstruye el módulo y la revisión completa se encola en segundo plano.
+- Permisos: todos los usuarios autorizados pueden consultar; solo Administrador cambia el modo o repara.
+- Conductores: sus instrucciones de cambio se convierten en un reporte para Administradores y no ejecutan modificaciones.
+- Alertas operacionales: solo un Administrador puede validarlas y cerrarlas.
+- Activador de Oficina Virtual: autorreparación y cierre exclusivo de su advertencia técnica verificados.
+- Alertas y notificaciones: clave estable por evento y destinatario.
+- Cambio de estado: actualiza el mismo aviso.
+- Tareas personales resueltas: cierre automático; las alertas operacionales no se cierran automáticamente.
+- Duplicados históricos: consolidación incluida.
+- Documentos faltantes: licencia, SOAP, revisión técnica y permiso de circulación.
+- QR, GPS, seguimiento, combustible, check-in y documentos: conservados.

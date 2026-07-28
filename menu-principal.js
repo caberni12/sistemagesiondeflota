@@ -2,10 +2,11 @@
   'use strict';
   const $=(selector,root=document)=>root.querySelector(selector);
   const api=window.ConexionFlotas;
-  const VERSION='3.17.0';
+  const VERSION='3.18.3';
   const grupos=[
     ['GENERAL',[
       ['dashboard','⌂','Panel principal','panel-principal.html','PANEL_PRINCIPAL'],
+      ['office','◆','Oficina Virtual','oficina-virtual.html','OFICINA_VIRTUAL'],
       ['routes','➜','Rutas asignadas','rutas.html','RUTAS'],
       ['checkin','✓','Check-in vehicular','checkin-vehicular.html','CHECKIN'],
       ['operations','⇄','Operaciones','operaciones.html','OPERACIONES'],
@@ -49,6 +50,7 @@
   let idsNotificacionesConocidas=new Set();
   let idsAlertasConocidas=new Set();
   let estadoAvisos={notifications:[],alerts:[]};
+  let cargandoModoOficina=false;
 
   function iniciales(nombre='Usuario'){
     return String(nombre).trim().split(/\s+/).slice(0,2).map(parte=>parte[0]||'').join('').toUpperCase()||'US';
@@ -147,12 +149,55 @@
     $('#rolUsuarioMenu').textContent=usuario.ROL_NOMBRE||usuario.ROL_ID||'Usuario';
     $('#avatarMenu').textContent=iniciales(usuario.NOMBRE);
     construirMenu();
+    actualizarInterruptorOficinaVirtual();
+    actualizarInterruptorAvisosEmergentes();
+  }
+  function esAdministradorMenu(){const rol=String(usuario?.ROL_ID||usuario?.ROL_NOMBRE||'').trim().toUpperCase();return rol==='ROL-ADMIN'||rol==='ADMINISTRADOR';}
+  function claveAvisosEmergentesMenu(){return `flotas_avisos_emergentes_admin_v1_${String(usuario?.ID||usuario?.USUARIO_ID||'sin_usuario')}`;}
+  function avisosEmergentesActivosMenu(){
+    if(!esAdministradorMenu())return true;
+    try{return localStorage.getItem(claveAvisosEmergentesMenu())!=='NO';}
+    catch(_){return true;}
+  }
+  function actualizarInterruptorAvisosEmergentes(){
+    const contenedor=$('#avisosEmergentesMenu'),input=$('#interruptorAvisosEmergentes');
+    if(!contenedor||!input||!usuario)return;
+    contenedor.hidden=!esAdministradorMenu();
+    if(!contenedor.hidden)input.checked=avisosEmergentesActivosMenu();
+  }
+  function cambiarAvisosEmergentes(){
+    const input=$('#interruptorAvisosEmergentes');
+    if(!input||!esAdministradorMenu())return;
+    const activo=input.checked;
+    try{localStorage.setItem(claveAvisosEmergentesMenu(),activo?'SI':'NO');}
+    catch(_){input.checked=!activo;cambiarEstado('No se pudo guardar la preferencia','advertencia');return;}
+    if(!activo)document.querySelectorAll('.toast-aviso-menu').forEach(nodo=>nodo.remove());
+    cambiarEstado(activo?'Avisos emergentes activados':'Avisos emergentes silenciados · pendientes en el icono','listo');
+    window.dispatchEvent(new CustomEvent('flotas:avisos-emergentes',{detail:{activo}}));
+  }
+  async function actualizarInterruptorOficinaVirtual(){
+    const contenedor=$('#modoAutoOficinaMenu'),input=$('#interruptorModoAutoOficina');
+    if(!contenedor||!input||!usuario)return;
+    contenedor.hidden=!esAdministradorMenu();
+    if(contenedor.hidden)return;
+    try{const result=await api.request('officeQuickStatus');input.checked=Boolean(result.modoAutomatico);}
+    catch(_){input.checked=false;}
+  }
+  async function cambiarModoOficinaVirtual(){
+    const input=$('#interruptorModoAutoOficina');if(!input||cargandoModoOficina||!esAdministradorMenu())return;
+    cargandoModoOficina=true;input.disabled=true;const active=input.checked;
+    try{
+      await api.request('officeAutoMode',{data:{ACTIVO:active?'SI':'NO'}});
+      cambiarEstado(active?'Oficina Virtual automática':'Oficina Virtual manual','listo');
+      if(seccionActual==='office')abrirModulo('office',{forzar:true});
+    }catch(_){input.checked=!active;cambiarEstado('No se pudo cambiar Oficina Virtual','advertencia');}
+    finally{input.disabled=false;cargandoModoOficina=false;}
   }
   function escapar(texto){return String(texto??'').replace(/[&<>'"]/g,caracter=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[caracter]));}
   function fechaAviso(item){const fecha=new Date(item.FECHA_ENVIO||item.FECHA_HORA||item.CREADO_EN||0);return Number.isNaN(fecha.getTime())?'Sin fecha':new Intl.DateTimeFormat('es-CL',{dateStyle:'short',timeStyle:'short'}).format(fecha);}
   function puedeAvisos(modulo){if(!usuario)return false;const permisos=Array.isArray(usuario.PERMISOS)?usuario.PERMISOS:[];const rol=String(usuario.ROL_ID||usuario.ROL_NOMBRE||'').trim().toUpperCase();return rol==='ROL-ADMIN'||rol==='ADMINISTRADOR'||permisos.includes('*:*')||permisos.includes(`${modulo}:LEER`);}
   function fechaOrdenAviso(item){return new Date(item.FECHA_ENVIO||item.FECHA_HORA||item.CREADO_EN||0).getTime();}
-  function mostrarToastAviso(item,tipo){const contenedor=$('#toastAvisosMenu'),nodo=document.createElement('article');nodo.className=`toast-aviso-menu ${tipo}`;nodo.innerHTML=`<i>${tipo==='alerta'?'!':'🔔'}</i><div><b>${escapar(tipo==='alerta'?'Nueva alerta':'Nueva notificación')}</b><small>${escapar(item.TITULO||item.MENSAJE||'Existe un nuevo aviso pendiente.')}</small></div><button type="button" aria-label="Cerrar">×</button>`;contenedor.append(nodo);nodo.querySelector('button').addEventListener('click',()=>nodo.remove());setTimeout(()=>nodo.remove(),5200);}
+  function mostrarToastAviso(item,tipo){if(!avisosEmergentesActivosMenu())return;const contenedor=$('#toastAvisosMenu'),nodo=document.createElement('article');nodo.className=`toast-aviso-menu ${tipo}`;nodo.innerHTML=`<i>${tipo==='alerta'?'!':'🔔'}</i><div><b>${escapar(tipo==='alerta'?'Nueva alerta':'Nueva notificación')}</b><small>${escapar(item.TITULO||item.MENSAJE||'Existe un nuevo aviso pendiente.')}</small></div><button type="button" aria-label="Cerrar">×</button>`;contenedor.append(nodo);nodo.querySelector('button').addEventListener('click',()=>nodo.remove());setTimeout(()=>nodo.remove(),5200);}
   function renderizarAvisos(){const notifications=estadoAvisos.notifications||[],alerts=estadoAvisos.alerts||[],mezclados=[...alerts.map(item=>({item,tipo:'alerta'})),...notifications.map(item=>({item,tipo:'notificacion'}))].sort((a,b)=>fechaOrdenAviso(b.item)-fechaOrdenAviso(a.item)).slice(0,14);$('#totalNotificacionesMenu').textContent=notifications.length;$('#totalAlertasMenu').textContent=alerts.length;$('#listaAvisosMenu').innerHTML=mezclados.length?mezclados.map(({item,tipo})=>`<article class="aviso-menu-item ${tipo}" data-modulo-aviso="${tipo==='alerta'?'alerts':'notifications'}"><i>${tipo==='alerta'?'!':'🔔'}</i><div><b>${escapar(item.TITULO|| (tipo==='alerta'?'Alerta':'Notificación'))}</b><span>${escapar(item.MENSAJE||'')}</span><small>${escapar(fechaAviso(item))}</small></div></article>`).join(''):'<p class="sin-avisos-menu">No existen avisos pendientes.</p>';document.querySelectorAll('[data-modulo-aviso]').forEach(item=>item.addEventListener('click',()=>{cerrarPanelAvisos();abrirModulo(item.dataset.moduloAviso);}));}
   async function actualizarAvisos(){if(!usuario)return;try{const [notificaciones,alertas]=await Promise.all([puedeAvisos('NOTIFICACIONES')?api.request('list',{resource:'notifications',cache:false}):Promise.resolve({rows:[]}),puedeAvisos('ALERTAS')?api.request('list',{resource:'alerts',cache:false}):Promise.resolve({rows:[]})]);const notifications=(notificaciones.rows||[]).filter(item=>item.LEIDA!=='SI'),alerts=(alertas.rows||[]).filter(item=>item.LEIDA!=='SI');const nuevasNotificaciones=notifications.filter(item=>!idsNotificacionesConocidas.has(String(item.ID))),nuevasAlertas=alerts.filter(item=>!idsAlertasConocidas.has(String(item.ID)));if(avisosInicializados){[...nuevasAlertas.map(item=>({item,tipo:'alerta'})),...nuevasNotificaciones.map(item=>({item,tipo:'notificacion'}))].sort((a,b)=>fechaOrdenAviso(a.item)-fechaOrdenAviso(b.item)).slice(-3).forEach(({item,tipo})=>mostrarToastAviso(item,tipo));}idsNotificacionesConocidas=new Set(notifications.map(item=>String(item.ID)));idsAlertasConocidas=new Set(alerts.map(item=>String(item.ID)));estadoAvisos={notifications,alerts};avisosInicializados=true;const total=notifications.length+alerts.length,contador=$('#contadorAvisosMenu');contador.textContent=total>99?'99+':String(total);contador.hidden=total===0;$('#notificacionesMenu').setAttribute('aria-label',total?`Abrir ${total} avisos pendientes`:'Abrir centro de notificaciones');renderizarAvisos();}catch(_){}}
   function iniciarAvisos(){if(temporizadorAvisos)return;actualizarAvisos();temporizadorAvisos=setInterval(actualizarAvisos,window.CONFIGURACION_FLOTAS.INTERVALO_NOTIFICACIONES_MILISEGUNDOS||10000);}
@@ -281,6 +326,10 @@
       if(data.tema)window.TemaFlotas?.aplicar?.(data.tema,{guardar:true});
     }
     if(data.tipo==='flotas:tema-colores'&&data.tema)window.TemaFlotas?.aplicar?.(data.tema,{guardar:false});
+    if(data.tipo==='flotas:oficina-virtual-modo'){
+      const input=$('#interruptorModoAutoOficina');
+      if(input)input.checked=Boolean(data.activo);
+    }
   });
   window.addEventListener('flotas:sesion-invalida',()=>validarSesion({desdeModulo:true}));
   marco.addEventListener('load',()=>{
@@ -302,6 +351,8 @@
   $('#cerrarMenu').addEventListener('click',cerrarMenu);
   $('#capaMenu').addEventListener('click',cerrarMenu);
   $('#sincronizarModulo').addEventListener('click',()=>{cambiarEstado('Sincronizando');enviar({tipo:'flotas:sincronizar'});});
+  $('#interruptorModoAutoOficina').addEventListener('change',cambiarModoOficinaVirtual);
+  $('#interruptorAvisosEmergentes').addEventListener('change',cambiarAvisosEmergentes);
   $('#cerrarSesionMenu').addEventListener('click',cerrarSesion);
   $('#notificacionesMenu').addEventListener('click',alternarPanelAvisos);
   $('#cerrarAvisosMenu').addEventListener('click',cerrarPanelAvisos);

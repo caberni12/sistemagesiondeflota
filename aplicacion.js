@@ -43,6 +43,9 @@
   let connectionsRefreshPending = null;
   let connectionsRequestGeneration = 0;
   let connectionsFailureCount = 0;
+  let connectionTrackingLiveTimer = null;
+  let connectionTrackingLivePending = null;
+  let connectionTrackingLiveFailures = 0;
   let connectionsFilterTimer = null;
   let ultimoResumenConexiones = { equipos:[], ubicaciones:[], totales:{}, opciones:{} };
   let connectionTrackedUserId = '';
@@ -64,6 +67,7 @@
   let barcodeDetector = null;
   let scanFrameId = null;
   let facingMode = 'environment';
+  let qrContextoActual = 'vehiculo-operacion';
   let batteryLevel = '';
   let clientPublicIp = sessionStorage.getItem('flotas_ip_publica_v1') || '';
   let lastAddressLookup = { key:'', address:'', time:0 };
@@ -88,7 +92,7 @@
     checkinHistory:{ actions:['dashboard'], resources:['checkins','vehicles','drivers','operations'] },
     operations:{ actions:['dashboard','operationsSummary','realtimeSummary','getOperationalPoint'], resources:['operations','routes','vehicles','drivers','checkins','companies'] },
     gps:{ actions:['realtimeSummary','getOperationalPoint'], resources:['gps','connections','vehicles','drivers','operations','routes','companies'] },
-    connections:{ actions:['connectionsOnline'], resources:['gps','connections','vehicles','drivers','users'] },
+    connections:{ actions:['connectionsOnline','connectionTrackingLive'], resources:['gps','connections','vehicles','drivers','users','notifications','alerts'] },
     notifications:{ actions:['dashboard','realtimeSummary'], resources:['notifications','drivers','users'] },
     vehicles:{ actions:['dashboard'], resources:['vehicles'] },
     drivers:{ actions:['dashboard'], resources:['drivers','users'] },
@@ -323,7 +327,7 @@
       ID_HOJA_NO_CONFIGURADO:'La base de datos central no está configurada correctamente.', CONFIRMACION_REQUERIDA:'Debe escribir exactamente “LIMPIAR DATOS”.',
       CONDUCTOR_NO_ASOCIADO:'La cuenta no está asociada a un conductor.', CONDUCTOR_NO_ENCONTRADO:'El conductor seleccionado no existe.', VEHICULO_NO_ENCONTRADO:'El vehículo seleccionado no existe.',
       QR_NO_RECONOCIDO:'El código QR no corresponde a un vehículo registrado.', CODIGO_QR_REQUERIDO:'Ingrese o escanee un código QR.', RUTA_NO_ENCONTRADA:'La ruta no existe.',
-      ESTADO_RUTA_INVALIDO:'El estado solicitado para la ruta no es válido.', DESTINATARIO_REQUERIDO:'Seleccione un conductor destinatario.', NOTIFICACION_NO_ENCONTRADA:'La notificación no existe.', ALERTA_NO_ENCONTRADA:'La alerta no existe.', LECTURA_NOTIFICACION_NO_CONFIRMADA:'La notificación no confirmó su estado leído en la base central.', LECTURA_ALERTA_NO_CONFIRMADA:'La alerta no confirmó su estado leído en la base central.',
+      ESTADO_RUTA_INVALIDO:'El estado solicitado para la ruta no es válido.', DESTINATARIO_REQUERIDO:'Seleccione un destinatario.', USUARIO_DESTINATARIO_NO_ENCONTRADO:'El usuario destinatario no existe o no está activo.', SIN_DESTINATARIOS_PARA_EL_ALCANCE:'No existen cuentas activas que coincidan con el grupo seleccionado.', TITULO_Y_MENSAJE_REQUERIDOS:'Complete el título y el mensaje.', TIPO_AVISO_INVALIDO:'Seleccione una clase de aviso válida.', ALCANCE_AVISO_INVALIDO:'Seleccione un grupo de destinatarios válido.', NOTIFICACION_NO_ENCONTRADA:'La notificación no existe.', ALERTA_NO_ENCONTRADA:'La alerta no existe.', LECTURA_NOTIFICACION_NO_CONFIRMADA:'La notificación no confirmó su estado leído en la base central.', LECTURA_ALERTA_NO_CONFIRMADA:'La alerta no confirmó su estado leído en la base central.',
       COORDENADAS_INVALIDAS:'Las coordenadas recibidas no son válidas.', AUTORIZACION_QR_INVALIDA:'Valide nuevamente el QR del vehículo. La autorización dura cinco minutos.',
       ACCION_ESPECIAL_REQUERIDA:'Utilice el botón específico del módulo para realizar esta acción.',
       SINCRONIZACION_NO_COMPLETADA:'La base de datos no respondió correctamente durante la sincronización.',
@@ -817,9 +821,12 @@
   function cleanupSection() {
     if (gpsRefreshTimer) clearTimeout(gpsRefreshTimer); gpsRefreshTimer=null;
     if (connectionsRefreshTimer) clearTimeout(connectionsRefreshTimer); connectionsRefreshTimer=null;
+    if (connectionTrackingLiveTimer) clearTimeout(connectionTrackingLiveTimer); connectionTrackingLiveTimer=null;
     if (connectionsFilterTimer) clearTimeout(connectionsFilterTimer); connectionsFilterTimer=null;
     connectionsRequestGeneration++;
     connectionsRefreshPending=null;
+    connectionTrackingLivePending=null;
+    connectionTrackingLiveFailures=0;
     gpsRefreshQueued=false;gpsLocationsPaintKey='';gpsDevicesPaintKey='';gpsTotalsPaintKey='';
     document.body.classList.remove('mapa-pantalla-completa');$('#mapCard')?.classList.remove('map-fullscreen');
     if (mapaFlota) { mapaFlota.eliminar(); mapaFlota=null; }
@@ -1184,6 +1191,8 @@
       <div class="card-header checkin-visible-header"><div><span class="eyebrow">CHEQUEO ANTES DE SALIR</span><h3>Lista de chequeo vehicular</h3><p>Marque los 16 controles. El formulario permanece visible dentro del módulo.</p></div><div class="checkin-progress-summary"><b data-checkin-progress-count>0 / ${checkinCatalog.length}</b><span>controles revisados</span></div></div>
       <div class="checkin-progress-track" aria-hidden="true"><i data-checkin-progress-bar></i></div>
       <form class="form-grid checkin-form checkin-inline-form" id="checkinInlineForm">
+        <input type="hidden" name="AUTORIZACION_QR">
+        <div class="tracking-notice active full hidden" data-checkin-qr-notice><i>▦</i><div><b>Vehículo validado mediante QR</b><span>La patente escaneada quedó seleccionada para esta inspección.</span></div></div>
         <div class="checkin-basic-data full">
           <label class="field"><span>Vehículo</span>${selectorDinamico('vehicles','checkinVehicles','VEHICULO_ID',pendienteRuta.VEHICULO_ID||'',true)}</label>
           <label class="field"><span>Conductor</span>${selectorDinamico('drivers','checkinDrivers','CONDUCTOR_ID',pendienteRuta.CONDUCTOR_ID||currentUser.CONDUCTOR_ID||'',true)}</label>
@@ -1204,7 +1213,7 @@
     const data=await checkinContext(),vehicleMap=Object.fromEntries(data.vehicles.map(v=>[v.ID,v])),driverMap=Object.fromEntries(data.drivers.map(d=>[d.ID,d]));
     const approved=data.rows.filter(row=>checkinVisualState(row)==='Aprobado').length,pending=data.rows.filter(row=>row.ESTADO_REVISION==='Pendiente').length,blocked=data.rows.filter(row=>row.ESTADO_REVISION==='Bloqueado').length;
     const rows=data.rows.map(row=>checkinRow(row,vehicleMap,driverMap)).join('');
-    const create=hasPermission('CHECKIN','CREAR')?'<button class="btn primary" data-focus-checkin>↓ Ir a la lista de chequeo</button>':'';
+    const create=hasPermission('CHECKIN','CREAR')?`${hasPermission('QR','LEER')?'<button class="btn soft" data-open-checkin-qr>▦ Escanear QR para revisión</button>':''}<button class="btn primary" data-focus-checkin>↓ Ir a la lista de chequeo</button>`:'';
     return heading('INSPECCIÓN PREOPERACIONAL','Check-in vehicular','Revise el vehículo antes de iniciar cualquier operación. Los 16 controles aparecen directamente en esta pantalla.',`<button class="btn soft" data-sync>↻ Sincronizar</button>${create}`)+
       reciboCheckinMarkup()+
       `<div class="checkin-process"><article><i>1</i><div><b>Seleccionar vehículo</b><span>Confirme patente, conductor y kilometraje.</span></div></article><article><i>2</i><div><b>Completar 16 controles</b><span>Marque conforme, falla o no aplica cuando corresponda.</span></div></article><article><i>3</i><div><b>Guardar evaluación</b><span>La operación solo inicia con check-in aprobado y vigente.</span></div></article></div>`+
@@ -1639,6 +1648,7 @@
       guardarSeguimientoConexionLocal();
     }
     connectionTrackingServerLoaded=true;
+    if(connectionTrackedUserId)scheduleConnectionTrackingLive();
   }
   function filaSeguimientoConexion(rows){
     if(!connectionTrackedUserId)return null;
@@ -1665,8 +1675,14 @@
   function panelSeguimientoConexion(result,rows){
     const seguimiento=detalleSeguimientoConexion(result,rows);
     if(!seguimiento.id)return `<section class="connections-tracking-panel" id="connectionsTrackingPanel"><div><i>◎</i><div><span>Seguimiento individual</span><b>Ningún usuario seleccionado</b><small>Marque “Seguir” en un registro con GPS válido para acompañar su movimiento.</small></div></div></section>`;
-    if(!seguimiento.visible)return `<section class="connections-tracking-panel filtered" id="connectionsTrackingPanel"><div><i>!</i><div><span>Seguimiento pausado por filtros</span><b>${esc(seguimiento.nombre)}</b><small>El usuario seguido no coincide con los filtros actuales. Al ajustar los filtros, el seguimiento continuará automáticamente.</small></div></div><button class="btn danger small" type="button" data-stop-connection-follow ${connectionTrackingSavePending?'disabled':''}>Detener seguimiento</button></section>`;
-    return `<section class="connections-tracking-panel active" id="connectionsTrackingPanel"><div><i>⌖</i><div><span>Siguiendo ahora</span><b>${esc(seguimiento.nombre)}${seguimiento.correo?` · ${esc(seguimiento.correo)}`:''}</b><small>${esc(seguimiento.direccion)} · ${seguimiento.rastro.length||1} posición(es) recientes en el rastro</small></div></div><button class="btn danger small" type="button" data-stop-connection-follow ${connectionTrackingSavePending?'disabled':''}>Detener seguimiento</button></section>`;
+    const avisar=puedeEnviarAvisosConexiones()?`<button class="btn soft small" type="button" data-connection-notice="${esc(seguimiento.id)}">Avisar</button>`:'';
+    if(!seguimiento.visible)return `<section class="connections-tracking-panel filtered" id="connectionsTrackingPanel"><div><i>!</i><div><span>Seguimiento pausado por filtros</span><b>${esc(seguimiento.nombre)}</b><small>El usuario seguido no coincide con los filtros actuales. Al ajustar los filtros, el seguimiento continuará automáticamente.</small></div></div><div class="connections-tracking-actions">${avisar}<button class="btn danger small" type="button" data-stop-connection-follow ${connectionTrackingSavePending?'disabled':''}>Detener seguimiento</button></div></section>`;
+    return `<section class="connections-tracking-panel active" id="connectionsTrackingPanel"><div><i>⌖</i><div><span>Siguiendo en vivo</span><b>${esc(seguimiento.nombre)}${seguimiento.correo?` · ${esc(seguimiento.correo)}`:''}</b><small>${esc(seguimiento.direccion)} · ${seguimiento.rastro.length||1} posición(es) recientes · consulta liviana cada ${Math.max(1,Math.round(Number(config.INTERVALO_SEGUIMIENTO_CONEXION_MILISEGUNDOS||1500)/1000))} s</small></div></div><div class="connections-tracking-actions">${avisar}<button class="btn danger small" type="button" data-stop-connection-follow ${connectionTrackingSavePending?'disabled':''}>Detener seguimiento</button></div></section>`;
+  }
+  function puedeEnviarAvisosConexiones(){return hasPermission('NOTIFICACIONES','CREAR')||hasPermission('ALERTAS','CREAR');}
+  function panelAvisosConexiones(){
+    if(!puedeEnviarAvisosConexiones())return '';
+    return `<section class="connections-notice-panel"><div><i>🔔</i><div><span>COMUNICACIÓN INMEDIATA</span><b>Notificaciones y alertas desde el mapa</b><small>Envíe a un usuario, a todos los conductores, a quienes están conectados o a todas las cuentas activas.</small></div></div><button class="btn primary" type="button" data-connection-notice="">＋ Crear aviso</button></section>`;
   }
   function enlazarSeguimientoConexiones(root=document){
     $$('[data-connection-follow]',root).forEach(input=>{
@@ -1683,6 +1699,13 @@
       button.addEventListener('click',()=>conCargaBoton(button,'Deteniendo…',()=>cambiarSeguimientoConexion('')));
     });
   }
+  function enlazarAvisosConexiones(root=document){
+    $$('[data-connection-notice]',root).forEach(button=>{
+      if(button.dataset.noticeBound==='1')return;
+      button.dataset.noticeBound='1';
+      button.addEventListener('click',()=>openConnectionsNoticeModal(button.dataset.connectionNotice||''));
+    });
+  }
   async function cambiarSeguimientoConexion(usuarioId){
     const anterior=connectionTrackedUserId;
     const siguiente=String(usuarioId||'').trim();
@@ -1692,6 +1715,7 @@
     connectionTrackedPositionKey='';
     connectionTrackedVisibility=null;
     guardarSeguimientoConexionLocal();
+    scheduleConnectionTrackingLive(80);
     if(currentSection==='connections')paintConnectionsOnline(ultimoResumenConexiones,false);
     try{
       const result=await api.request('saveConnectionTracking',{data:{USUARIO_ID:siguiente}});
@@ -1702,7 +1726,13 @@
         guardarSeguimientoConexionLocal();
       }
       connectionTrackingSavePending=false;
-      await refreshConnectionsOnline(false,false);
+      if(connectionTrackedUserId)await refreshConnectionTrackingLive(true);
+      else{
+        if(connectionTrackingLiveTimer)clearTimeout(connectionTrackingLiveTimer);
+        connectionTrackingLiveTimer=null;
+        mapaFlota?.actualizarRastros?.([]);
+      }
+      refreshConnectionsOnline(false,false);
       toast(siguiente?'Seguimiento iniciado':'Seguimiento detenido',siguiente?'El mapa acompañará automáticamente la ubicación del usuario seleccionado.':'El mapa volvió al modo general de equipos.');
       return result;
     }catch(error){
@@ -1711,6 +1741,7 @@
       connectionTrackedUserId=anterior;
       connectionTrackedPositionKey='';
       guardarSeguimientoConexionLocal();
+      scheduleConnectionTrackingLive(150);
       if(currentSection==='connections')paintConnectionsOnline(ultimoResumenConexiones,false);
       toast('No se pudo guardar el seguimiento',translateError(error),'error');
       return null;
@@ -1778,7 +1809,8 @@
       const gpsValido=Boolean(row.USUARIO_ID)&&row.LATITUD!==''&&row.LONGITUD!==''&&Number.isFinite(Number(row.LATITUD))&&Number.isFinite(Number(row.LONGITUD));
       const seguido=String(row.USUARIO_ID||'')===connectionTrackedUserId;
       const control=gpsValido?`<label class="connection-follow-control"><input type="checkbox" data-connection-follow="${esc(row.USUARIO_ID)}" ${seguido?'checked':''} ${connectionTrackingSavePending?'disabled':''}><span>Seguir</span></label>`:`<span class="connection-follow-unavailable">Sin GPS válido</span>`;
-      return `<tr class="connection-detail-row ${seguido?'followed':''}"><td class="connection-follow-cell" data-label="Seguimiento">${control}</td><td data-label="Estado"><span class="connection-state ${row.EN_LINEA?'online':'offline'}"><i></i>${row.EN_LINEA?'Activo':'Desconectado'}</span></td><td data-label="Usuario"><strong>${esc(row.USUARIO_NOMBRE||row.USUARIO_ID)}</strong><span class="muted">${esc(row.USUARIO_CORREO||row.ROL_ID||'')}</span></td><td data-label="Equipo"><strong>${esc(row.DISPOSITIVO_ID||'Sin ID')}</strong><span class="muted">${esc(row.PLATAFORMA||'Plataforma no informada')}</span></td><td data-label="Vehículo / conductor">${esc(row.VEHICULO_PATENTE||'—')}<span class="muted">${esc(row.CONDUCTOR_NOMBRE||row.VEHICULO_NOMBRE||'')}</span></td><td data-label="Dirección"><span class="connection-address">${esc(direccionConexion(row))}</span></td><td data-label="GPS">${row.GPS_ACTIVO==='SI'&&row.GPS_RECIENTE?status('Activo'):status('Sin GPS')}<span class="muted">${row.PRECISION_METROS!==''?`±${number(row.PRECISION_METROS)} m`:'Sin posición'}</span></td><td data-label="Módulo / actividad">${esc(row.SECCION_ACTUAL||'—')}<span class="muted">${esc(row.ACTIVIDAD||'')}</span></td><td data-label="Red / batería">${esc(row.TIPO_RED||'—')}<span class="muted">${row.BATERIA_GPS!==''?`${esc(row.BATERIA_GPS)}% batería`:''}</span></td><td data-label="Última señal">${fmtDate(row.ULTIMA_CONEXION,true)}</td><td data-label="Mapa">${gpsValido?`<button class="btn soft small" data-connection-focus="${row.LATITUD},${row.LONGITUD}">Ver mapa</button>`:'—'}</td></tr>`;
+      const avisar=puedeEnviarAvisosConexiones()&&row.USUARIO_ID?`<button class="btn soft small" data-connection-notice="${esc(row.USUARIO_ID)}">Avisar</button>`:'';
+      return `<tr class="connection-detail-row ${seguido?'followed':''}"><td class="connection-follow-cell" data-label="Seguimiento">${control}</td><td data-label="Estado"><span class="connection-state ${row.EN_LINEA?'online':'offline'}"><i></i>${row.EN_LINEA?'Activo':'Desconectado'}</span></td><td data-label="Usuario"><strong>${esc(row.USUARIO_NOMBRE||row.USUARIO_ID)}</strong><span class="muted">${esc(row.USUARIO_CORREO||row.ROL_ID||'')}</span></td><td data-label="Equipo"><strong>${esc(row.DISPOSITIVO_ID||'Sin ID')}</strong><span class="muted">${esc(row.PLATAFORMA||'Plataforma no informada')}</span></td><td data-label="Vehículo / conductor">${esc(row.VEHICULO_PATENTE||'—')}<span class="muted">${esc(row.CONDUCTOR_NOMBRE||row.VEHICULO_NOMBRE||'')}</span></td><td data-label="Dirección"><span class="connection-address">${esc(direccionConexion(row))}</span></td><td data-label="GPS">${row.GPS_ACTIVO==='SI'&&row.GPS_RECIENTE?status('Activo'):status('Sin GPS')}<span class="muted">${row.PRECISION_METROS!==''?`±${number(row.PRECISION_METROS)} m`:'Sin posición'}</span></td><td data-label="Módulo / actividad">${esc(row.SECCION_ACTUAL||'—')}<span class="muted">${esc(row.ACTIVIDAD||'')}</span></td><td data-label="Red / batería">${esc(row.TIPO_RED||'—')}<span class="muted">${row.BATERIA_GPS!==''?`${esc(row.BATERIA_GPS)}% batería`:''}</span></td><td data-label="Última señal">${fmtDate(row.ULTIMA_CONEXION,true)}</td><td data-label="Mapa"><div class="row-button-stack">${gpsValido?`<button class="btn soft small" data-connection-focus="${row.LATITUD},${row.LONGITUD}">Ver mapa</button>`:''}${avisar||(!gpsValido?'—':'')}</div></td></tr>`;
     }).join('')||`<tr><td colspan="11">${empty('○','Sin equipos para los filtros aplicados','Cambie el período o quite filtros para ampliar la búsqueda.')}</td></tr>`;
   }
   function connectionQuickList(rows){return (rows||[]).slice(0,14).map(row=>{const seguido=String(row.USUARIO_ID||'')===connectionTrackedUserId;return `<button class="connection-quick-item ${row.EN_LINEA?'online':'offline'} ${seguido?'followed':''}" ${row.LATITUD!==''?`data-connection-focus="${row.LATITUD},${row.LONGITUD}"`:''}><i></i><span><b>${esc(row.USUARIO_NOMBRE||'Usuario')}</b><small>${esc(row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo')}</small><small class="connection-quick-address">${esc(direccionConexion(row))}</small></span><em>${seguido?'Siguiendo':(row.EN_LINEA?'Activo':'Desconectado')}</em></button>`;}).join('')||empty('○','Sin conexiones','Los equipos aparecerán cuando registren una señal.');}
@@ -1806,11 +1838,11 @@
     sincronizarSeguimientoConexionesDesdeResultado(result);
     const rows=conexionesFiltradasCliente(result),totals=totalesConexionesFiltradas(rows),visibleCount=Math.min(rows.length,120);
     const detailNote=rows.length>visibleCount?`Mostrando ${visibleCount} de ${rows.length} registros filtrados.`:`${rows.length} registro(s) en lista y mapa`;
-    return `<div class="live-strip connections-live-strip"><article class="live-stat"><i>▣</i><div><span>Equipos visibles</span><b id="connectionsTotal">${totals.equipos||0}</b></div></article><article class="live-stat online"><i>●</i><div><span>Activos</span><b id="connectionsOnline">${totals.activos||0}</b></div></article><article class="live-stat warning"><i>●</i><div><span>Desconectados</span><b id="connectionsOffline">${totals.desconectados||0}</b></div></article><article class="live-stat online"><i>⌖</i><div><span>GPS activos</span><b id="connectionsGps">${totals.gpsActivos||0}</b></div></article><article class="live-stat ${(totals.sinGps||0)?'warning':''}"><i>!</i><div><span>Sin GPS</span><b id="connectionsNoGps">${totals.sinGps||0}</b></div></article></div><div class="connections-map-filter-summary"><b>Mapa filtrado</b><span id="connectionsMapFilterSummary">${rows.length} equipo(s) coinciden con los filtros actuales.</span></div>${panelSeguimientoConexion(result,rows)}<div class="connections-dashboard-grid"><article class="card map-card" id="mapCard"><div class="card-header"><div><h3>Mapa de equipos filtrados</h3><p>Solo aparecen los mismos equipos visibles en la lista. Verde: activo · Rojo: desconectado · Rastro: usuario seguido.</p></div><button class="btn soft small" type="button" data-map-fullscreen>⛶ Pantalla completa</button></div><div class="fleet-map connections-map" id="connectionsMap"></div><small class="muted" id="connectionsLastSync">Última consulta: ${fmtDate(result.serverTime||new Date(),true)}</small></article><article class="card"><div class="card-header"><div><h3>Estado rápido</h3><p>Dirección, usuario y vehículo de los resultados filtrados.</p></div></div><div class="connections-quick-list" id="connectionsQuickList">${connectionQuickList(rows)}</div></article></div><article class="card connections-detail-card"><div class="card-header"><div><h3>Detalle de conexiones</h3><p>Marque “Seguir” para acompañar a un usuario con GPS válido.</p></div><span class="status-badge" id="connectionsVisibleCount">${esc(detailNote)}</span></div><div class="table-wrap connections-table-wrap"><table><thead><tr><th>Seguimiento</th><th>Estado</th><th>Usuario</th><th>Equipo</th><th>Vehículo / conductor</th><th>Dirección</th><th>GPS</th><th>Módulo / actividad</th><th>Red / batería</th><th>Última señal</th><th>Mapa</th></tr></thead><tbody id="connectionsTableBody">${connectionRows(rows)}</tbody></table></div></article>`;
+    return `<div class="live-strip connections-live-strip"><article class="live-stat"><i>▣</i><div><span>Equipos visibles</span><b id="connectionsTotal">${totals.equipos||0}</b></div></article><article class="live-stat online"><i>●</i><div><span>Activos</span><b id="connectionsOnline">${totals.activos||0}</b></div></article><article class="live-stat warning"><i>●</i><div><span>Desconectados</span><b id="connectionsOffline">${totals.desconectados||0}</b></div></article><article class="live-stat online"><i>⌖</i><div><span>GPS activos</span><b id="connectionsGps">${totals.gpsActivos||0}</b></div></article><article class="live-stat ${(totals.sinGps||0)?'warning':''}"><i>!</i><div><span>Sin GPS</span><b id="connectionsNoGps">${totals.sinGps||0}</b></div></article></div><div class="connections-map-filter-summary"><b>Mapa filtrado</b><span id="connectionsMapFilterSummary">${rows.length} equipo(s) coinciden con los filtros actuales.</span></div>${panelSeguimientoConexion(result,rows)}${panelAvisosConexiones()}<div class="connections-dashboard-grid"><article class="card map-card" id="mapCard"><div class="card-header"><div><h3>Mapa de equipos filtrados</h3><p>Solo aparecen los mismos equipos visibles en la lista. Verde: activo · Rojo: desconectado · Rastro: usuario seguido.</p></div><button class="btn soft small" type="button" data-map-fullscreen>⛶ Pantalla completa</button></div><div class="fleet-map connections-map" id="connectionsMap"></div><small class="muted" id="connectionsLastSync">Última consulta: ${fmtDate(result.serverTime||new Date(),true)}</small></article><article class="card"><div class="card-header"><div><h3>Estado rápido</h3><p>Dirección, usuario y vehículo de los resultados filtrados.</p></div></div><div class="connections-quick-list" id="connectionsQuickList">${connectionQuickList(rows)}</div></article></div><article class="card connections-detail-card"><div class="card-header"><div><h3>Detalle de conexiones</h3><p>Marque “Seguir” para acompañar a un usuario con GPS válido o use “Avisar” para comunicarse.</p></div><span class="status-badge" id="connectionsVisibleCount">${esc(detailNote)}</span></div><div class="table-wrap connections-table-wrap"><table><thead><tr><th>Seguimiento</th><th>Estado</th><th>Usuario</th><th>Equipo</th><th>Vehículo / conductor</th><th>Dirección</th><th>GPS</th><th>Módulo / actividad</th><th>Red / batería</th><th>Última señal</th><th>Mapa / aviso</th></tr></thead><tbody id="connectionsTableBody">${connectionRows(rows)}</tbody></table></div></article>`;
   }
   function connectionsPageHtml(result){
     result=resumenConexionesSeguro(result);
-    return heading('ADMINISTRACIÓN','Conexiones en línea','Mapa y control en tiempo real de usuarios y equipos conectados. El acceso es otorgado y retirado únicamente por un Administrador.',`<button class="btn soft" data-connections-refresh>↻ Actualizar ahora</button>`)+`<div class="automatic-alert-banner"><i>⌖</i><div><b>Supervisión activa</b><span>Un equipo se muestra en verde cuando envía señal dentro de ${number(result.intervaloActivoSegundos||90)} segundos; después cambia a rojo automáticamente.</span></div></div>`+connectionFilterForm(result)+`<section id="connectionsResults" aria-live="polite">${connectionsResultsHtml(result)}</section>`;
+    return heading('ADMINISTRACIÓN','Conexiones en línea','Mapa rápido, seguimiento casi inmediato y comunicación central con usuarios y conductores.',`${puedeEnviarAvisosConexiones()?'<button class="btn primary" data-connection-notice="">🔔 Enviar aviso</button>':''}<button class="btn soft" data-connections-refresh>↻ Actualizar ahora</button>`)+`<div class="automatic-alert-banner"><i>⌖</i><div><b>Supervisión activa</b><span>El seguimiento usa una consulta liviana cada ${Math.max(1,Math.round(Number(config.INTERVALO_SEGUIMIENTO_CONEXION_MILISEGUNDOS||1500)/1000))} s; la tabla completa se sincroniza cada ${Math.max(1,Math.round(Number(config.INTERVALO_CONEXIONES_EN_LINEA_MILISEGUNDOS||5000)/1000))} s.</span></div></div>`+connectionFilterForm(result)+`<section id="connectionsResults" aria-live="polite">${connectionsResultsHtml(result)}</section>`;
   }
   function connectionsLoadingHtml(){
     const base={equipos:[],ubicaciones:[],totales:{equipos:0,activos:0,desconectados:0,gpsActivos:0,sinGps:0},opciones:{usuarios:[],conductores:[],vehiculos:[],dispositivos:[],redes:[],plataformas:[]},seguimiento:{RASTRO:[]},serverTime:'',intervaloActivoSegundos:90};
@@ -1873,23 +1905,25 @@
     })();
     return connectionsRefreshPending;
   }
-  function paintConnectionsOnline(result,adjust=false){
+  function paintConnectionsOnline(result,adjust=false,ligero=false){
     ultimoResumenConexiones=resumenConexionesSeguro(result||ultimoResumenConexiones);
     sincronizarSeguimientoConexionesDesdeResultado(ultimoResumenConexiones);
     const rows=conexionesFiltradasCliente(ultimoResumenConexiones),totals=totalesConexionesFiltradas(rows);
     const seguimiento=detalleSeguimientoConexion(ultimoResumenConexiones,rows);
     const visibilidadAnterior=connectionTrackedVisibility;
     const set=(id,value)=>{const node=$(id),texto=String(value);if(node&&node.textContent!==texto)node.textContent=texto;};
-    set('#connectionsTotal',totals.equipos||0);set('#connectionsOnline',totals.activos||0);set('#connectionsOffline',totals.desconectados||0);set('#connectionsGps',totals.gpsActivos||0);set('#connectionsNoGps',totals.sinGps||0);
-    const visibleCount=Math.min(rows.length,120),count=$('#connectionsVisibleCount');if(count)count.textContent=rows.length>visibleCount?`Mostrando ${visibleCount} de ${rows.length} registros filtrados.`:`${rows.length} registro(s) en lista y mapa`;
-    const summary=$('#connectionsMapFilterSummary'),summaryText=`${rows.length} equipo(s) coinciden con los filtros actuales y ${rows.filter(row=>row.LATITUD!==''&&row.LONGITUD!=='').length} tienen ubicación visible.`;if(summary&&summary.textContent!==summaryText)summary.textContent=summaryText;
-    const firmaFilas=firmaFilasConexiones(rows,120);
-    const tbody=$('#connectionsTableBody');if(tbody&&tbody.dataset.renderKey!==firmaFilas){tbody.dataset.renderKey=firmaFilas;tbody.innerHTML=connectionRows(rows);}
-    const firmaRapida=firmaFilasConexiones(rows,14);
-    const quick=$('#connectionsQuickList');if(quick&&quick.dataset.renderKey!==firmaRapida){quick.dataset.renderKey=firmaRapida;quick.innerHTML=connectionQuickList(rows);}
+    if(!ligero){
+      set('#connectionsTotal',totals.equipos||0);set('#connectionsOnline',totals.activos||0);set('#connectionsOffline',totals.desconectados||0);set('#connectionsGps',totals.gpsActivos||0);set('#connectionsNoGps',totals.sinGps||0);
+      const visibleCount=Math.min(rows.length,120),count=$('#connectionsVisibleCount');if(count)count.textContent=rows.length>visibleCount?`Mostrando ${visibleCount} de ${rows.length} registros filtrados.`:`${rows.length} registro(s) en lista y mapa`;
+      const summary=$('#connectionsMapFilterSummary'),summaryText=`${rows.length} equipo(s) coinciden con los filtros actuales y ${rows.filter(row=>row.LATITUD!==''&&row.LONGITUD!=='').length} tienen ubicación visible.`;if(summary&&summary.textContent!==summaryText)summary.textContent=summaryText;
+      const firmaFilas=firmaFilasConexiones(rows,120);
+      const tbody=$('#connectionsTableBody');if(tbody&&tbody.dataset.renderKey!==firmaFilas){tbody.dataset.renderKey=firmaFilas;tbody.innerHTML=connectionRows(rows);}
+      const firmaRapida=firmaFilasConexiones(rows,14);
+      const quick=$('#connectionsQuickList');if(quick&&quick.dataset.renderKey!==firmaRapida){quick.dataset.renderKey=firmaRapida;quick.innerHTML=connectionQuickList(rows);}
+    }
     const trackingKey=[seguimiento.id,seguimiento.visible?'1':'0',seguimiento.nombre,seguimiento.correo,seguimiento.direccion,seguimiento.rastro.length,connectionTrackingSavePending?'1':'0'].join('|');
     const trackingPanel=$('#connectionsTrackingPanel');if(trackingPanel&&trackingPanel.dataset.renderKey!==trackingKey){trackingPanel.outerHTML=panelSeguimientoConexion(ultimoResumenConexiones,rows);const nuevoPanel=$('#connectionsTrackingPanel');if(nuevoPanel)nuevoPanel.dataset.renderKey=trackingKey;}
-    const sync=$('#connectionsLastSync');if(sync)sync.textContent=`Última consulta: ${fmtDate(ultimoResumenConexiones.serverTime||new Date(),true)}`;
+    const sync=$('#connectionsLastSync');if(sync)sync.textContent=`${ligero?'Seguimiento en vivo':'Última consulta'}: ${fmtDate(ultimoResumenConexiones.serverTime||new Date(),true)}`;
     const markers=rows.filter(row=>row.LATITUD!==''&&row.LONGITUD!=='').slice(0,200).map(row=>({id:row.DISPOSITIVO_ID||row.ID,latitud:Number(row.LATITUD),longitud:Number(row.LONGITUD),nombre:`${row.USUARIO_NOMBRE||'Usuario'} · ${row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo'}`,activo:Boolean(row.EN_LINEA),seguido:String(row.USUARIO_ID||'')===connectionTrackedUserId,detalle:`<b>${esc(row.USUARIO_NOMBRE||'Usuario')}</b><span>${esc(row.CONDUCTOR_NOMBRE||'Sin conductor asociado')}</span><span>${esc(row.VEHICULO_PATENTE||row.DISPOSITIVO_ID||'Equipo')}</span><span>${esc(direccionConexion(row))}</span><span>${row.GPS_ACTIVO==='SI'?'GPS declarado activo':'GPS inactivo'} · precisión ${row.PRECISION_METROS!==''?`±${number(row.PRECISION_METROS)} m`:'sin dato'}${row.CALIDAD_GPS?` · calidad ${esc(row.CALIDAD_GPS)}`:''}</span><small>${String(row.USUARIO_ID||'')===connectionTrackedUserId?'Seguimiento activo · ':''}${row.EN_LINEA?'Activo':'Desconectado'} · ${fmtDate(row.FECHA_GPS||'',true)}</small>`}));
     mapaFlota?.actualizarMarcadores(markers,adjust&&!seguimiento.visible);
     const puntosRastro=seguimiento.visible?seguimiento.rastro.map(punto=>({latitud:Number(punto.LATITUD),longitud:Number(punto.LONGITUD)})).filter(punto=>Number.isFinite(punto.latitud)&&Number.isFinite(punto.longitud)).slice(-40):[];
@@ -1909,6 +1943,7 @@
     }
     enlazarSeguimientoConexiones($('#connectionsResults')||document);
     enlazarFocoConexiones($('#connectionsResults')||document);
+    enlazarAvisosConexiones($('#content')||document);
   }
   function asegurarComponenteMapa(){
     if(window.MapaFlotas)return Promise.resolve(window.MapaFlotas);
@@ -1924,7 +1959,7 @@
         return;
       }
       const script=document.createElement('script');
-      script.src='mapa.js?v=3.15.0';
+      script.src='mapa.js?v=3.17.0';
       script.async=true;
       script.dataset.mapaFlotas='dinamico';
       script.onload=comprobar;
@@ -1959,6 +1994,7 @@
       requestAnimationFrame(()=>mapaFlota?.redibujar?.());
       setTimeout(()=>mapaFlota?.redibujar?.(),300);
       scheduleConnectionsRefresh();
+      scheduleConnectionTrackingLive(100);
     })().catch(error=>{toast('Mapa no disponible',translateError(error),'error');}).finally(()=>{promesaInicializacionMapa=null;});
     return promesaInicializacionMapa;
   }
@@ -1969,7 +2005,61 @@
     const normal=Number(config.INTERVALO_CONEXIONES_EN_LINEA_MILISEGUNDOS||15000);
     const hidden=Number(config.INTERVALO_TIEMPO_REAL_OCULTO_MILISEGUNDOS||30000);
     const espera=Number(delay|| (document.hidden?hidden:normal));
-    connectionsRefreshTimer=setTimeout(()=>refreshConnectionsOnline(false),Math.max(5000,espera));
+    connectionsRefreshTimer=setTimeout(()=>refreshConnectionsOnline(false),Math.max(3000,espera));
+  }
+
+  function scheduleConnectionTrackingLive(delay){
+    if(connectionTrackingLiveTimer)clearTimeout(connectionTrackingLiveTimer);
+    connectionTrackingLiveTimer=null;
+    if(currentSection!=='connections'||!currentUser||!connectionTrackedUserId||document.hidden||!hasPermission('CONEXIONES','LEER'))return;
+    const base=Number(config.INTERVALO_SEGUIMIENTO_CONEXION_MILISEGUNDOS||1500);
+    const espera=Number(delay??Math.min(10000,base*Math.pow(2,Math.min(connectionTrackingLiveFailures,3))));
+    connectionTrackingLiveTimer=setTimeout(()=>refreshConnectionTrackingLive(false),Math.max(900,espera));
+  }
+  function fusionarSeguimientoConexionTiempoReal(result){
+    const fuente=result&&typeof result==='object'?result:{};
+    const row=fuente.row&&typeof fuente.row==='object'?fuente.row:null;
+    const usuarioId=String(fuente.seguimiento?.USUARIO_ID||connectionTrackedUserId||'').trim();
+    let equipos=(ultimoResumenConexiones.equipos||[]).slice();
+    if(fuente.sinConexion&&usuarioId)equipos=equipos.filter(item=>String(item.USUARIO_ID||'')!==usuarioId);
+    if(row){
+      const indice=equipos.findIndex(item=>
+        (row.ID&&String(item.ID||'')===String(row.ID))||
+        (row.DISPOSITIVO_ID&&String(item.DISPOSITIVO_ID||'')===String(row.DISPOSITIVO_ID))
+      );
+      if(indice>=0)equipos[indice]={...equipos[indice],...row};
+      else equipos.unshift(row);
+    }
+    ultimoResumenConexiones=resumenConexionesSeguro({
+      ...ultimoResumenConexiones,
+      equipos,
+      seguimiento:fuente.seguimiento||ultimoResumenConexiones.seguimiento||{},
+      serverTime:fuente.serverTime||new Date().toISOString()
+    });
+    return ultimoResumenConexiones;
+  }
+  async function refreshConnectionTrackingLive(inmediato=false){
+    if(connectionTrackingLivePending)return connectionTrackingLivePending;
+    if(currentSection!=='connections'||!currentUser||!connectionTrackedUserId||document.hidden)return null;
+    const usuarioSolicitado=connectionTrackedUserId;
+    connectionTrackingLivePending=(async()=>{
+      try{
+        const result=await api.request('connectionTrackingLive',{USUARIO_ID:usuarioSolicitado,force:true,marcaTiempo:Date.now()});
+        if(currentSection!=='connections'||usuarioSolicitado!==connectionTrackedUserId)return result;
+        connectionTrackingLiveFailures=0;
+        paintConnectionsOnline(fusionarSeguimientoConexionTiempoReal(result),false,true);
+        return result;
+      }catch(error){
+        connectionTrackingLiveFailures+=1;
+        const sync=$('#connectionsLastSync');
+        if(sync&&connectionTrackingLiveFailures>=3)sync.textContent='Seguimiento: reconectando canal rápido…';
+        return null;
+      }finally{
+        connectionTrackingLivePending=null;
+        scheduleConnectionTrackingLive();
+      }
+    })();
+    return connectionTrackingLivePending;
   }
   async function refreshConnectionsOnline(showToast=false,adjust=false){
     if(connectionsRefreshPending)return connectionsRefreshPending;
@@ -2293,7 +2383,7 @@
     const pending=authorizations.filter(row=>row.ESTADO==='PENDIENTE');
     const approvals=esAdministrador()&&pending.length?`<article class="card"><div class="card-header"><div><span class="eyebrow">AUTORIZACIONES</span><h3>Eliminaciones pendientes</h3><p>El Supervisor no puede eliminar hasta que un Administrador resuelva la solicitud.</p></div>${status(`${pending.length} pendiente${pending.length===1?'':'s'}`)}</div>${table(['Solicitud','Carga','Supervisor','Motivo','Fecha','Decisión'],pending.map(row=>`<tr><td><strong>${esc(row.ID)}</strong></td><td>${esc(row.CARGA_ID)}</td><td>${esc(row.SOLICITANTE_NOMBRE||row.SOLICITADO_POR)}</td><td>${esc(row.MOTIVO)}</td><td>${fmtDate(row.FECHA_SOLICITUD,true)}</td><td><div class="fuel-actions"><button class="btn primary small" type="button" data-approve-fuel-delete="${esc(row.ID)}">Aprobar</button><button class="btn soft small" type="button" data-reject-fuel-delete="${esc(row.ID)}">Rechazar</button></div></td></tr>`).join(''))}</article>`:'';
     const supervisorRequests=currentUser.ROL_ID==='ROL-SUPERVISOR'&&authorizations.length?`<article class="card"><div class="card-header"><div><h3>Mis solicitudes de eliminación</h3><p>Seguimiento de autorizaciones administrativas.</p></div></div>${table(['Solicitud','Carga','Motivo','Estado','Respuesta','Fecha'],[...authorizations].sort((a,b)=>new Date(b.FECHA_SOLICITUD||0)-new Date(a.FECHA_SOLICITUD||0)).map(row=>`<tr><td><strong>${esc(row.ID)}</strong></td><td>${esc(row.CARGA_ID)}</td><td>${esc(row.MOTIVO)}</td><td>${status(row.ESTADO)}</td><td>${esc(row.COMENTARIO_AUTORIZACION||'—')}<small>${esc(row.AUTORIZADOR_NOMBRE||'')}</small></td><td>${fmtDate(row.FECHA_SOLICITUD,true)}</td></tr>`).join(''))}</article>`:'';
-    const create=hasPermission('COMBUSTIBLE','CREAR')?'<button class="btn primary" type="button" data-new-fuel>＋ Informar carga</button>':'';
+    const create=hasPermission('COMBUSTIBLE','CREAR')?`${hasPermission('QR','LEER')?'<button class="btn soft" type="button" data-open-fuel-qr>▦ Escanear QR para carga</button>':''}<button class="btn primary" type="button" data-new-fuel>＋ Informar carga</button>`:'';
     return heading('CONTROL DE GASTOS','Carga de combustible',currentUser.ROL_ID==='ROL-CONDUCTOR'?'Consulte su historial e informe las cargas realizadas para su vehículo y asignación activa.':'Registre cargas, mida el rendimiento y mantenga trazabilidad completa por vehículo y conductor.',`<a class="btn soft" href="${esc(carpetasDrive.boletasCombustible)}" target="_blank" rel="noopener">▧ Carpeta boletas</a><button class="btn soft" data-export="fuel">⇩ Exportar historial</button><button class="btn soft" data-sync>↻ Sincronizar</button>${create}`)+
       `<div class="kpi-grid">${metric('⛽','Litros acumulados',`${decimal(summary.totalLitros||0,2)} L`,`${number(summary.totalCargas||0)} cargas`)}${metric('$','Gasto acumulado',clp(summary.gastoTotal||0),`Promedio ${clp(summary.precioPromedioLitro||0)}/L`)}${metric('↗','Rendimiento promedio',`${decimal(summary.consumoPromedioKmL||0)} km/L`,`${decimal(summary.consumoPromedioL100Km||0)} L/100 km`)}${metric('▦','Mes actual',clp(summary.mesActual?.gasto||0),`${decimal(summary.mesActual?.litros||0,2)} L · ${number(summary.mesActual?.cargas||0)} cargas`)}</div>`+
       approvals+supervisorRequests+
@@ -2310,7 +2400,7 @@
     return {items,vehicles,drivers};
   }
 
-  async function openFuelModal(record=null){
+  async function openFuelModal(record=null,qrVehicle=null){
     try {
       await asegurarContextoCombustible();
     } catch (error) {
@@ -2318,11 +2408,16 @@
       return;
     }
     const {items,vehicles,drivers}=fuelAssignmentOptions(record),admin=esAdministrador();
-    const selectedKey=record?.OPERACION_ID?`OPE:${record.OPERACION_ID}`:record?.RUTA_ID?`RUT:${record.RUTA_ID}`:(items.length===1?items[0].key:'');
-    const assignmentOptions=`<option value="">Seleccione una asignación activa</option>${items.map(item=>`<option value="${esc(item.key)}" ${item.key===selectedKey?'selected':''}>${esc(item.label)}</option>`).join('')}${admin?'<option value="ADMIN" '+(!selectedKey&&record?'selected':'')+'>Registro administrativo manual</option>':''}`;
-    const blocked=!admin&&!record&&!items.length;
+    const qrObject=qrVehicle&&typeof qrVehicle==='object'?qrVehicle:null;
+    if(qrObject)guardarRegistro('vehicles',qrObject);
+    const qrAssignment=qrObject?items.find(item=>String(item.vehicleId)===String(qrObject.ID)):null;
+    const selectedKey=record?.OPERACION_ID?`OPE:${record.OPERACION_ID}`:record?.RUTA_ID?`RUT:${record.RUTA_ID}`:qrAssignment?.key||(items.length===1&&!qrObject?items[0].key:'');
+    const adminManualSelected=admin&&!selectedKey&&Boolean(record||qrObject);
+    const assignmentOptions=`<option value="">Seleccione una asignación activa</option>${items.map(item=>`<option value="${esc(item.key)}" ${item.key===selectedKey?'selected':''}>${esc(item.label)}</option>`).join('')}${admin?`<option value="ADMIN" ${adminManualSelected?'selected':''}>Registro administrativo manual</option>`:''}`;
+    const blocked=!admin&&!record&&(qrObject?!qrAssignment:!items.length);
+    const initialVehicleId=record?.VEHICULO_ID||qrObject?.ID||'';
     $('#modalEyebrow').textContent='COMBUSTIBLE';$('#modalTitle').textContent=record?'Editar carga':'Registrar carga de combustible';
-    $('#modalBody').innerHTML=`<form id="fuelForm" class="form-grid"><div class="tracking-notice active full"><i>↔</i><div><b>Enlace automático con la asignación</b><span>El vehículo y el conductor se completan juntos desde la operación o ruta vigente.</span></div></div>${blocked?'<div class="module-diagnostic warning full"><i>!</i><div><b>No existe una asignación activa</b><span>Debe iniciar una operación o asignar una ruta antes de registrar combustible.</span></div></div>':''}<label class="field full"><span>Operación o ruta asignada</span><select name="VINCULO_ASIGNACION" ${admin?'':'required'}>${assignmentOptions}</select></label><input type="hidden" name="VEHICULO_ID" value="${esc(record?.VEHICULO_ID||'')}"><input type="hidden" name="CONDUCTOR_ID" value="${esc(record?.CONDUCTOR_ID||'')}"><input type="hidden" name="OPERACION_ID" value="${esc(record?.OPERACION_ID||'')}"><input type="hidden" name="RUTA_ID" value="${esc(record?.RUTA_ID||'')}"><div class="info-item"><span>Vehículo enlazado</span><b data-fuel-linked-vehicle>${esc(fuelName('vehicles',record?.VEHICULO_ID,'Pendiente de selección'))}</b></div><div class="info-item"><span>Conductor enlazado</span><b data-fuel-linked-driver>${esc(fuelName('drivers',record?.CONDUCTOR_ID,'Pendiente de selección'))}</b></div>${admin?`<div class="form-grid full ${selectedKey?'hidden':''}" data-fuel-admin-manual><label class="field"><span>Vehículo administrativo</span><select name="VEHICULO_MANUAL_ID">${fuelSelectOptions(vehicles,record?.VEHICULO_ID,row=>`${row.PATENTE||row.ID} · ${row.MARCA||''} ${row.MODELO||''}`)}</select></label><label class="field"><span>Conductor administrativo</span><select name="CONDUCTOR_MANUAL_ID">${fuelSelectOptions(drivers,record?.CONDUCTOR_ID,row=>row.NOMBRE||row.RUT||row.ID)}</select></label></div>`:''}<label class="field"><span>Fecha y hora</span><input name="FECHA_HORA" type="datetime-local" value="${esc(fechaInputLocal(record?.FECHA_HORA||new Date()))}" required></label><label class="field"><span>Tipo de combustible</span><select name="TIPO_COMBUSTIBLE">${['Diésel','Gasolina 93','Gasolina 95','Gasolina 97','Gas','Otro'].map(value=>`<option ${value===(record?.TIPO_COMBUSTIBLE||'Diésel')?'selected':''}>${value}</option>`).join('')}</select></label><label class="field"><span>Litros cargados</span><input name="LITROS" type="number" min="0.001" step="0.001" value="${esc(record?.LITROS??'')}" required></label><label class="field"><span>Precio por litro</span><input name="PRECIO_LITRO" type="number" min="0" step="0.01" value="${esc(record?.PRECIO_LITRO??'')}" required></label><label class="field"><span>Kilometraje</span><input name="KILOMETRAJE" type="number" min="0" step="0.1" value="${esc(record?.KILOMETRAJE??'')}" required></label><div class="info-item full" data-fuel-total><span>Costo calculado</span><b>${clp(record?.COSTO_TOTAL||0)}</b></div><label class="field"><span>Estación de servicio</span><input name="ESTACION_SERVICIO" value="${esc(record?.ESTACION_SERVICIO||'')}"></label><label class="field"><span>Número de boleta/factura</span><input name="NUMERO_DOCUMENTO" value="${esc(record?.NUMERO_DOCUMENTO||'')}"></label><label class="field"><span>Medio de pago</span><select name="MEDIO_PAGO">${['','Efectivo','Tarjeta empresa','Tarjeta crédito','Tarjeta débito','Transferencia','Convenio'].map(value=>`<option value="${esc(value)}" ${value===(record?.MEDIO_PAGO||'')?'selected':''}>${esc(value||'Seleccione')}</option>`).join('')}</select></label><label class="field"><span>Tanque lleno</span><select name="TANQUE_LLENO"><option value="SI" ${(record?.TANQUE_LLENO||'SI')==='SI'?'selected':''}>Sí</option><option value="NO" ${record?.TANQUE_LLENO==='NO'?'selected':''}>No</option></select></label><div class="field full"><span>Foto de la boleta</span>${markupCargaDrive({campo:'COMPROBANTE_URL',url:record?.COMPROBANTE_URL||'',combustible:true})}</div><label class="field full"><span>Observaciones</span><textarea name="OBSERVACIONES">${esc(record?.OBSERVACIONES||'')}</textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit" ${blocked?'disabled':''}>Guardar carga</button></div></form>`;
+    $('#modalBody').innerHTML=`<form id="fuelForm" class="form-grid">${qrObject?`<div class="tracking-notice active full"><i>▦</i><div><b>QR validado: ${esc(qrObject.PATENTE||qrObject.ID)}</b><span>${esc([qrObject.MARCA,qrObject.MODELO].filter(Boolean).join(' ')||'Vehículo identificado para la carga')}</span></div></div><input type="hidden" name="AUTORIZACION_QR" value="${esc(qrObject.AUTORIZACION_QR||'')}">`:''}<div class="tracking-notice active full"><i>↔</i><div><b>Enlace automático con la asignación</b><span>El vehículo y el conductor se completan juntos desde la operación o ruta vigente.</span></div></div>${blocked?`<div class="module-diagnostic warning full"><i>!</i><div><b>${qrObject?'El vehículo escaneado no tiene una asignación activa':'No existe una asignación activa'}</b><span>Debe iniciar una operación o asignar una ruta para este vehículo antes de registrar combustible.</span></div></div>`:''}<label class="field full"><span>Operación o ruta asignada</span><select name="VINCULO_ASIGNACION" ${admin?'':'required'}>${assignmentOptions}</select></label><input type="hidden" name="VEHICULO_ID" value="${esc(initialVehicleId)}"><input type="hidden" name="CONDUCTOR_ID" value="${esc(record?.CONDUCTOR_ID||'')}"><input type="hidden" name="OPERACION_ID" value="${esc(record?.OPERACION_ID||'')}"><input type="hidden" name="RUTA_ID" value="${esc(record?.RUTA_ID||'')}"><div class="info-item"><span>Vehículo enlazado</span><b data-fuel-linked-vehicle>${esc(fuelName('vehicles',initialVehicleId,'Pendiente de selección'))}</b></div><div class="info-item"><span>Conductor enlazado</span><b data-fuel-linked-driver>${esc(fuelName('drivers',record?.CONDUCTOR_ID,'Pendiente de selección'))}</b></div>${admin?`<div class="form-grid full ${selectedKey?'hidden':''}" data-fuel-admin-manual><label class="field"><span>Vehículo administrativo</span><select name="VEHICULO_MANUAL_ID">${fuelSelectOptions(vehicles,initialVehicleId,row=>`${row.PATENTE||row.ID} · ${row.MARCA||''} ${row.MODELO||''}`)}</select></label><label class="field"><span>Conductor administrativo</span><select name="CONDUCTOR_MANUAL_ID">${fuelSelectOptions(drivers,record?.CONDUCTOR_ID,row=>row.NOMBRE||row.RUT||row.ID)}</select></label></div>`:''}<label class="field"><span>Fecha y hora</span><input name="FECHA_HORA" type="datetime-local" value="${esc(fechaInputLocal(record?.FECHA_HORA||new Date()))}" required></label><label class="field"><span>Tipo de combustible</span><select name="TIPO_COMBUSTIBLE">${['Diésel','Gasolina 93','Gasolina 95','Gasolina 97','Gas','Otro'].map(value=>`<option ${value===(record?.TIPO_COMBUSTIBLE||'Diésel')?'selected':''}>${value}</option>`).join('')}</select></label><label class="field"><span>Litros cargados</span><input name="LITROS" type="number" min="0.001" step="0.001" value="${esc(record?.LITROS??'')}" required></label><label class="field"><span>Precio por litro</span><input name="PRECIO_LITRO" type="number" min="0" step="0.01" value="${esc(record?.PRECIO_LITRO??'')}" required></label><label class="field"><span>Kilometraje</span><input name="KILOMETRAJE" type="number" min="0" step="0.1" value="${esc(record?.KILOMETRAJE??'')}" required></label><div class="info-item full" data-fuel-total><span>Costo calculado</span><b>${clp(record?.COSTO_TOTAL||0)}</b></div><label class="field"><span>Estación de servicio</span><input name="ESTACION_SERVICIO" value="${esc(record?.ESTACION_SERVICIO||'')}"></label><label class="field"><span>Número de boleta/factura</span><input name="NUMERO_DOCUMENTO" value="${esc(record?.NUMERO_DOCUMENTO||'')}"></label><label class="field"><span>Medio de pago</span><select name="MEDIO_PAGO">${['','Efectivo','Tarjeta empresa','Tarjeta crédito','Tarjeta débito','Transferencia','Convenio'].map(value=>`<option value="${esc(value)}" ${value===(record?.MEDIO_PAGO||'')?'selected':''}>${esc(value||'Seleccione')}</option>`).join('')}</select></label><label class="field"><span>Tanque lleno</span><select name="TANQUE_LLENO"><option value="SI" ${(record?.TANQUE_LLENO||'SI')==='SI'?'selected':''}>Sí</option><option value="NO" ${record?.TANQUE_LLENO==='NO'?'selected':''}>No</option></select></label><div class="field full"><span>Foto de la boleta</span>${markupCargaDrive({campo:'COMPROBANTE_URL',url:record?.COMPROBANTE_URL||'',combustible:true})}</div><label class="field full"><span>Observaciones</span><textarea name="OBSERVACIONES">${esc(record?.OBSERVACIONES||'')}</textarea></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit" ${blocked?'disabled':''}>Guardar carga</button></div></form>`;
     openModal();const form=$('#fuelForm'),assignment=form.elements.VINCULO_ASIGNACION,manual=$('[data-fuel-admin-manual]',form);enlazarCargaDrive(form,'fuel');
     const applyLink=()=>{const value=assignment.value,item=items.find(row=>row.key===value);if(item){form.elements.VEHICULO_ID.value=item.vehicleId||'';form.elements.CONDUCTOR_ID.value=item.driverId||'';form.elements.OPERACION_ID.value=item.operationId||'';form.elements.RUTA_ID.value=item.routeId||'';manual?.classList.add('hidden');}else if(value==='ADMIN'&&admin){manual?.classList.remove('hidden');form.elements.OPERACION_ID.value='';form.elements.RUTA_ID.value='';form.elements.VEHICULO_ID.value=form.elements.VEHICULO_MANUAL_ID.value||'';form.elements.CONDUCTOR_ID.value=form.elements.CONDUCTOR_MANUAL_ID.value||'';}else{form.elements.VEHICULO_ID.value='';form.elements.CONDUCTOR_ID.value='';form.elements.OPERACION_ID.value='';form.elements.RUTA_ID.value='';manual?.classList.add('hidden');} $('[data-fuel-linked-vehicle]',form).textContent=fuelName('vehicles',form.elements.VEHICULO_ID.value,'Pendiente de selección');$('[data-fuel-linked-driver]',form).textContent=fuelName('drivers',form.elements.CONDUCTOR_ID.value,'Pendiente de selección');const vehicle=vehicles.find(row=>String(row.ID)===String(form.elements.VEHICULO_ID.value));if(vehicle&&form.elements.KILOMETRAJE&&!form.elements.KILOMETRAJE.value)form.elements.KILOMETRAJE.value=vehicle.KILOMETRAJE||'';};
     assignment.addEventListener('change',applyLink);if(admin){form.elements.VEHICULO_MANUAL_ID?.addEventListener('change',applyLink);form.elements.CONDUCTOR_MANUAL_ID?.addEventListener('change',applyLink);}applyLink();
@@ -2365,7 +2460,9 @@
     $$('[data-sync],[data-refresh],[data-retry]').forEach(btn=>{if(btn.dataset.syncBound==='1')return;btn.dataset.syncBound='1';btn.addEventListener('click',()=>sincronizarSistema(btn));});
     $$('[data-new-operation]').forEach(btn=>btn.addEventListener('click',()=>openOperationModal()));
     $$('[data-quick-base-setup]').forEach(btn=>btn.addEventListener('click',()=>configurarPuntoOperacionRapido(btn)));
-    $$('[data-new-checkin]').forEach(btn=>btn.addEventListener('click',openCheckinModal));
+    $$('[data-new-checkin]').forEach(btn=>btn.addEventListener('click',()=>openCheckinModal()));
+    $$('[data-open-fuel-qr]').forEach(btn=>btn.addEventListener('click',()=>openQr('combustible')));
+    $$('[data-open-checkin-qr]').forEach(btn=>btn.addEventListener('click',()=>openQr('checkin')));
     $('[data-focus-checkin]')?.addEventListener('click',()=>$('#checkinVisibleCard')?.scrollIntoView({behavior:'smooth',block:'start'}));
     const inlineCheckin=$('#checkinInlineForm');if(inlineCheckin)bindInlineCheckinForm(inlineCheckin);
     $$('[data-review-checkin]').forEach(btn=>btn.addEventListener('click',()=>openCheckinReviewModal(btn.dataset.reviewCheckin)));
@@ -2391,7 +2488,7 @@
     $$('[data-finish-operation]').forEach(btn=>btn.addEventListener('click',()=>finishOperation(btn.dataset.finishOperation,btn)));
     $$('[data-edit-operation-admin]').forEach(btn=>btn.addEventListener('click',()=>openAdminEditOperationModal(btn.dataset.editOperationAdmin)));
     $$('[data-delete-operation-admin]').forEach(btn=>btn.addEventListener('click',()=>openAdminDeleteOperationModal(btn.dataset.deleteOperationAdmin)));
-    $$('[data-open-qr]').forEach(btn=>btn.addEventListener('click',openQr));
+    $$('[data-open-qr]').forEach(btn=>btn.addEventListener('click',()=>openQr('vehiculo-operacion')));
     $$('[data-refresh-locations]').forEach(btn=>btn.addEventListener('click',()=>conCargaBoton(btn,'Sincronizando…',()=>refreshLocations(true,false))));
     $$('[data-capture-gps]').forEach(btn=>btn.addEventListener('click',()=>conCargaBoton(btn,'Obteniendo GPS…',captureGps)));
     $$('[data-toggle-tracking]').forEach(btn=>btn.addEventListener('click',()=>conCargaBoton(btn,gpsWatchId===null?'Activando…':'Deteniendo…',toggleTracking).then(updateTrackingUi)));
@@ -2422,6 +2519,7 @@
     }
     enlazarSeguimientoConexiones($('#connectionsResults')||document);
     enlazarFocoConexiones($('#connectionsResults')||document);
+    enlazarAvisosConexiones($('#content')||document);
     const kpiForm=$('#kpiFilterForm');if(kpiForm){const repaint=()=>pintarKpisReportes();kpiForm.addEventListener('change',repaint);$('[data-kpi-apply]',kpiForm)?.addEventListener('click',repaint);$('[data-kpi-reset]',kpiForm)?.addEventListener('click',()=>{const today=new Date(),start=new Date();start.setDate(today.getDate()-30);kpiForm.elements.FECHA_DESDE.value=fechaInputIso(start);kpiForm.elements.FECHA_HASTA.value=fechaInputIso(today);kpiForm.elements.CONDUCTOR_ID.value='';kpiForm.elements.VEHICULO_ID.value='';repaint();});pintarKpisReportes();}
     const operationLocationForm=$('#operationLocationForm');if(operationLocationForm){
       bindAddressAutocomplete(operationLocationForm);
@@ -2955,6 +3053,58 @@
     $('#notificationForm').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());await conCargaBoton(button,'Enviando…',async()=>{try{await api.request('sendNotification',{data});invalidarListasFormulario('notifications');cacheVistasModulo.delete('notifications');cacheVistasModulo.delete('dashboard');closeModal();toast('Notificación enviada','El mensaje aparecerá en la cuenta del conductor.');actualizarSeccionEnSegundoPlano('notifications');}catch(error){toast('No se pudo enviar',translateError(error),'error');}});};
     prepararListasModal(token,['drivers']);
   }
+  function openConnectionsNoticeModal(usuarioPreseleccionado=''){
+    if(!puedeEnviarAvisosConexiones())return toast('Acceso restringido','Su cuenta no tiene permiso para crear notificaciones ni alertas.','error');
+    const preseleccion=String(usuarioPreseleccionado||'').trim();
+    const opcionesServidor=ultimoResumenConexiones?.opciones?.usuarios||[];
+    const opcionesEquipos=[...new Map((ultimoResumenConexiones?.equipos||[]).filter(row=>row.USUARIO_ID).map(row=>[String(row.USUARIO_ID),{ID:row.USUARIO_ID,NOMBRE:row.USUARIO_NOMBRE,CORREO:row.USUARIO_CORREO}])).values()];
+    const usuarios=[...new Map([...opcionesServidor,...opcionesEquipos].filter(row=>row?.ID).map(row=>[String(row.ID),row])).values()].sort((a,b)=>String(a.NOMBRE||a.ID).localeCompare(String(b.NOMBRE||b.ID),'es'));
+    const opcionesUsuarios=usuarios.map(row=>`<option value="${esc(row.ID)}" ${String(row.ID)===preseleccion?'selected':''}>${esc(row.NOMBRE||row.ID)}${row.CORREO?` · ${esc(row.CORREO)}`:''}</option>`).join('');
+    const permiteNotificacion=hasPermission('NOTIFICACIONES','CREAR'),permiteAlerta=hasPermission('ALERTAS','CREAR');
+    const tipoInicial=permiteNotificacion?'NOTIFICACION':'ALERTA';
+    $('#modalEyebrow').textContent='CONEXIONES EN LÍNEA';
+    $('#modalTitle').textContent=preseleccion?'Enviar aviso al usuario':'Enviar notificación o alerta';
+    $('#modalBody').innerHTML=`<form class="form-grid connections-notice-form" id="connectionsNoticeForm">
+      <div class="connections-notice-summary full"><i>🔔</i><div><b>Entrega central en línea</b><span>El destinatario verá el aviso en su centro de notificaciones o alertas. El envío quedará registrado en auditoría.</span></div></div>
+      <label class="field"><span>Clase de aviso</span><select name="TIPO_AVISO">${permiteNotificacion?`<option value="NOTIFICACION" ${tipoInicial==='NOTIFICACION'?'selected':''}>Notificación</option>`:''}${permiteAlerta?`<option value="ALERTA" ${tipoInicial==='ALERTA'?'selected':''}>Alerta</option>`:''}</select></label>
+      <label class="field"><span>Destinatarios</span><select name="ALCANCE"><option value="USUARIO" ${preseleccion?'selected':''}>Un usuario</option><option value="CONDUCTORES" ${!preseleccion?'selected':''}>Todos los conductores</option><option value="CONECTADOS">Usuarios conectados ahora</option><option value="TODOS">Todas las cuentas activas</option></select></label>
+      <label class="field full" data-notice-user-field><span>Usuario destinatario</span><select name="USUARIO_ID"><option value="">Seleccione un usuario</option>${opcionesUsuarios}</select></label>
+      <label class="field"><span>Categoría</span><select name="CATEGORIA"><option>Información</option><option selected>Operación</option><option>Seguridad</option><option>Sistema</option><option>Ruta</option></select></label>
+      <label class="field" data-notice-priority-field><span>Prioridad</span><select name="PRIORIDAD"><option>Baja</option><option selected>Normal</option><option>Alta</option><option>Urgente</option></select></label>
+      <label class="field" data-notice-level-field hidden><span>Nivel de alerta</span><select name="NIVEL"><option>Info</option><option selected>Advertencia</option><option>Crítica</option></select></label>
+      <label class="field full"><span>Título</span><div class="voice-field"><input name="TITULO" maxlength="160" required placeholder="Ej.: Cambio urgente de ruta"><button type="button" class="voice-field-button" data-dictate-field="TITULO" title="Dictar título">🎙</button></div></label>
+      <label class="field full"><span>Mensaje</span><div class="voice-field"><textarea name="MENSAJE" rows="5" maxlength="2000" required placeholder="Escriba instrucciones claras para los destinatarios."></textarea><button type="button" class="voice-field-button" data-dictate-field="MENSAJE" title="Dictar mensaje">🎙</button></div></label>
+      <p class="helper full" data-notice-scope-help></p>
+      <div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Enviar aviso</button></div>
+    </form>`;
+    openModal();
+    const form=$('#connectionsNoticeForm'),scopeField=$('[data-notice-user-field]',form),priorityField=$('[data-notice-priority-field]',form),levelField=$('[data-notice-level-field]',form),help=$('[data-notice-scope-help]',form);
+    const actualizar=()=>{
+      const individual=form.elements.ALCANCE.value==='USUARIO',alerta=form.elements.TIPO_AVISO.value==='ALERTA';
+      scopeField.hidden=!individual;form.elements.USUARIO_ID.required=individual;
+      priorityField.hidden=alerta;levelField.hidden=!alerta;
+      help.textContent=individual?'Se enviará solamente a la cuenta seleccionada.':form.elements.ALCANCE.value==='CONDUCTORES'?'Se enviará a todas las cuentas activas de conductores.':form.elements.ALCANCE.value==='CONECTADOS'?'Se enviará a quienes mantienen una conexión activa en este momento.':'Se enviará a todas las cuentas activas del sistema.';
+    };
+    form.elements.ALCANCE.addEventListener('change',actualizar);form.elements.TIPO_AVISO.addEventListener('change',actualizar);actualizar();
+    $$('[data-dictate-field]',form).forEach(button=>button.addEventListener('click',()=>dictarEnCampo(form.elements[button.dataset.dictateField],button)));
+    $('[data-cancel-modal]',form).onclick=closeModal;
+    form.onsubmit=async event=>{
+      event.preventDefault();
+      const button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());
+      data.SOLICITUD_CLIENTE_ID=crearSolicitudClienteCheckin();
+      await conCargaBoton(button,'Enviando en línea…',async()=>{
+        try{
+          const result=await api.request('sendConnectionsNotice',{data});
+          invalidarListasFormulario('notifications','alerts','audit');
+          ['notifications','alerts','audit','dashboard'].forEach(section=>cacheVistasModulo.delete(section));
+          closeModal();
+          await refreshNotificationBadge().catch(()=>{});
+          toast(data.TIPO_AVISO==='ALERTA'?'Alerta enviada':'Notificación enviada',`${result.enviados||0} de ${result.destinatarios||0} destinatario(s) recibieron el aviso${result.omitidos?` · ${result.omitidos} envío(s) ya existían`:''}.`);
+          return result;
+        }catch(error){toast('No se pudo enviar el aviso',translateError(error),'error');return null;}
+      });
+    };
+  }
   async function readNotification(id){try{const result=await api.request('readNotification',{id});if(result&&!result.persistenciaConfirmada)throw new Error('LECTURA_NOTIFICACION_NO_CONFIRMADA');notificationCenterState.notifications=(notificationCenterState.notifications||[]).filter(row=>String(row.ID)!==String(id));knownNotificationIds.delete(String(id));invalidarListasFormulario('notifications');cacheVistasModulo.delete('notifications');cacheVistasModulo.delete('dashboard');closeModal();await refreshNotificationBadge();if(currentSection==='notifications'||currentSection==='dashboard')actualizarSeccionEnSegundoPlano(currentSection);toast('Notificación leída','El estado quedó confirmado en la base central.');}catch(error){toast('No se pudo actualizar',translateError(error),'error');}}
   async function readAlert(id){try{const result=await api.request('readAlert',{id});if(result&&!result.persistenciaConfirmada)throw new Error('LECTURA_ALERTA_NO_CONFIRMADA');notificationCenterState.alerts=(notificationCenterState.alerts||[]).filter(row=>String(row.ID)!==String(id));knownAlertIds.delete(String(id));invalidarListasFormulario('alerts');cacheVistasModulo.delete('alerts');cacheVistasModulo.delete('dashboard');closeModal();await refreshNotificationBadge();toast('Alerta atendida','El estado leído quedó confirmado en la base central.');if(currentSection==='alerts'||currentSection==='dashboard')actualizarSeccionEnSegundoPlano(currentSection);}catch(error){toast('No se pudo actualizar la alerta',translateError(error),'error');}}
   async function markAllAlertsRead(){const rows=deduplicarAvisos((cacheListasFormulario.get('alerts')||[]).filter(row=>row.LEIDA!=='SI'),'alert');for(const row of rows)await api.request('readAlert',{id:row.ID});invalidarListasFormulario('alerts');cacheVistasModulo.delete('alerts');cacheVistasModulo.delete('dashboard');await refreshNotificationBadge();toast('Alertas actualizadas',`${rows.length} alertas marcadas como leídas.`);actualizarSeccionEnSegundoPlano('alerts');}
@@ -3004,19 +3154,39 @@
 
   function bindInlineCheckinForm(form) {
     form.addEventListener('change',()=>updateInlineCheckinProgress(form));
+    form.elements.VEHICULO_ID?.addEventListener('change',()=>{if(form.dataset.qrVehicleId&&String(form.elements.VEHICULO_ID.value)!==String(form.dataset.qrVehicleId)){form.dataset.qrVehicleId='';if(form.elements.AUTORIZACION_QR)form.elements.AUTORIZACION_QR.value='';$('[data-checkin-qr-notice]',form)?.classList.add('hidden');}});
     form.querySelector('[data-checkin-all-ok]')?.addEventListener('click',()=>{checkinCatalog.forEach(item=>{const input=form.querySelector(`input[name="checkin_${item.id}"][value="OK"]`);if(input)input.checked=true;});updateInlineCheckinProgress(form);});
     form.querySelector('[data-checkin-clear]')?.addEventListener('click',()=>{form.querySelectorAll('input[type="radio"]').forEach(input=>input.checked=false);form.querySelectorAll('[data-checkin-note]').forEach(input=>{input.value='';input.required=false;});updateInlineCheckinProgress(form);});
     form.addEventListener('submit',event=>{event.preventDefault();submitInlineCheckin(form);});
     updateInlineCheckinProgress(form);
   }
 
+  function aplicarVehiculoQrCheckin(vehicle) {
+    const form=$('#checkinInlineForm');
+    if(!form){openCheckinModal(vehicle);return;}
+    const select=form.elements.VEHICULO_ID;
+    if(select&&!Array.from(select.options).some(option=>String(option.value)===String(vehicle.ID))){
+      select.add(new Option(`${vehicle.PATENTE||vehicle.ID} · ${vehicle.MARCA||''} ${vehicle.MODELO||''}`.trim(),vehicle.ID));
+    }
+    form.dataset.qrVehicleId=vehicle.ID;
+    if(select){select.value=vehicle.ID;select.dataset.selected=vehicle.ID;select.dispatchEvent(new Event('change',{bubbles:true}));}
+    if(form.elements.AUTORIZACION_QR)form.elements.AUTORIZACION_QR.value=vehicle.AUTORIZACION_QR||'';
+    if(form.elements.KILOMETRAJE&&!form.elements.KILOMETRAJE.value&&vehicle.KILOMETRAJE!==''&&vehicle.KILOMETRAJE!=null)form.elements.KILOMETRAJE.value=vehicle.KILOMETRAJE;
+    const notice=$('[data-checkin-qr-notice]',form);
+    if(notice){notice.classList.remove('hidden');notice.innerHTML=`<i>▦</i><div><b>QR validado: ${esc(vehicle.PATENTE||vehicle.ID)}</b><span>${esc([vehicle.MARCA,vehicle.MODELO].filter(Boolean).join(' ')||'Vehículo seleccionado para la revisión')}</span></div>`;}
+    form.scrollIntoView({behavior:'smooth',block:'start'});
+    setTimeout(()=>form.elements.KILOMETRAJE?.focus(),350);
+  }
+
   function checkinItemsMarkup() {
     const groups={};checkinCatalog.forEach(item=>(groups[item.categoria]||(groups[item.categoria]=[])).push(item));
     return Object.entries(groups).map(([category,items])=>`<fieldset class="checkin-group full"><legend>${esc(category)}</legend>${items.map(item=>`<div class="checkin-item"><div class="checkin-item-copy"><b>${esc(item.item)}</b><span class="${item.critico?'critical-label':''}">${item.critico?'Crítico · No admite N/A':'Control complementario'}</span></div><label><span>Resultado</span><select data-checkin-item="${esc(item.id)}" required><option value="">Seleccione</option><option value="OK">✓ Conforme</option><option value="FALLA">! Falla</option>${item.critico?'':'<option value="NA">— No aplica</option>'}</select></label><label class="checkin-observation"><span>Observación</span><input data-checkin-note="${esc(item.id)}" placeholder="Detalle opcional"></label></div>`).join('')}</fieldset>`).join('');
   }
-  function openCheckinModal() {
+  function openCheckinModal(prefillVehicle=null) {
+    const qrVehicle=prefillVehicle&&typeof prefillVehicle==='object'?prefillVehicle:null,selectedVehicle=qrVehicle?.ID||'';
+    if(qrVehicle)guardarRegistro('vehicles',qrVehicle);
     $('#modalEyebrow').textContent='SEGURIDAD PREOPERACIONAL';$('#modalTitle').textContent='Realizar check-in vehicular';
-    $('#modalBody').innerHTML=`<form class="form-grid checkin-form" id="checkinForm"><div class="tracking-notice active full"><i>✓</i><div><b>Inspección obligatoria antes de la operación</b><span>Complete los 16 controles. Las fallas críticas bloquean el inicio.</span></div></div><label class="field"><span>Vehículo</span>${selectorDinamico('vehicles','checkinVehicles','VEHICULO_ID','',true)}</label><label class="field"><span>Conductor</span>${selectorDinamico('drivers','checkinDrivers','CONDUCTOR_ID',currentUser.CONDUCTOR_ID||'',true)}</label><label class="field"><span>Kilometraje actual</span><input name="KILOMETRAJE" type="number" min="0" required inputmode="numeric"></label><label class="field"><span>Nivel de combustible/carga</span><select name="NIVEL_COMBUSTIBLE" required><option value="">Seleccione</option><option>Vacío / crítico</option><option>1/4</option><option>1/2</option><option>3/4</option><option>Lleno</option><option>No aplica</option></select></label>${checkinItemsMarkup()}<label class="field full"><span>Observaciones generales</span><textarea name="OBSERVACIONES" placeholder="Indique ruidos, daños, testigos del tablero u otras condiciones"></textarea></label><label class="field full"><span>Nombre o firma del conductor</span><input name="FIRMA_CONDUCTOR" value="${esc(currentUser.NOMBRE||'')}" required></label><label class="checkin-confirm full"><input type="checkbox" name="CONFIRMACION_CONDUCTOR" value="SI" required><span>Confirmo que realicé personalmente esta inspección y que la información es correcta.</span></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Guardar y evaluar check-in</button></div></form>`;
+    $('#modalBody').innerHTML=`<form class="form-grid checkin-form" id="checkinForm">${qrVehicle?`<div class="tracking-notice active full"><i>▦</i><div><b>QR validado: ${esc(qrVehicle.PATENTE||qrVehicle.ID)}</b><span>${esc([qrVehicle.MARCA,qrVehicle.MODELO].filter(Boolean).join(' ')||'Vehículo seleccionado para la revisión')}</span></div></div><input type="hidden" name="AUTORIZACION_QR" value="${esc(qrVehicle.AUTORIZACION_QR||'')}">`:''}<div class="tracking-notice active full"><i>✓</i><div><b>Inspección obligatoria antes de la operación</b><span>Complete los 16 controles. Las fallas críticas bloquean el inicio.</span></div></div><label class="field"><span>Vehículo</span>${selectorDinamico('vehicles','checkinVehicles','VEHICULO_ID',selectedVehicle,true)}</label><label class="field"><span>Conductor</span>${selectorDinamico('drivers','checkinDrivers','CONDUCTOR_ID',currentUser.CONDUCTOR_ID||'',true)}</label><label class="field"><span>Kilometraje actual</span><input name="KILOMETRAJE" type="number" min="0" value="${esc(qrVehicle?.KILOMETRAJE??'')}" required inputmode="numeric"></label><label class="field"><span>Nivel de combustible/carga</span><select name="NIVEL_COMBUSTIBLE" required><option value="">Seleccione</option><option>Vacío / crítico</option><option>1/4</option><option>1/2</option><option>3/4</option><option>Lleno</option><option>No aplica</option></select></label>${checkinItemsMarkup()}<label class="field full"><span>Observaciones generales</span><textarea name="OBSERVACIONES" placeholder="Indique ruidos, daños, testigos del tablero u otras condiciones"></textarea></label><label class="field full"><span>Nombre o firma del conductor</span><input name="FIRMA_CONDUCTOR" value="${esc(currentUser.NOMBRE||'')}" required></label><label class="checkin-confirm full"><input type="checkbox" name="CONFIRMACION_CONDUCTOR" value="SI" required><span>Confirmo que realicé personalmente esta inspección y que la información es correcta.</span></label><div class="form-actions"><button class="btn soft" type="button" data-cancel-modal>Cancelar</button><button class="btn primary" type="submit">Guardar y evaluar check-in</button></div></form>`;
     const token=openModal();$('[data-cancel-modal]',$('#modalBody')).onclick=closeModal;prepararListasModal(token,['vehicles','drivers']);
     $('#checkinForm').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=$('button[type="submit"]',form),data=Object.fromEntries(new FormData(form).entries());const list=checkinCatalog.map(item=>({id:item.id,respuesta:$(`[data-checkin-item="${item.id}"]`,form)?.value||'',observacion:$(`[data-checkin-note="${item.id}"]`,form)?.value||''}));data.LISTA_CODIFICADA=JSON.stringify(list);await conCargaBoton(button,'Evaluando…',async()=>{try{const result=await api.request('createVehicleCheckin',{data});const persistencia=result.persistencia||(api.isRemote()?'CENTRAL_CONFIRMADA':'LOCAL');guardarReciboCheckin(result.row,persistencia);const confirmado=await confirmarCheckinVisible(result.row);guardarReciboCheckin(confirmado,persistencia);closeModal();const state=confirmado?.ESTADO_REVISION||'Registrado';toast(state==='Bloqueado'?'Salida bloqueada':'Check-in guardado y visible',state==='Aprobado'?'La inspección quedó aprobada y vigente durante el día para este vehículo y conductor.':state==='Pendiente'?'Un supervisor debe revisar las observaciones antes de iniciar.':'Se detectaron fallas críticas. Corríjalas y realice un nuevo check-in.',state==='Bloqueado'?'error':'success');const pendiente=leerJsonLocal(pendingRouteCheckinKey);if(state==='Aprobado'&&pendiente?.RUTA_ID&&String(pendiente.VEHICULO_ID||'')===String(confirmado?.VEHICULO_ID||'')&&String(pendiente.CONDUCTOR_ID||'')===String(confirmado?.CONDUCTOR_ID||'')){try{localStorage.removeItem(pendingRouteCheckinKey);}catch(_){}setTimeout(async()=>{navigateSection('routes');try{await iniciarRutaConSeguimiento(pendiente.RUTA_ID);toast('Ruta iniciada','Check-in diario confirmado y GPS de ruta activado.');invalidarListasFormulario('routes','operations','checkins');cacheVistasModulo.delete('routes');}catch(e){toast('Check-in guardado',translateError(e),'error');}},350);}}catch(error){toast('No se pudo guardar el check-in',translateError(error),'error');}});};
   }
@@ -3444,7 +3614,11 @@
     await api.request('saveLocation',{data:{LATITUD:validacion.lat,LONGITUD:validacion.lng,PRECISION_METROS:validacion.precision,VELOCIDAD_KMH:c.speed==null?0:c.speed*3.6,RUMBO:c.heading||0,DIRECCION:cachedAddress,BATERIA_PORCENTAJE:batteryLevel,DISPOSITIVO_ID:deviceId,SESION_CLIENTE_ID:clientSessionId,SECCION_ACTUAL:currentSection,PAGINA_VISIBLE:document.hidden?'NO':'SI',TIPO_RED:connectionType(),PLATAFORMA:navigator.platform||'',NAVEGADOR:navigator.userAgent,FECHA_HORA:new Date(validacion.fecha).toISOString(),TIEMPO_CAPTURA_MS:validacion.fecha,EDAD_SEGUNDOS:validacion.edad,PROVEEDOR:'BROWSER_HIGH_ACCURACY',ES_SIMULADA:'NO',FUENTE:source,RUTA_ID:routeTrackingContext?.RUTA_ID||'',OPERACION_ID:routeTrackingContext?.OPERACION_ID||'',VEHICULO_ID:routeTrackingContext?.VEHICULO_ID||'',CONDUCTOR_ID:routeTrackingContext?.CONDUCTOR_ID||'',CONTEXTO_RUTA_EXPLICITO:'SI'}});
     ultimaUbicacionEnviada={tiempo:ahora,latitud:validacion.lat,longitud:validacion.lng};setSave('Ubicación sincronizada');
     resolveAddress(validacion.lat,validacion.lng).catch(()=>{});
-    if(currentSection==='gps')refreshLocations(false,false);if(currentSection==='connections')refreshConnectionsOnline(false,false);
+    if(currentSection==='gps')refreshLocations(false,false);
+    if(currentSection==='connections'){
+      if(connectionTrackedUserId)refreshConnectionTrackingLive(false);
+      else scheduleConnectionsRefresh(250);
+    }
   }
   async function sendPosition(position,source,forzar=false) {
     gpsPendingPosition={position,source,forzar};
@@ -3464,19 +3638,22 @@
   function openSidebar(){$('#sidebar').classList.add('open');$('#overlay').classList.add('open');}
   function closeSidebar(){$('#sidebar').classList.remove('open');$('#overlay').classList.remove('open');}
 
+  function normalizarContextoQr(value){const context=String(value||'vehiculo-operacion').trim().toLowerCase();return['vehiculo-operacion','combustible','checkin'].includes(context)?context:'vehiculo-operacion';}
+  function textoContextoQr(context){return context==='combustible'?'la carga de combustible':context==='checkin'?'el check-in vehicular':'la operación';}
+  function prepararTextosQr(context){const header=$('#qrBackdrop .modal-header');if(!header)return;const eyebrow=$('.eyebrow',header),title=$('h3',header);if(eyebrow)eyebrow.textContent=context==='combustible'?'COMBUSTIBLE QR':context==='checkin'?'CHECK-IN QR':'OPERACIÓN QR';if(title)title.textContent=context==='combustible'?'Escanear vehículo para carga':context==='checkin'?'Escanear vehículo para revisión':'Escanear vehículo';}
   function lectorQrNativoDisponible(){try{return Boolean(window.AndroidConfig&&AndroidConfig.esLectorQrNativoDisponible&&AndroidConfig.esLectorQrNativoDisponible());}catch(_){return false;}}
-  function iniciarQrNativo(){
+  function iniciarQrNativo(contexto=qrContextoActual){
     if(!lectorQrNativoDisponible())return false;
     try{
       stopCamera();
       $('#cameraEmpty')?.classList.remove('hidden');
       $('#scannerStatus')?.classList.add('active');
       if($('#scannerStatus span'))$('#scannerStatus span').textContent='Abriendo lector QR nativo…';
-      AndroidConfig.iniciarEscaneoQr('vehiculo-operacion');
+      AndroidConfig.iniciarEscaneoQr(normalizarContextoQr(contexto));
       return true;
     }catch(error){toast('No se pudo abrir el lector QR',String(error?.message||error),'error');return false;}
   }
-  async function openQr(){openQrBackdrop();if(iniciarQrNativo())return;await enumerateCameras();}
+  async function openQr(contexto='vehiculo-operacion'){qrContextoActual=normalizarContextoQr(contexto);prepararTextosQr(qrContextoActual);if($('#manualQr'))$('#manualQr').value='';openQrBackdrop();if(iniciarQrNativo(qrContextoActual))return;await enumerateCameras();}
   function openQrBackdrop(){$('#qrBackdrop').classList.add('open');document.body.classList.add('modal-open');}
   function closeQr(){stopCamera();$('#qrBackdrop').classList.remove('open');if(!$('#modalBackdrop').classList.contains('open'))document.body.classList.remove('modal-open');}
   async function enumerateCameras(){try{const devices=await navigator.mediaDevices?.enumerateDevices();const cameras=(devices||[]).filter(d=>d.kind==='videoinput');$('#cameraSelect').innerHTML=cameras.length?cameras.map((c,i)=>`<option value="${c.deviceId}">${esc(c.label||`Cámara ${i+1}`)}</option>`).join(''):'<option value="">Cámara predeterminada</option>';}catch(_) {}}
@@ -3486,23 +3663,27 @@
     stopCamera();
     try{
       mediaStream=await navigator.mediaDevices.getUserMedia({video:deviceId?{deviceId:{exact:deviceId}}:{facingMode:{ideal:facingMode}},audio:false});
-      $('#qrVideo').srcObject=mediaStream;await $('#qrVideo').play();$('#cameraEmpty').classList.add('hidden');$('#scannerStatus').classList.add('active');$('#scannerStatus span').textContent='Buscando código QR…';await enumerateCameras();
+      $('#qrVideo').srcObject=mediaStream;await $('#qrVideo').play();$('#cameraEmpty').classList.add('hidden');$('#scannerStatus').classList.add('active');$('#scannerStatus span').textContent=`Buscando QR para ${textoContextoQr(qrContextoActual)}…`;await enumerateCameras();
       if('BarcodeDetector'in window){barcodeDetector=new BarcodeDetector({formats:['qr_code']});scanFrame();}
       else {barcodeDetector=null;$('#scannerStatus span').textContent='Este navegador no incluye decodificador QR. Use el código manual o la aplicación Android.';}
     }catch(error){toast('No se pudo abrir la cámara','Revise el permiso de cámara del navegador.','error');}
   }
   async function scanFrame(){if(!barcodeDetector||!mediaStream)return;try{if($('#qrVideo').readyState>=2){const codes=await barcodeDetector.detect($('#qrVideo'));if(codes.length){const value=String(codes[0].rawValue||'').trim();if(value)return processQr(value);}}}catch(_){}scanFrameId=requestAnimationFrame(scanFrame);}
   function stopCamera(){if(scanFrameId)cancelAnimationFrame(scanFrameId);scanFrameId=null;if(mediaStream)mediaStream.getTracks().forEach(track=>track.stop());mediaStream=null;barcodeDetector=null;if($('#qrVideo'))$('#qrVideo').srcObject=null;$('#cameraEmpty')?.classList.remove('hidden');$('#scannerStatus')?.classList.remove('active');if($('#scannerStatus span'))$('#scannerStatus span').textContent='Cámara detenida';}
-  async function processQr(code){
+  async function processQr(code,contexto=qrContextoActual){
     const limpio=String(code||'').trim();
     if(!limpio)return toast('Código QR vacío','No se recibió información del lector.','error');
+    const context=normalizarContextoQr(contexto);qrContextoActual=context;
     try{
       if($('#scannerStatus span'))$('#scannerStatus span').textContent='Validando vehículo…';
-      const result=await api.request('validateVehicleQr',{codigo:limpio});const vehicle=result.row;if(!vehicle)throw new Error('QR_NO_RECONOCIDO');
-      vehicle.AUTORIZACION_QR=result.autorizacionQr||'';closeQr();toast('Vehículo validado',`${vehicle.PATENTE} quedó listo para asociarlo a la operación.`);openOperationModal(vehicle);
+      const result=await api.request('validateVehicleQr',{codigo:limpio,contexto:context});const vehicle=result.row;if(!vehicle)throw new Error('QR_NO_RECONOCIDO');
+      vehicle.AUTORIZACION_QR=result.autorizacionQr||'';closeQr();
+      if(context==='combustible'){toast('Vehículo validado',`${vehicle.PATENTE} quedó asociado a la carga de combustible.`);openFuelModal(null,vehicle);}
+      else if(context==='checkin'){toast('Vehículo validado',`${vehicle.PATENTE} quedó seleccionado para la revisión.`);aplicarVehiculoQrCheckin(vehicle);}
+      else {toast('Vehículo validado',`${vehicle.PATENTE} quedó listo para asociarlo a la operación.`);openOperationModal(vehicle);}
     }catch(error){if($('#scannerStatus span'))$('#scannerStatus span').textContent='QR no reconocido';toast('No se pudo validar el QR',translateError(error),'error');}
   }
-  window.addEventListener('flotas:qr-nativo-resultado',event=>{const codigo=String(event?.detail?.codigo||'').trim();if(codigo)processQr(codigo);});
+  window.addEventListener('flotas:qr-nativo-resultado',event=>{const codigo=String(event?.detail?.codigo||'').trim();if(codigo)processQr(codigo,event?.detail?.contexto||qrContextoActual);});
   window.addEventListener('flotas:qr-nativo-estado',event=>{const mensaje=String(event?.detail?.mensaje||'');if($('#scannerStatus span')&&mensaje)$('#scannerStatus span').textContent=mensaje;});
   window.addEventListener('flotas:qr-nativo-error',event=>{const mensaje=String(event?.detail?.mensaje||'No se pudo leer el código QR.');if($('#scannerStatus span'))$('#scannerStatus span').textContent='Error de lectura QR';toast('Lector QR',mensaje,'error');});
 
@@ -3550,7 +3731,7 @@
       if(data.tipo==='flotas:modulo-visible'&&currentUser)redibujarMapaAlHacerseVisible();
     });
     document.addEventListener('keydown',event=>{if(event.key==='Escape'&&document.body.classList.contains('mapa-pantalla-completa'))toggleMapFullscreen(false);});
-    document.addEventListener('visibilitychange',()=>{if(document.hidden){if(currentUser)sendHeartbeat('En segundo plano');releaseWakeLock();return;}if(currentUser){sendHeartbeat('En línea');resumeTrackingIfAllowed();if(gpsWatchId!==null)requestWakeLock();redibujarMapaAlHacerseVisible();if(currentSection==='gps')refreshLocations(false,false);if(currentSection==='connections')refreshConnectionsOnline(false,false);}});
+    document.addEventListener('visibilitychange',()=>{if(document.hidden){if(connectionTrackingLiveTimer)clearTimeout(connectionTrackingLiveTimer);connectionTrackingLiveTimer=null;if(currentUser)sendHeartbeat('En segundo plano');releaseWakeLock();return;}if(currentUser){sendHeartbeat('En línea');resumeTrackingIfAllowed();if(gpsWatchId!==null)requestWakeLock();redibujarMapaAlHacerseVisible();if(currentSection==='gps')refreshLocations(false,false);if(currentSection==='connections'){refreshConnectionsOnline(false,false);scheduleConnectionTrackingLive(80);}}});
     window.addEventListener('pageshow',()=>setTimeout(redibujarMapaAlHacerseVisible,40));
     window.addEventListener('resize',()=>setTimeout(redibujarMapaAlHacerseVisible,80));
     window.addEventListener('orientationchange',()=>setTimeout(redibujarMapaAlHacerseVisible,180));

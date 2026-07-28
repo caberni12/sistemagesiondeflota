@@ -47,6 +47,7 @@
       this.firmaRastros = '';
       this.firmaBaldosas = '';
       this.cuadroDibujo = null;
+      this.nodosMarcadores = new Map();
       this.crearEstructura();
       this.vincularEventos();
       this.manejadorCambioTamano = () => this.programarDibujo();
@@ -337,29 +338,47 @@
     }
 
     dibujarMarcadores(izquierda, arriba) {
-      this.capaMarcadores.innerHTML = '';
-      const fragmento = document.createDocumentFragment();
-      this.marcadores.forEach(item => {
+      const vigentes = new Set();
+      this.marcadores.forEach((item, indice) => {
+        const clave = String(item.id || `marcador-${indice}`);
+        vigentes.add(clave);
         const punto = latitudLongitudAMundo(item.latitud, item.longitud, this.nivel);
-        const boton = document.createElement('button');
-        boton.type = 'button';
-        boton.className = `mapa-marcador ${item.activo ? 'activo' : 'antiguo'} ${item.seguido ? 'seguido' : ''}`.trim();
+        let boton = this.nodosMarcadores.get(clave);
+        if (!boton) {
+          boton = document.createElement('button');
+          boton.type = 'button';
+          boton.dataset.marcadorId = clave;
+          const icono = document.createElement('i');
+          icono.textContent = '⌖';
+          const etiqueta = document.createElement('span');
+          const detalle = document.createElement('div');
+          detalle.className = 'mapa-detalle';
+          boton.append(icono, etiqueta, detalle);
+          boton.addEventListener('click', evento => {
+            evento.stopPropagation();
+            this.capaMarcadores.querySelectorAll('.mapa-marcador.abierto').forEach(nodo => { if (nodo !== boton) nodo.classList.remove('abierto'); });
+            boton.classList.toggle('abierto');
+          });
+          this.nodosMarcadores.set(clave, boton);
+          this.capaMarcadores.appendChild(boton);
+        }
         boton.style.left = `${punto.x - izquierda}px`;
         boton.style.top = `${punto.y - arriba}px`;
-        boton.setAttribute('aria-label', `Ubicación de ${item.nombre || 'conductor'}`);
-        boton.innerHTML = `<i>⌖</i><span>${item.nombre || 'Conductor'}</span>`;
-        const detalle = document.createElement('div');
-        detalle.className = 'mapa-detalle';
-        detalle.innerHTML = item.detalle || '';
-        boton.appendChild(detalle);
-        boton.addEventListener('click', evento => {
-          evento.stopPropagation();
-          this.capaMarcadores.querySelectorAll('.mapa-marcador.abierto').forEach(nodo => { if (nodo !== boton) nodo.classList.remove('abierto'); });
-          boton.classList.toggle('abierto');
-        });
-        fragmento.appendChild(boton);
+        const firmaContenido = `${item.activo ? '1' : '0'}|${item.seguido ? '1' : '0'}|${item.nombre || ''}|${item.detalle || ''}`;
+        if (boton.dataset.firmaContenido !== firmaContenido) {
+          const abierto = boton.classList.contains('abierto');
+          boton.className = `mapa-marcador ${item.activo ? 'activo' : 'antiguo'} ${item.seguido ? 'seguido' : ''} ${abierto ? 'abierto' : ''}`.trim();
+          boton.setAttribute('aria-label', `Ubicación de ${item.nombre || 'conductor'}`);
+          boton.querySelector(':scope > span').textContent = item.nombre || 'Conductor';
+          boton.querySelector(':scope > .mapa-detalle').innerHTML = item.detalle || '';
+          boton.dataset.firmaContenido = firmaContenido;
+        }
       });
-      this.capaMarcadores.appendChild(fragmento);
+      this.nodosMarcadores.forEach((nodo, clave) => {
+        if (vigentes.has(clave)) return;
+        nodo.remove();
+        this.nodosMarcadores.delete(clave);
+      });
     }
 
     redibujar() { this.dibujar(); }
@@ -369,6 +388,7 @@
       this.cuadroDibujo = null;
       if (this.observador) this.observador.disconnect();
       if (!this.observador && this.manejadorCambioTamano) window.removeEventListener('resize', this.manejadorCambioTamano);
+      this.nodosMarcadores.clear();
       this.contenedor.innerHTML = '';
     }
   }

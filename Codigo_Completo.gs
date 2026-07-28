@@ -6,7 +6,7 @@
  * Si el proyecto Apps Script está vinculado a la hoja, instalarSistema() guardará
  * automáticamente el ID. Para un proyecto independiente, pegue el ID aquí.
  */
-const VERSION_APLICACION = '3.15.0';
+const VERSION_APLICACION = '3.17.0';
 
 const CONFIGURACION_APLICACION = Object.freeze({
   ID_HOJA_CALCULO: '1onJJEN1rgz0N9GXOiUqV7ong4-nlbdAjzMyW_rumXCM',
@@ -236,6 +236,8 @@ function enrutarSolicitud_(request, event) {
     case 'onlineConnections':
     case 'connectionsOnline': return resumenConexionesAdministrador_(request, session);
     case 'guardarSeguimientoConexionUsuario': return guardarSeguimientoConexionUsuario_(request, session);
+    case 'seguimientoConexionTiempoReal': return seguimientoConexionTiempoReal_(request, session);
+    case 'enviarAvisoConexiones': return enviarAvisoConexiones_(request, session);
     case 'resumenCombustible': return resumenCombustible_(request, session);
     case 'solicitarEliminacionCombustible': return solicitarEliminacionCombustible_(request, session);
     case 'resolverSolicitudEliminacionCombustible': return resolverSolicitudEliminacionCombustible_(request, session);
@@ -952,6 +954,37 @@ function insertarRegistro_(sheetName, data, prefix) {
   }
 }
 
+function insertarRegistrosMasivos_(sheetName, registros, prefix) {
+  const datos = Array.isArray(registros) ? registros : [];
+  if (!datos.length) return [];
+  const lock = LockService.getScriptLock();
+  const lockYaAdquirido = lock.hasLock();
+  if (!lockYaAdquirido) lock.waitLock(20000);
+  try {
+    const sheet = obtenerHoja_(sheetName);
+    const headers = ESQUEMAS_APLICACION[sheetName];
+    const now = new Date();
+    const objetos = datos.map(function(data) {
+      const object = Object.assign({}, data || {});
+      if (headers.indexOf('ID') >= 0 && !object.ID) object.ID = generarId_(prefix || sheetName.slice(0, 3));
+      if (headers.indexOf('CREADO_EN') >= 0 && !object.CREADO_EN) object.CREADO_EN = now;
+      if (headers.indexOf('ACTUALIZADO_EN') >= 0) object.ACTUALIZADO_EN = now;
+      if (headers.indexOf('ELIMINADO') >= 0 && !object.ELIMINADO) object.ELIMINADO = 'NO';
+      return object;
+    });
+    const filas = objetos.map(function(object) {
+      return headers.map(function(header) {
+        return Object.prototype.hasOwnProperty.call(object, header) ? deserializarFecha_(object[header]) : '';
+      });
+    });
+    sheet.getRange(Math.max(2, sheet.getLastRow() + 1), 1, filas.length, headers.length).setValues(filas);
+    invalidarCacheHoja_(sheetName);
+    return objetos.map(function(object) { return limpiarSalidaRecurso_(sheetName, object); });
+  } finally {
+    if (!lockYaAdquirido) lock.releaseLock();
+  }
+}
+
 function actualizarRegistro_(sheetName, id, data) {
   if (!id) throw new Error('ID_REQUERIDO');
   const lock = LockService.getScriptLock();
@@ -1403,7 +1436,7 @@ function actualizarSistema() {
   try { resultado.puntoOperacional = repararPuntoOperacional(); } catch (error) { Logger.log('Punto operacional: ' + error.message); }
   try { resultado.reinicioGpsActual = reiniciarInstantaneasGpsVersion_(); } catch (error) { Logger.log('Reinicio de posiciones actuales: ' + error.message); }
   reiniciarCachesEjecucion_();
-  resultado.message = 'Sistema 3.15.0 actualizado: motor rápido con consultas agrupadas, filtros inmediatos, mapa optimizado, direcciones con presupuesto controlado y rastro de seguimiento cacheado.';
+  resultado.message = 'Sistema 3.17.0 actualizado: QR contextual para combustible, check-in vehicular y operaciones, con permisos, asignaciones y auditoría conservados.';
   return resultado;
 }
 
@@ -1520,13 +1553,56 @@ function obtenerVehiculoPorQr_(code) {
   }) || null;
 }
 
+function normalizarContextoQrVehiculo_(value) {
+  const context = String(value || 'vehiculo-operacion').trim().toLowerCase();
+  return ['vehiculo-operacion','combustible','checkin'].indexOf(context) >= 0 ? context : 'vehiculo-operacion';
+}
+
+function consumirAutorizacionQr_(authorization, session, vehicleId, context, required) {
+  const token = String(authorization || '').trim();
+  if (!token && !required) return false;
+  const cacheKey = token ? 'qr_aut_' + cifrarFichaSesion_(token) : '';
+  const saved = cacheKey ? CacheService.getScriptCache().get(cacheKey) : '';
+  let authorized = null;
+  try { authorized = saved ? JSON.parse(saved) : null; } catch (error) { authorized = null; }
+  const expectedContext = normalizarContextoQrVehiculo_(context);
+  const savedContext = normalizarContextoQrVehiculo_(authorized && authorized.CONTEXTO);
+  if (!authorized ||
+      String(authorized.USUARIO_ID || '') !== String(session.user.ID || '') ||
+      String(authorized.VEHICULO_ID || '') !== String(vehicleId || '') ||
+      savedContext !== expectedContext) {
+    throw new Error('AUTORIZACION_QR_INVALIDA');
+  }
+  CacheService.getScriptCache().remove(cacheKey);
+  return true;
+}
+
 function validarQrVehiculo_(request, session) {
   exigirPermiso_(session.user, 'QR', 'LEER');
+  const context = normalizarContextoQrVehiculo_(request.contexto || request.CONTEXTO || '');
+  if (context === 'combustible') exigirPermiso_(session.user, 'COMBUSTIBLE', 'CREAR');
+  else if (context === 'checkin') exigirPermiso_(session.user, 'CHECKIN', 'CREAR');
+  else exigirPermiso_(session.user, 'OPERACIONES', 'CREAR');
   const code = extraerCodigoQrVehiculo_(request.codigo || request.CODIGO || '');
   if (!code) throw new Error('CODIGO_QR_REQUERIDO');
   const vehicle = obtenerVehiculoPorQr_(code);
   if (!vehicle) throw new Error('QR_NO_RECONOCIDO');
-  if (vehicle.ESTADO !== 'Disponible') throw new Error('VEHICULO_NO_DISPONIBLE');
+  if (context === 'combustible') {
+    if (vehicle.ESTADO === 'Inactivo') throw new Error('VEHICULO_NO_DISPONIBLE');
+    if (!esAdministradorSistema_(session.user)) {
+      const ownDriver = session.user.ROL_ID === 'ROL-CONDUCTOR' ? obtenerConductorDeUsuario_(session.user.ID) : null;
+      if (session.user.ROL_ID === 'ROL-CONDUCTOR' && !ownDriver) throw new Error('CONDUCTOR_NO_ASOCIADO');
+      const activeOperation = listarRegistros_('OPERACIONES', {}).some(function(row) {
+        return row.VEHICULO_ID === vehicle.ID && row.ESTADO === 'Activa' && (!ownDriver || row.CONDUCTOR_ID === ownDriver.ID);
+      });
+      const activeRoute = listarRegistros_('RUTAS', {}).some(function(row) {
+        return row.VEHICULO_ID === vehicle.ID && ['Asignada','En curso'].indexOf(row.ESTADO) >= 0 && (!ownDriver || row.CONDUCTOR_ID === ownDriver.ID);
+      });
+      if (!activeOperation && !activeRoute) throw new Error('COMBUSTIBLE_ASIGNACION_ACTIVA_REQUERIDA');
+    }
+  } else if (vehicle.ESTADO !== 'Disponible') {
+    throw new Error('VEHICULO_NO_DISPONIBLE');
+  }
   const qr = listarRegistros_('QR', {}).find(function(row) {
     return row.CODIGO === vehicle.QR_CODIGO || row.REGISTRO_ID === vehicle.ID;
   });
@@ -1539,11 +1615,16 @@ function validarQrVehiculo_(request, session) {
   const authorization = crearToken_();
   CacheService.getScriptCache().put(
     'qr_aut_' + cifrarFichaSesion_(authorization),
-    JSON.stringify({ USUARIO_ID:session.user.ID, VEHICULO_ID:vehicle.ID }),
+    JSON.stringify({ USUARIO_ID:session.user.ID, VEHICULO_ID:vehicle.ID, CONTEXTO:context }),
     300
   );
-  registrarBitacora_(session.user, 'VALIDAR', 'QR', vehicle.ID, 'Vehículo validado: ' + vehicle.PATENTE);
-  return ok_({ row: limpiarSalidaRecurso_('VEHICULOS', vehicle), autorizacionQr:authorization, validaPorSegundos:300 });
+  const detail = context === 'combustible'
+    ? 'Vehículo validado para carga de combustible: '
+    : context === 'checkin'
+      ? 'Vehículo validado para check-in: '
+      : 'Vehículo validado para operación: ';
+  registrarBitacora_(session.user, 'VALIDAR', 'QR', vehicle.ID, detail + vehicle.PATENTE);
+  return ok_({ row: limpiarSalidaRecurso_('VEHICULOS', vehicle), autorizacionQr:authorization, validaPorSegundos:300, contexto:context });
 }
 
 /** ============================================================
@@ -1772,15 +1853,7 @@ function iniciarOperacion_(request, session) {
     const ownDriver = obtenerConductorDeUsuario_(session.user.ID);
     if (!ownDriver) throw new Error('CONDUCTOR_NO_ASOCIADO');
     data.CONDUCTOR_ID = ownDriver.ID;
-    const authorization = String(data.AUTORIZACION_QR || '');
-    const cacheKey = authorization ? 'qr_aut_' + cifrarFichaSesion_(authorization) : '';
-    const saved = cacheKey ? CacheService.getScriptCache().get(cacheKey) : '';
-    let authorized = null;
-    try { authorized = saved ? JSON.parse(saved) : null; } catch (error) { authorized = null; }
-    if (!authorized || authorized.USUARIO_ID !== session.user.ID || authorized.VEHICULO_ID !== data.VEHICULO_ID) {
-      throw new Error('AUTORIZACION_QR_INVALIDA');
-    }
-    CacheService.getScriptCache().remove(cacheKey);
+    consumirAutorizacionQr_(data.AUTORIZACION_QR, session, data.VEHICULO_ID, 'vehiculo-operacion', true);
   }
   validarRequeridos_(data, ['VEHICULO_ID','CONDUCTOR_ID']);
   const vehicle = obtenerRegistro_('VEHICULOS', data.VEHICULO_ID);
@@ -2252,25 +2325,33 @@ function debeActualizarConexionDesdeGps_(userId, deviceId) {
   return true;
 }
 
-function claveCacheTiempoReal_(sheetName) {
-  return 'tr_meta_' + VERSION_APLICACION + '_' + sheetName;
+function claveCacheTiempoReal_(sheetName, perfil) {
+  return 'tr_meta_' + VERSION_APLICACION + '_' + sheetName + (perfil ? '_' + perfil : '');
 }
 
 function invalidarCacheTiempoReal_(sheetName) {
-  try { CacheService.getScriptCache().remove(claveCacheTiempoReal_(sheetName)); } catch (_) {}
+  try {
+    CacheService.getScriptCache().removeAll([
+      claveCacheTiempoReal_(sheetName),
+      claveCacheTiempoReal_(sheetName, 'RAPIDO')
+    ]);
+  } catch (_) {}
 }
 
 function listarRegistrosCacheadosTiempoReal_(sheetName, secondsOverride) {
   const seconds = Number(secondsOverride || CONFIGURACION_APLICACION.SEGUNDOS_CACHE_METADATOS_TIEMPO_REAL || 10);
-  const key = claveCacheTiempoReal_(sheetName);
+  const perfil = Number(secondsOverride || 0) > 0 && Number(secondsOverride) <= 2 ? 'RAPIDO' : '';
+  const key = claveCacheTiempoReal_(sheetName, perfil);
   const cache = CacheService.getScriptCache();
   try {
     const saved = cache.get(key);
     if (saved) return JSON.parse(saved);
   } catch (_) {}
   let rows = listarRegistros_(sheetName, {});
-  if (sheetName === 'USUARIOS') rows = rows.map(function(row) { return { ID:row.ID, NOMBRE:row.NOMBRE }; });
-  try { cache.put(key, JSON.stringify(rows), Math.max(5, seconds)); } catch (_) {}
+  if (sheetName === 'USUARIOS') rows = rows.map(function(row) {
+    return { ID:row.ID, NOMBRE:row.NOMBRE, CORREO:row.CORREO, ROL_ID:row.ROL_ID, ESTADO:row.ESTADO, ELIMINADO:row.ELIMINADO };
+  });
+  try { cache.put(key, JSON.stringify(rows), Math.max(1, seconds)); } catch (_) {}
   return rows;
 }
 
@@ -4057,6 +4138,7 @@ function crearCheckinVehicular_(request, session) {
   const conductor = obtenerRegistro_('CONDUCTORES', data.CONDUCTOR_ID);
   if (!vehiculo) throw new Error('VEHICULO_NO_ENCONTRADO');
   if (!conductor) throw new Error('CONDUCTOR_NO_ENCONTRADO');
+  const validadoPorQr = consumirAutorizacionQr_(data.AUTORIZACION_QR, session, vehiculo.ID, 'checkin', false);
   if (vehiculo.ESTADO !== 'Disponible') throw new Error('VEHICULO_NO_DISPONIBLE');
   if (conductor.ESTADO !== 'Disponible') throw new Error('CONDUCTOR_NO_DISPONIBLE');
 
@@ -4125,7 +4207,7 @@ function crearCheckinVehicular_(request, session) {
   }
 
   try {
-    registrarBitacora_(session.user, 'CREAR', 'CHECKIN', confirmado.ID, vehiculo.PATENTE + ' · ' + resultado);
+    registrarBitacora_(session.user, 'CREAR', 'CHECKIN', confirmado.ID, vehiculo.PATENTE + ' · ' + resultado + (validadoPorQr ? ' · acceso mediante QR' : ''));
   } catch (errorBitacora) {
     advertencias.push('BITACORA_NO_GENERADA');
     console.error(errorBitacora && errorBitacora.stack ? errorBitacora.stack : errorBitacora);
@@ -4809,14 +4891,16 @@ function recalcularConsumosVehiculo_(vehicleId) {
 
 function crearCargaCombustible_(request, session) {
   exigirPermiso_(session.user, 'COMBUSTIBLE', 'CREAR');
-  const clean = validarCargaCombustible_(request.datos || {}, null, session, true);
+  const data = request.datos || {};
+  const validadoPorQr = consumirAutorizacionQr_(data.AUTORIZACION_QR, session, data.VEHICULO_ID, 'combustible', false);
+  const clean = validarCargaCombustible_(data, null, session, true);
   clean.CREADO_POR = session.user.ID;
   clean.ACTUALIZADO_POR = session.user.ID;
   clean.ELIMINADO = 'NO';
   const row = insertarRegistro_('CARGAS_COMBUSTIBLE', clean, 'COM');
   recalcularConsumosVehiculo_(row.VEHICULO_ID);
   const updated = obtenerRegistro_('CARGAS_COMBUSTIBLE', row.ID);
-  registrarBitacora_(session.user, 'CREAR_CARGA', 'COMBUSTIBLE', row.ID, 'Carga registrada. Datos: ' + respaldoAuditoria_(updated), ipSolicitudCombustible_(request));
+  registrarBitacora_(session.user, 'CREAR_CARGA', 'COMBUSTIBLE', row.ID, 'Carga registrada' + (validadoPorQr ? ' mediante QR' : '') + '. Datos: ' + respaldoAuditoria_(updated), ipSolicitudCombustible_(request));
   if (session.user.ROL_ID === 'ROL-CONDUCTOR') {
     const vehicle = obtenerRegistro_('VEHICULOS', clean.VEHICULO_ID) || {};
     const driver = obtenerRegistro_('CONDUCTORES', clean.CONDUCTOR_ID) || {};
@@ -5181,6 +5265,273 @@ function guardarSeguimientoConexionUsuario_(request, session) {
       RASTRO:[]
     },
     persistenciaConfirmada:true
+  });
+}
+
+function construirEquipoConexionTiempoReal_(row, usuario, conductor, vehiculo, gpsMapas) {
+  const ubicacion = buscarUltimaUbicacionConexion_(row, gpsMapas) || {};
+  const limiteActivo = Date.now() - Number(CONFIGURACION_APLICACION.SEGUNDOS_CONEXION_ACTIVA || 90) * 1000;
+  const limiteGpsActivo = Date.now() - 2 * 60 * 1000;
+  const ultimaConexionMs = new Date(row.ULTIMA_CONEXION || row.ACTUALIZADO_EN || 0).getTime();
+  const fechaGpsMs = new Date(ubicacion.FECHA_HORA || ubicacion.ACTUALIZADO_EN || 0).getTime();
+  const enLinea = Number.isFinite(ultimaConexionMs) && ultimaConexionMs >= limiteActivo && String(row.ESTADO || '') !== 'Desconectado';
+  const gpsReciente = Number.isFinite(fechaGpsMs) && fechaGpsMs >= limiteGpsActivo;
+  const latitud = Number(ubicacion.LATITUD);
+  const longitud = Number(ubicacion.LONGITUD);
+  const precision = Number(ubicacion.PRECISION_METROS || 0);
+  return Object.assign({}, limpiarSalidaRecurso_('CONEXIONES', row), {
+    USUARIO_NOMBRE:usuario.NOMBRE || row.USUARIO_ID || 'Usuario',
+    USUARIO_CORREO:usuario.CORREO || '',
+    ROL_ID:usuario.ROL_ID || '',
+    CONDUCTOR_NOMBRE:conductor.NOMBRE || '',
+    VEHICULO_PATENTE:vehiculo.PATENTE || '',
+    VEHICULO_NOMBRE:[vehiculo.MARCA, vehiculo.MODELO].filter(Boolean).join(' '),
+    EN_LINEA:enLinea,
+    COLOR_ESTADO:enLinea ? 'VERDE' : 'ROJO',
+    ESTADO_CONEXION:enLinea ? 'Activo' : 'Desconectado',
+    GPS_RECIENTE:gpsReciente,
+    LATITUD:Number.isFinite(latitud) ? latitud : '',
+    LONGITUD:Number.isFinite(longitud) ? longitud : '',
+    PRECISION_METROS:Number.isFinite(precision) ? precision : '',
+    VELOCIDAD_KMH:Number(ubicacion.VELOCIDAD_KMH || 0),
+    RUMBO:Number(ubicacion.RUMBO || 0),
+    DIRECCION:ubicacion.DIRECCION || '',
+    FECHA_GPS:ubicacion.FECHA_HORA || ubicacion.ACTUALIZADO_EN || '',
+    FUENTE_GPS:ubicacion.FUENTE || '',
+    PROVEEDOR_GPS:ubicacion.PROVEEDOR || row.PROVEEDOR_GPS || '',
+    CALIDAD_GPS:ubicacion.CALIDAD_GPS || row.CALIDAD_GPS || calidadGps_(precision, ubicacion.PROVEEDOR || ''),
+    BATERIA_GPS:ubicacion.BATERIA_PORCENTAJE || row.BATERIA_PORCENTAJE || ''
+  });
+}
+
+function seguimientoConexionTiempoReal_(request, session) {
+  exigirAdministradorConexiones_(session);
+  const data = request.datos || request || {};
+  const usuarioSeguidoId = String(data.USUARIO_ID || data.usuarioId || obtenerPreferenciaSeguimientoConexion_(session) || '').trim();
+  if (!usuarioSeguidoId) {
+    return ok_({
+      row:null,
+      sinConexion:true,
+      seguimiento:{ USUARIO_ID:'', VISIBLE:false, RASTRO:[] },
+      serverTime:fechaIso_()
+    });
+  }
+
+  const usuarios = listarRegistrosCacheadosTiempoReal_('USUARIOS', 30);
+  const conductores = listarRegistrosCacheadosTiempoReal_('CONDUCTORES', 30);
+  const vehiculos = listarRegistrosCacheadosTiempoReal_('VEHICULOS', 30);
+  const usuario = usuarios.filter(function(row) { return String(row.ID || '') === usuarioSeguidoId; })[0] || { ID:usuarioSeguidoId };
+  const conductoresPorId = {};
+  const vehiculosPorId = {};
+  conductores.forEach(function(row) { if (row.ID) conductoresPorId[String(row.ID)] = row; });
+  vehiculos.forEach(function(row) { if (row.ID) vehiculosPorId[String(row.ID)] = row; });
+
+  let conexiones = [];
+  let gpsActual = [];
+  try { conexiones = listarRegistrosCacheadosTiempoReal_('CONEXIONES_ACTUAL', 1); } catch (_) { conexiones = []; }
+  try { gpsActual = listarRegistrosCacheadosTiempoReal_('GPS_ACTUAL', 1); } catch (_) { gpsActual = []; }
+  const gpsMapas = { dispositivo:{}, vehiculo:{}, conductor:{} };
+  const conservarGps = function(mapa, clave, row) {
+    if (!clave) return;
+    const actual = mapa[clave];
+    const fecha = new Date(row.FECHA_HORA || row.ACTUALIZADO_EN || 0).getTime() || 0;
+    const fechaActual = actual ? new Date(actual.FECHA_HORA || actual.ACTUALIZADO_EN || 0).getTime() || 0 : -1;
+    if (!actual || fecha > fechaActual) mapa[clave] = row;
+  };
+  gpsActual.filter(ubicacionGpsMostrable_).forEach(function(row) {
+    conservarGps(gpsMapas.dispositivo, String(row.DISPOSITIVO_ID || ''), row);
+    conservarGps(gpsMapas.vehiculo, String(row.VEHICULO_ID || ''), row);
+    conservarGps(gpsMapas.conductor, String(row.CONDUCTOR_ID || ''), row);
+  });
+
+  const ultimas = {};
+  conexiones.filter(function(row) {
+    return String(row.USUARIO_ID || '') === usuarioSeguidoId;
+  }).forEach(function(row) {
+    const clave = String(row.DISPOSITIVO_ID || row.SESION_CLIENTE_ID || row.SESION_ID || row.ID || '');
+    if (!clave) return;
+    const actual = ultimas[clave];
+    const fecha = new Date(row.ULTIMA_CONEXION || row.ACTUALIZADO_EN || 0).getTime() || 0;
+    const fechaActual = actual ? new Date(actual.ULTIMA_CONEXION || actual.ACTUALIZADO_EN || 0).getTime() || 0 : -1;
+    if (!actual || fecha > fechaActual) ultimas[clave] = row;
+  });
+  const equipos = Object.keys(ultimas).map(function(clave) {
+    const row = ultimas[clave];
+    return construirEquipoConexionTiempoReal_(
+      row,
+      usuario,
+      conductoresPorId[String(row.CONDUCTOR_ID || '')] || {},
+      vehiculosPorId[String(row.VEHICULO_ID || '')] || {},
+      gpsMapas
+    );
+  });
+  const ordenarReciente = function(a, b) {
+    return new Date(b.FECHA_GPS || b.ULTIMA_CONEXION || 0).getTime() - new Date(a.FECHA_GPS || a.ULTIMA_CONEXION || 0).getTime();
+  };
+  const filaGps = equipos.filter(function(row) {
+    return row.LATITUD !== '' && row.LONGITUD !== '';
+  }).sort(ordenarReciente)[0] || null;
+  const filaReciente = equipos.slice().sort(ordenarReciente)[0] || null;
+  if (filaGps && direccionSoloCoordenadas_(filaGps.DIRECCION)) {
+    try {
+      const direccionCacheada = CacheService.getScriptCache().get(claveCacheDireccion_(filaGps.LATITUD, filaGps.LONGITUD));
+      if (direccionCacheada) filaGps.DIRECCION = direccionCacheada;
+    } catch (_) {}
+  }
+  const rastro = construirRastroSeguimientoConexion_(usuarioSeguidoId, equipos, filaGps);
+  return ok_({
+    row:filaGps || filaReciente,
+    sinConexion:!filaReciente,
+    seguimiento:{
+      USUARIO_ID:usuarioSeguidoId,
+      USUARIO_NOMBRE:usuario.NOMBRE || (filaReciente && filaReciente.USUARIO_NOMBRE) || usuarioSeguidoId,
+      USUARIO_CORREO:usuario.CORREO || (filaReciente && filaReciente.USUARIO_CORREO) || '',
+      VISIBLE:Boolean(filaGps),
+      DIRECCION:filaGps ? filaGps.DIRECCION || '' : '',
+      DISPOSITIVO_ID:filaGps ? filaGps.DISPOSITIVO_ID || '' : '',
+      FECHA_GPS:filaGps ? filaGps.FECHA_GPS || '' : '',
+      RASTRO:rastro
+    },
+    serverTime:fechaIso_()
+  });
+}
+
+function enviarAvisoConexiones_(request, session) {
+  exigirAdministradorConexiones_(session);
+  const data = request.datos || request || {};
+  const tipoAviso = String(data.TIPO_AVISO || 'NOTIFICACION').trim().toUpperCase();
+  const alcance = String(data.ALCANCE || 'USUARIO').trim().toUpperCase();
+  const titulo = String(data.TITULO || '').trim().slice(0, 160);
+  const mensaje = String(data.MENSAJE || '').trim().slice(0, 2000);
+  if (!titulo || !mensaje) throw new Error('TITULO_Y_MENSAJE_REQUERIDOS');
+  if (['NOTIFICACION','ALERTA'].indexOf(tipoAviso) < 0) throw new Error('TIPO_AVISO_INVALIDO');
+  if (['USUARIO','CONDUCTORES','CONECTADOS','TODOS'].indexOf(alcance) < 0) throw new Error('ALCANCE_AVISO_INVALIDO');
+  exigirPermiso_(session.user, tipoAviso === 'ALERTA' ? 'ALERTAS' : 'NOTIFICACIONES', 'CREAR');
+
+  const usuarios = listarRegistros_('USUARIOS', {}).filter(function(row) {
+    return String(row.ESTADO || '') === 'Activo' && String(row.ELIMINADO || 'NO') !== 'SI';
+  });
+  const usuariosPorId = {};
+  usuarios.forEach(function(row) { usuariosPorId[String(row.ID)] = row; });
+  const conductores = listarRegistros_('CONDUCTORES', {}).filter(function(row) {
+    return String(row.ESTADO || '') !== 'Inactivo' && String(row.ELIMINADO || 'NO') !== 'SI';
+  });
+  const conductorPorUsuario = {};
+  conductores.forEach(function(row) {
+    if (row.USUARIO_ID && !conductorPorUsuario[String(row.USUARIO_ID)]) conductorPorUsuario[String(row.USUARIO_ID)] = row;
+  });
+
+  let destinatarios = [];
+  if (alcance === 'USUARIO') {
+    const usuarioId = String(data.USUARIO_ID || data.DESTINATARIO_USUARIO_ID || '').trim();
+    if (!usuarioId) throw new Error('DESTINATARIO_REQUERIDO');
+    if (!usuariosPorId[usuarioId]) throw new Error('USUARIO_DESTINATARIO_NO_ENCONTRADO');
+    destinatarios = [usuariosPorId[usuarioId]];
+  } else if (alcance === 'CONDUCTORES') {
+    destinatarios = usuarios.filter(function(row) {
+      return String(row.ROL_ID || '') === 'ROL-CONDUCTOR' || Boolean(conductorPorUsuario[String(row.ID)]);
+    });
+  } else if (alcance === 'CONECTADOS') {
+    let conexiones = [];
+    try { conexiones = listarRegistrosCacheadosTiempoReal_('CONEXIONES_ACTUAL', 2); } catch (_) { conexiones = []; }
+    const limiteActivo = Date.now() - Number(CONFIGURACION_APLICACION.SEGUNDOS_CONEXION_ACTIVA || 90) * 1000;
+    const idsConectados = {};
+    conexiones.forEach(function(row) {
+      const fecha = new Date(row.ULTIMA_CONEXION || row.ACTUALIZADO_EN || 0).getTime();
+      if (Number.isFinite(fecha) && fecha >= limiteActivo && String(row.ESTADO || '') !== 'Desconectado' && row.USUARIO_ID) {
+        idsConectados[String(row.USUARIO_ID)] = true;
+      }
+    });
+    destinatarios = usuarios.filter(function(row) { return Boolean(idsConectados[String(row.ID)]); });
+  } else {
+    destinatarios = usuarios.slice();
+  }
+  const unicos = {};
+  destinatarios = destinatarios.filter(function(row) {
+    const id = String(row.ID || '');
+    if (!id || unicos[id]) return false;
+    unicos[id] = true;
+    return true;
+  }).slice(0, 500);
+  if (!destinatarios.length) throw new Error('SIN_DESTINATARIOS_PARA_EL_ALCANCE');
+
+  const solicitudId = String(data.SOLICITUD_CLIENTE_ID || generarId_('AVC')).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 120);
+  const categoria = String(data.CATEGORIA || (tipoAviso === 'ALERTA' ? 'Operación' : 'Información')).trim().slice(0, 80);
+  let insertados = [];
+  let omitidos = 0;
+  if (tipoAviso === 'NOTIFICACION') {
+    const existentes = {};
+    listarRegistros_('NOTIFICACIONES', {}).forEach(function(row) {
+      if (row.CLAVE_UNICA) existentes[String(row.CLAVE_UNICA)] = true;
+    });
+    const prioridadEntrada = String(data.PRIORIDAD || 'Normal');
+    const prioridad = ['Baja','Normal','Alta','Urgente'].indexOf(prioridadEntrada) >= 0 ? prioridadEntrada : 'Normal';
+    const registros = destinatarios.map(function(usuario) {
+      const conductor = conductorPorUsuario[String(usuario.ID)] || {};
+      const clave = claveNotificacionUnica_({
+        CLAVE_UNICA:'AVISO-CONEXIONES-' + solicitudId,
+        DESTINATARIO_USUARIO_ID:usuario.ID,
+        DESTINATARIO_CONDUCTOR_ID:conductor.ID || ''
+      });
+      if (existentes[clave]) { omitidos += 1; return null; }
+      existentes[clave] = true;
+      return {
+        DESTINATARIO_USUARIO_ID:usuario.ID,
+        DESTINATARIO_CONDUCTOR_ID:conductor.ID || '',
+        TITULO:titulo,
+        MENSAJE:mensaje,
+        TIPO:categoria,
+        PRIORIDAD:prioridad,
+        CLAVE_UNICA:clave,
+        LEIDA:'NO',
+        FECHA_ENVIO:new Date(),
+        CREADO_POR:session.user.ID,
+        ELIMINADO:'NO'
+      };
+    }).filter(Boolean);
+    insertados = insertarRegistrosMasivos_('NOTIFICACIONES', registros, 'NOT');
+  } else {
+    const existentes = {};
+    listarRegistros_('ALERTAS', {}).forEach(function(row) {
+      if (row.CLAVE_UNICA) existentes[String(row.CLAVE_UNICA)] = true;
+    });
+    const nivelEntrada = String(data.NIVEL || 'Advertencia');
+    const nivel = ['Info','Advertencia','Crítica'].indexOf(nivelEntrada) >= 0 ? nivelEntrada : 'Advertencia';
+    const registros = destinatarios.map(function(usuario) {
+      const clave = 'AVISO-CONEXIONES-' + solicitudId + '-' + String(usuario.ID);
+      if (existentes[clave]) { omitidos += 1; return null; }
+      existentes[clave] = true;
+      return {
+        TIPO:categoria,
+        NIVEL:nivel,
+        TITULO:titulo,
+        MENSAJE:mensaje,
+        MODULO:'CONEXIONES',
+        REGISTRO_ID:usuario.ID,
+        CLAVE_UNICA:clave,
+        LEIDA:'NO',
+        USUARIO_ID:usuario.ID,
+        FECHA_HORA:new Date(),
+        ELIMINADO:'NO'
+      };
+    }).filter(Boolean);
+    insertados = insertarRegistrosMasivos_('ALERTAS', registros, 'ALT');
+  }
+  registrarBitacora_(
+    session.user,
+    tipoAviso === 'ALERTA' ? 'ENVIAR_ALERTA_CONEXIONES' : 'ENVIAR_NOTIFICACION_CONEXIONES',
+    'CONEXIONES',
+    solicitudId,
+    'Alcance: ' + alcance + '. Destinatarios: ' + destinatarios.length + '. Enviados: ' + insertados.length + '. Título: ' + titulo + '.'
+  );
+  return ok_({
+    tipoAviso:tipoAviso,
+    alcance:alcance,
+    destinatarios:destinatarios.length,
+    enviados:insertados.length,
+    omitidos:omitidos,
+    solicitudId:solicitudId,
+    registros:insertados.slice(0, 25)
   });
 }
 

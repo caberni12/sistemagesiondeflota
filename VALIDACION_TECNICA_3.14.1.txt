@@ -1,0 +1,8 @@
+VALIDACIÓN TÉCNICA 3.14.1
+OK - Sintaxis JavaScript
+OK - Sintaxis Codigo_Completo.gs
+OK - Alias iniciarRuta/startRoute/iniciar_ruta/iniciar-ruta
+OK - Reintento compatible por actualizarEstadoRuta
+OK - Confirmación de estado En curso antes de GPS
+OK - Versiones activas alineadas en 3.14.1
+OK - Codigo_Completo.gs autosuficiente

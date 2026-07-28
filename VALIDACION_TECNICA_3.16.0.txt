@@ -1,0 +1,25 @@
+Sistema de Gestión de Flotas web 3.16.0
+
+RESULTADO: CORRECTO
+
+- JavaScript comprobado sintácticamente con Node.js.
+- Codigo_Completo.gs comprobado sintácticamente como JavaScript V8.
+- Acción liviana seguimientoConexionTiempoReal verificada.
+- Acción enviarAvisoConexiones verificada.
+- Inserción masiva de notificaciones y alertas verificada estáticamente.
+- Prevención de duplicados por solicitud verificada.
+- Permisos y auditoría conservados.
+- Marcadores incrementales verificados: no se vacía la capa en cada movimiento.
+- Rastro limitado a 40 posiciones.
+- Caché rápida de GPS_ACTUAL y CONEXIONES_ACTUAL separada.
+- Copias de Codigo_Completo.gs comparadas por SHA-256.
+- Filtros, direcciones, operaciones, rutas, check-in, combustible y QR conservados.
+
+PARÁMETROS DE RESPUESTA
+
+- Consulta del usuario seguido: 1.000 ms, sin solicitudes simultáneas.
+- Envío GPS web: 1.500 ms o desplazamiento desde 2 m.
+- Actualización completa de Conexiones: 5.000 ms.
+- Reintento progresivo ante fallas: hasta 10.000 ms.
+
+La latencia efectiva depende del GPS, Internet y tiempo de respuesta de Google Apps Script.

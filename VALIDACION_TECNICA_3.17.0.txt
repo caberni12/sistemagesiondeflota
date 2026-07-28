@@ -1,0 +1,21 @@
+Sistema de Gestión de Flotas web 3.17.0
+Validación técnica
+
+Resultado: CORRECTO
+
+- JavaScript validado con Node.js: aplicacion.js, conexion.js, configuracion.js, mapa.js, acceso.js, menú y tema.
+- Codigo_Completo.gs validado sintácticamente como JavaScript V8.
+- Versión 3.17.0 confirmada en configuración, servidor, caché y archivos HTML.
+- Botón QR de Combustible confirmado.
+- Botón QR de Check-in vehicular confirmado.
+- Flujo QR de Operaciones conservado.
+- Contextos vehiculo-operacion, combustible y checkin confirmados.
+- Token vinculado a usuario, vehículo y contexto durante cinco minutos.
+- Asignación activa obligatoria para combustible no administrativo.
+- Disponibilidad de vehículo y conductor conservada para check-in.
+- Auditoría de lectura y creación mediante QR confirmada.
+- Modo local alineado con el servidor central.
+- Verificador ejecutado: VERIFICAR_WEB_3.17.0.py.
+
+El sistema continúa trabajando en línea mediante la misma dirección de Apps Script terminada en /exec.
+

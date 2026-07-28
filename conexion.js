@@ -11,6 +11,7 @@
     changePassword:'cambiarContrasena', saveUserPermissions:'actualizarPermisosUsuario', saveCompany:'guardarEmpresa', saveOperationalPoint:'guardarPuntoOperacion', getOperationalPoint:'obtenerPuntoOperacion', clearOperationalData:'limpiarDatosOperativos',
     assignRoute:'asignarRuta', startRoute:'iniciarRuta', completeRoute:'completarRuta', updateRouteStatus:'actualizarEstadoRuta', registerRouteEvidence:'registrarEvidenciaRuta', routeEvidenceImage:'obtenerImagenEvidenciaRuta', sendNotification:'enviarNotificacion',
     readNotification:'marcarNotificacionLeida', readAlert:'marcarAlertaLeida', heartbeat:'actualizarConexion', realtimeSummary:'resumenTiempoReal', connectionsOnline:'resumenConexionesAdministrador', saveConnectionTracking:'guardarSeguimientoConexionUsuario',
+    connectionTrackingLive:'seguimientoConexionTiempoReal', sendConnectionsNotice:'enviarAvisoConexiones',
     diagnoseSystem:'diagnosticoSistema', repairSystem:'repararSistema',
     validateVehicleQr:'validarQrVehiculo', createVehicleCheckin:'crearCheckinVehicular',
     reviewVehicleCheckin:'revisarCheckinVehicular', availableCheckins:'checkinsDisponibles',
@@ -55,7 +56,7 @@
   const qrAuthorizations = new Map();
   const cacheRespuestas = new Map();
   const solicitudesPendientes = new Map();
-  const accionesLectura = new Set(['status','me','dashboard','operationsSummary','list','realtimeSummary','connectionsOnline','diagnoseSystem','getOperationalPoint','fuelSummary','routeEvidenceImage']);
+  const accionesLectura = new Set(['status','me','dashboard','operationsSummary','list','realtimeSummary','connectionsOnline','connectionTrackingLive','diagnoseSystem','getOperationalPoint','fuelSummary','routeEvidenceImage']);
   const clientIpCacheKey = 'flotas_ip_publica_v1';
   const claveCachePersistente = config.CLAVE_CACHE_MODULOS_LOCAL || 'sistema_gestion_flotas_cache_modulos_v1';
   const accionesCachePersistente = new Set(['dashboard','operationsSummary','list','diagnoseSystem','getOperationalPoint']);
@@ -212,6 +213,12 @@
   }
 
   function politicaCache(action) {
+    if (action === 'connectionTrackingLive') {
+      return {
+        vigente:Number(config.CACHE_SEGUIMIENTO_CONEXION_MILISEGUNDOS || 350),
+        maxima:Math.max(4000, Number(config.TIEMPO_ESPERA_SEGUIMIENTO_CONEXION_MILISEGUNDOS || 8000))
+      };
+    }
     if (action === 'realtimeSummary' || action === 'connectionsOnline') {
       return {
         vigente: Number(config.CACHE_TIEMPO_REAL_MILISEGUNDOS || 4000),
@@ -262,11 +269,11 @@
   function invalidarDespuesDeEscritura(action, payload = {}) {
     if (accionesLectura.has(action) || ['health','login'].includes(action)) return;
     if (action === 'heartbeat') {
-      invalidarCache({ actions:['realtimeSummary','connectionsOnline'] });
+      invalidarCache({ actions:['realtimeSummary','connectionsOnline','connectionTrackingLive'] });
       return;
     }
     if (action === 'saveLocation') {
-      invalidarCache({ actions:['realtimeSummary','connectionsOnline'], resources:['gps'] });
+      invalidarCache({ actions:['realtimeSummary','connectionsOnline','connectionTrackingLive'], resources:['gps'] });
       return;
     }
     const impacts = {
@@ -284,13 +291,14 @@
       completeRoute: { actions:['dashboard','realtimeSummary'], resources:['routes','gps','connections','notifications','audit'] },
       updateRouteStatus: { actions:['dashboard','realtimeSummary'], resources:['routes','notifications','audit'] },
       sendNotification: { actions:['dashboard','realtimeSummary'], resources:['notifications','audit'] },
+      sendConnectionsNotice: { actions:['dashboard','realtimeSummary'], resources:['notifications','alerts','audit'] },
       readNotification: { actions:['dashboard','realtimeSummary'], resources:['notifications'] },
       readAlert: { actions:['dashboard','realtimeSummary'], resources:['alerts'] },
       saveCompany: { actions:['status','getOperationalPoint'], resources:['companies','audit'] },
       saveOperationalPoint: { actions:['status','dashboard','operationsSummary','diagnoseSystem','getOperationalPoint'], resources:['companies','operations','routes','audit'] },
       changePassword: { actions:['me'], resources:['users','audit'] },
       saveUserPermissions: { actions:['me','dashboard'], resources:['users','audit'] },
-      saveConnectionTracking: { actions:['connectionsOnline'], resources:['connections','gps','audit'] },
+      saveConnectionTracking: { actions:['connectionsOnline','connectionTrackingLive'], resources:['connections','gps','audit'] },
       repairSystem: { actions:['status','dashboard','realtimeSummary','diagnoseSystem','getOperationalPoint'], resources:['companies','users','vehicles','drivers','routes','operations','gps','notifications','alerts','history','checkins','audit'] },
       bulkImport: { actions:['dashboard'], resources:[payload.resource,'audit'] },
       registerConnectionIp: { actions:['realtimeSummary'], resources:['connections','audit'] },
@@ -583,7 +591,9 @@
     if (!config.DIRECCION_APLICACION) throw new Error('DIRECCION_APLICACION_NO_CONFIGURADA');
     const controller = new AbortController();
     const timeoutOperaciones=new Set(['operationsSummary','startOperation','finishOperation','editOperationAdmin','deleteOperationAdmin','startRoute','completeRoute','updateRouteStatus','uploadDriveFile','routeEvidenceImage']);
-    const timeout=action==='connectionsOnline'
+    const timeout=action==='connectionTrackingLive'
+      ? Number(config.TIEMPO_ESPERA_SEGUIMIENTO_CONEXION_MILISEGUNDOS||8000)
+      : action==='connectionsOnline'
       ? Number(config.TIEMPO_ESPERA_CONEXIONES_MILISEGUNDOS||15000)
       : timeoutOperaciones.has(action)
         ? Number(config.TIEMPO_ESPERA_OPERACIONES_MILISEGUNDOS||60000)
@@ -687,7 +697,7 @@
   async function localRequest(action, payload) {
     await Promise.resolve();
     switch (action) {
-      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.15.0', now:iso() };
+      case 'health': return { service:'Base de datos local del Sistema de Gestión de Flotas', version:'3.17.0', now:iso() };
       case 'status': return {
         connected:true, needsSetup:activeRows(localDb.users).length === 0, spreadsheetName:'Base local del navegador',
         rows:{ users:activeRows(localDb.users).length, vehicles:activeRows(localDb.vehicles).length,
@@ -762,6 +772,8 @@
       case 'realtimeSummary': return localRealtimeSummary(payload);
       case 'connectionsOnline': return localConnectionsOnline(payload);
       case 'saveConnectionTracking': return localSaveConnectionTracking(payload);
+      case 'connectionTrackingLive': return localConnectionTrackingLive(payload);
+      case 'sendConnectionsNotice': return localSendConnectionsNotice(payload);
       case 'diagnoseSystem': return localDiagnoseSystem();
       case 'repairSystem': return localRepairSystem();
       case 'changePassword': return localChangePassword(payload);
@@ -949,7 +961,7 @@
   }
   function localRecalculateFuel(vehicleId){const rows=activeRows(localDb.fuel).filter(row=>row.VEHICULO_ID===vehicleId).sort((a,b)=>new Date(a.FECHA_HORA||a.CREADO_EN)-new Date(b.FECHA_HORA||b.CREADO_EN)||String(a.ID).localeCompare(String(b.ID)));let previous=null,maxMileage=0;rows.forEach(row=>{const mileage=row.KILOMETRAJE===''?null:Number(row.KILOMETRAJE),liters=Number(row.LITROS||0);let distance='',kmL='',l100='';if(mileage!==null&&Number.isFinite(mileage)&&previous!==null&&mileage>=previous){distance=localFuelRound(mileage-previous,1);if(distance>0&&liters>0){kmL=localFuelRound(distance/liters,2);l100=localFuelRound(liters/distance*100,2);}}row.KILOMETRAJE_ANTERIOR=distance===''?'':localFuelRound(mileage-distance,1);row.DISTANCIA_DESDE_ULTIMA_CARGA_KM=distance;row.CONSUMO_KM_L=kmL;row.CONSUMO_L_100KM=l100;if(mileage!==null&&Number.isFinite(mileage)){previous=mileage;maxMileage=Math.max(maxMileage,mileage);}});const vehicle=find('vehicles',vehicleId);if(vehicle&&maxMileage>Number(vehicle.KILOMETRAJE||0)){vehicle.KILOMETRAJE=maxMileage;vehicle.ACTUALIZADO_EN=iso();}}
   function localNotifyRoles(roleIds,data){const roles=Array.isArray(roleIds)?roleIds:[roleIds];return activeRows(localDb.users).filter(row=>roles.includes(row.ROL_ID)&&row.ESTADO!=='Inactivo').map(row=>localCreateNotification({...data,DESTINATARIO_USUARIO_ID:row.ID}));}
-  function localCreateFuel(payload){const user=requireLocalUser();requireLocalPermission(user,'COMBUSTIBLE','CREAR');const clean=localValidateFuel(payload.data||{}, {}, user, true),now=iso(),row={ID:id('COM'),...clean,CREADO_POR:user.ID,CREADO_EN:now,ACTUALIZADO_POR:user.ID,ACTUALIZADO_EN:now,ELIMINADO:'NO'};localDb.fuel.push(row);localRecalculateFuel(row.VEHICULO_ID);audit(user,'CREAR_CARGA','COMBUSTIBLE',`Carga registrada. Datos: ${JSON.stringify(row)}`,row.ID);if(user.ROL_ID==='ROL-CONDUCTOR'){const driver=localDriver(user)||{},vehicle=find('vehicles',row.VEHICULO_ID)||{};localNotifyRoles(['ROL-ADMIN'],{TITULO:'Combustible informado por conductor',MENSAJE:`${driver.NOMBRE||user.NOMBRE} (${user.CORREO||'sin correo'}) informó ${row.LITROS} L para ${vehicle.PATENTE||row.VEHICULO_ID}, costo ${row.COSTO_TOTAL}.`,TIPO:'Combustible',PRIORIDAD:'Alta',OPERACION_ID:row.OPERACION_ID,RUTA_ID:row.RUTA_ID,CREADO_POR:user.ID,CLAVE_UNICA:`COMBUSTIBLE-CONDUCTOR-${row.ID}`});}else if(user.ROL_ID==='ROL-SUPERVISOR')localNotifyRoles(['ROL-ADMIN'],{TITULO:'Nueva carga de combustible',MENSAJE:`${user.NOMBRE} registró ${row.LITROS} L para ${row.VEHICULO_ID}.`,TIPO:'Combustible',PRIORIDAD:'Normal',OPERACION_ID:row.OPERACION_ID,CREADO_POR:user.ID,CLAVE_UNICA:`COMBUSTIBLE-SUPERVISOR-${row.ID}`});saveLocal();return{row:cleanRow(row)};}
+  function localCreateFuel(payload){const user=requireLocalUser(),data=payload.data||{};requireLocalPermission(user,'COMBUSTIBLE','CREAR');const validadoPorQr=localConsumeVehicleQrAuthorization(data.AUTORIZACION_QR,user,data.VEHICULO_ID,'combustible',false),clean=localValidateFuel(data, {}, user, true),now=iso(),row={ID:id('COM'),...clean,CREADO_POR:user.ID,CREADO_EN:now,ACTUALIZADO_POR:user.ID,ACTUALIZADO_EN:now,ELIMINADO:'NO'};localDb.fuel.push(row);localRecalculateFuel(row.VEHICULO_ID);audit(user,'CREAR_CARGA','COMBUSTIBLE',`Carga registrada${validadoPorQr?' mediante QR':''}. Datos: ${JSON.stringify(row)}`,row.ID);if(user.ROL_ID==='ROL-CONDUCTOR'){const driver=localDriver(user)||{},vehicle=find('vehicles',row.VEHICULO_ID)||{};localNotifyRoles(['ROL-ADMIN'],{TITULO:'Combustible informado por conductor',MENSAJE:`${driver.NOMBRE||user.NOMBRE} (${user.CORREO||'sin correo'}) informó ${row.LITROS} L para ${vehicle.PATENTE||row.VEHICULO_ID}, costo ${row.COSTO_TOTAL}.`,TIPO:'Combustible',PRIORIDAD:'Alta',OPERACION_ID:row.OPERACION_ID,RUTA_ID:row.RUTA_ID,CREADO_POR:user.ID,CLAVE_UNICA:`COMBUSTIBLE-CONDUCTOR-${row.ID}`});}else if(user.ROL_ID==='ROL-SUPERVISOR')localNotifyRoles(['ROL-ADMIN'],{TITULO:'Nueva carga de combustible',MENSAJE:`${user.NOMBRE} registró ${row.LITROS} L para ${row.VEHICULO_ID}.`,TIPO:'Combustible',PRIORIDAD:'Normal',OPERACION_ID:row.OPERACION_ID,CREADO_POR:user.ID,CLAVE_UNICA:`COMBUSTIBLE-SUPERVISOR-${row.ID}`});saveLocal();return{row:cleanRow(row)};}
   function localUpdateFuel(payload){const user=requireLocalUser();requireLocalPermission(user,'COMBUSTIBLE','ACTUALIZAR');if(user.ROL_ID==='ROL-CONDUCTOR')throw new Error('PERMISO_DENEGADO');const row=find('fuel',payload.id);if(!row)throw new Error('REGISTRO_NO_ENCONTRADO');const before={...row},oldVehicle=row.VEHICULO_ID,clean=localValidateFuel(payload.data||{},row,user,false);Object.assign(row,clean,{ACTUALIZADO_POR:user.ID,ACTUALIZADO_EN:iso()});localRecalculateFuel(oldVehicle);if(oldVehicle!==row.VEHICULO_ID)localRecalculateFuel(row.VEHICULO_ID);audit(user,'ACTUALIZAR_CARGA','COMBUSTIBLE',`Respaldo anterior: ${JSON.stringify(before)}. Datos posteriores: ${JSON.stringify(row)}`,row.ID);saveLocal();return{row:cleanRow(row)};}
   function localOperationsSummary(payload={}) {
     const user=requireLocalUser();
@@ -1053,6 +1065,7 @@
     if(String(data.CONFIRMACION_CONDUCTOR||'')!=='SI')throw new Error('CHECKIN_CONFIRMACION_REQUERIDA');
     const vehicle=find('vehicles',data.VEHICULO_ID),driver=find('drivers',data.CONDUCTOR_ID);
     if(!vehicle)throw new Error('VEHICULO_NO_ENCONTRADO');if(!driver)throw new Error('CONDUCTOR_NO_ENCONTRADO');
+    const validadoPorQr=localConsumeVehicleQrAuthorization(data.AUTORIZACION_QR,user,vehicle.ID,'checkin',false);
     if(vehicle.ESTADO!=='Disponible')throw new Error('VEHICULO_NO_DISPONIBLE');if(driver.ESTADO!=='Disponible')throw new Error('CONDUCTOR_NO_DISPONIBLE');
     const list=localNormalizeCheckinList(data.LISTA_CODIFICADA),critical=list.filter(i=>i.respuesta==='FALLA'&&i.critico).length,minor=list.filter(i=>i.respuesta==='FALLA'&&!i.critico).length,now=iso();
     const state=critical?'Bloqueado':minor?'Pendiente':'Aprobado',result=critical?'Falla crítica':minor?'Con observaciones':'Conforme';
@@ -1060,7 +1073,7 @@
     const row={ID:id('CHK'),VEHICULO_ID:vehicle.ID,CONDUCTOR_ID:driver.ID,OPERACION_ID:'',FECHA_HORA:now,KILOMETRAJE:Number(data.KILOMETRAJE||vehicle.KILOMETRAJE||0),NIVEL_COMBUSTIBLE:data.NIVEL_COMBUSTIBLE||'No informado',LISTA_CODIFICADA:JSON.stringify(list),TOTAL_ITEMS:list.length,ITEMS_OK:list.filter(i=>i.respuesta==='OK').length,FALLAS_LEVES:minor,FALLAS_CRITICAS:critical,RESULTADO:result,ESTADO_REVISION:state,OBSERVACIONES:String(data.OBSERVACIONES||'').slice(0,1500),FIRMA_CONDUCTOR:String(data.FIRMA_CONDUCTOR||user.NOMBRE||driver.NOMBRE).slice(0,180),REVISADO_POR:state==='Aprobado'?user.ID:'',FECHA_REVISION:state==='Aprobado'?now:'',COMENTARIO_REVISION:state==='Aprobado'?'Aprobación automática sin fallas detectadas.':'',VIGENTE_HASTA:new Date(Date.now()+12*3600000).toISOString(),UTILIZADO:'NO',CREADO_POR:user.ID,CREADO_EN:now,ACTUALIZADO_EN:now,ELIMINADO:'NO',SOLICITUD_CLIENTE_ID:requestId,FECHA_OPERATIVA:now.slice(0,10)};
     localDb.checkins.push(row);
     if(critical||minor)localDb.alerts.push({ID:id('ALT'),TIPO:'Check-in vehicular',NIVEL:critical?'Crítica':'Advertencia',TITULO:critical?'Vehículo bloqueado por inspección':'Check-in pendiente de revisión',MENSAJE:`${vehicle.PATENTE}: ${critical} falla(s) crítica(s) y ${minor} observación(es) leve(s).`,MODULO:'CHECKIN',REGISTRO_ID:row.ID,LEIDA:'NO',USUARIO_ID:'',FECHA_HORA:now,CREADO_EN:now,ACTUALIZADO_EN:now,ELIMINADO:'NO'});
-    audit(user,'CREAR','CHECKIN',`${vehicle.PATENTE} · ${result}`,row.ID);saveLocal();const confirmed=find('checkins',row.ID);if(!confirmed)throw new Error('CHECKIN_NO_CONFIRMADO_EN_BASE_LOCAL');return{row:cleanRow(confirmed),catalogo:localCheckinCatalog(),persistenciaConfirmada:true,persistencia:'LOCAL',duplicadoEvitado:false,advertencias:[]};
+    audit(user,'CREAR','CHECKIN',`${vehicle.PATENTE} · ${result}${validadoPorQr?' · acceso mediante QR':''}`,row.ID);saveLocal();const confirmed=find('checkins',row.ID);if(!confirmed)throw new Error('CHECKIN_NO_CONFIRMADO_EN_BASE_LOCAL');return{row:cleanRow(confirmed),catalogo:localCheckinCatalog(),persistenciaConfirmada:true,persistencia:'LOCAL',duplicadoEvitado:false,advertencias:[]};
   }
   function localReviewVehicleCheckin(payload){
     const user=requireLocalUser(),data=payload.data||payload,idValue=payload.id||data.CHECKIN_ID,row=find('checkins',idValue);requireLocalPermission(user,'CHECKIN_APROBACIONES','ACTUALIZAR');
@@ -1106,7 +1119,7 @@
 
   function localStartOperation(payload) {
     const user=requireLocalUser(), data={...(payload.data||payload)};requireLocalPermission(user,'OPERACIONES','CREAR');
-    if(user.ROL_ID==='ROL-CONDUCTOR'){const own=localDriver(user);if(!own)throw new Error('CONDUCTOR_NO_ASOCIADO');data.CONDUCTOR_ID=own.ID;const authorization=qrAuthorizations.get(data.AUTORIZACION_QR);if(!authorization||authorization.USUARIO_ID!==user.ID||authorization.VEHICULO_ID!==data.VEHICULO_ID||authorization.EXPIRA<Date.now())throw new Error('AUTORIZACION_QR_INVALIDA');qrAuthorizations.delete(data.AUTORIZACION_QR);}
+    if(user.ROL_ID==='ROL-CONDUCTOR'){const own=localDriver(user);if(!own)throw new Error('CONDUCTOR_NO_ASOCIADO');data.CONDUCTOR_ID=own.ID;localConsumeVehicleQrAuthorization(data.AUTORIZACION_QR,user,data.VEHICULO_ID,'vehiculo-operacion',true);}
     const vehicle=find('vehicles',data.VEHICULO_ID), driver=find('drivers',data.CONDUCTOR_ID);
     if(!vehicle||vehicle.ESTADO!=='Disponible')throw new Error('VEHICULO_NO_DISPONIBLE');if(!driver||driver.ESTADO!=='Disponible')throw new Error('CONDUCTOR_NO_DISPONIBLE');
     const checkin=localValidateCheckinForOperation(data.CHECKIN_ID,vehicle.ID,driver.ID),base=localOperationalBase(),start=localValidateOperationLocation(data,base,'INICIO'),route=localRouteForOperation(data,vehicle,driver,user),now=iso(),startOrigin=start.DENTRO_PERIMETRO?base.DIRECCION:`Ubicación capturada ${Number(start.LATITUD).toFixed(6)}, ${Number(start.LONGITUD).toFixed(6)}`,startValidation=start.DENTRO_PERIMETRO?(start.PRECISION_VALIDA?'CAPTURADA_EN_BASE':'CAPTURADA_EN_BASE_PRECISION_BAJA'):(start.PRECISION_VALIDA?'CAPTURADA_FUERA_BASE':'CAPTURADA_FUERA_BASE_PRECISION_BAJA');
@@ -1144,10 +1157,17 @@
   function localDeleteOperationAdmin(payload){
     const user=requireLocalUser();localRequireOperationAdmin(user);const data=payload.data||payload,row=find('operations',payload.id||payload.OPERACION_ID||data.OPERACION_ID);if(!row)throw new Error('REGISTRO_NO_ENCONTRADO');const reason=String(data.MOTIVO_ELIMINACION||'').trim()||'Eliminación administrativa solicitada por el Administrador.',snapshot=localOperationSnapshot(row),active=row.ESTADO==='Activa';if(active){const vehicle=find('vehicles',row.VEHICULO_ID),driver=find('drivers',row.CONDUCTOR_ID);if(vehicle)vehicle.ESTADO='Disponible';if(driver)driver.ESTADO='Disponible';}if(row.RUTA_ID){const route=find('routes',row.RUTA_ID);if(route&&route.OPERACION_ID===row.ID)Object.assign(route,active?{OPERACION_ID:'',ESTADO:'Asignada',FECHA_INICIO:'',ACTUALIZADO_EN:iso()}:{OPERACION_ID:'',ACTUALIZADO_EN:iso()});}const detail=`Operación eliminada lógicamente por Administrador. Motivo: ${reason}. Datos: ${JSON.stringify(snapshot)}`;localDb.history.push({ID:id('HIS'),OPERACION_ID:row.ID,EVENTO:'ELIMINACION_ADMIN',DETALLE:detail,FECHA_HORA:iso(),USUARIO_ID:user.ID,CREADO_EN:iso(),ELIMINADO:'NO'});row.ELIMINADO='SI';row.ACTUALIZADO_EN=iso();audit(user,'ELIMINAR_ADMIN','OPERACIONES',detail,row.ID);saveLocal();return{id:row.ID,eliminacionLogica:true,auditoriaRegistrada:true};
   }
+  function localQrContext(value){const context=String(value||'vehiculo-operacion').trim().toLowerCase();return['vehiculo-operacion','combustible','checkin'].includes(context)?context:'vehiculo-operacion';}
+  function localConsumeVehicleQrAuthorization(token,user,vehicleId,context,required=false){const key=String(token||'').trim();if(!key&&!required)return false;const authorization=key?qrAuthorizations.get(key):null;if(!authorization||authorization.USUARIO_ID!==user.ID||authorization.VEHICULO_ID!==vehicleId||localQrContext(authorization.CONTEXTO)!==localQrContext(context)||authorization.EXPIRA<Date.now())throw new Error('AUTORIZACION_QR_INVALIDA');qrAuthorizations.delete(key);return true;}
   function localValidateVehicleQr(payload){
-    const user=requireLocalUser();requireLocalPermission(user,'QR','LEER');const normalized=String(payload.codigo||payload.CODIGO||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+    const user=requireLocalUser(),context=localQrContext(payload.contexto||payload.CONTEXTO);requireLocalPermission(user,'QR','LEER');if(context==='combustible')requireLocalPermission(user,'COMBUSTIBLE','CREAR');else if(context==='checkin')requireLocalPermission(user,'CHECKIN','CREAR');else requireLocalPermission(user,'OPERACIONES','CREAR');const normalized=String(payload.codigo||payload.CODIGO||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
     const vehicle=activeRows(localDb.vehicles).find(row=>String(row.QR_CODIGO||'').toUpperCase().replace(/[^A-Z0-9]/g,'')===normalized||String(row.PATENTE||'').toUpperCase().replace(/[^A-Z0-9]/g,'')===normalized);
-    if(!vehicle)throw new Error('QR_NO_RECONOCIDO');if(vehicle.ESTADO!=='Disponible')throw new Error('VEHICULO_NO_DISPONIBLE');const authorization=id('QR-AUT');qrAuthorizations.set(authorization,{USUARIO_ID:user.ID,VEHICULO_ID:vehicle.ID,EXPIRA:Date.now()+300000});audit(user,'VALIDAR','QR',`Vehículo validado: ${vehicle.PATENTE}`,vehicle.ID);saveLocal();return{row:cleanRow(vehicle),autorizacionQr:authorization,validaPorSegundos:300};
+    if(!vehicle)throw new Error('QR_NO_RECONOCIDO');
+    if(context==='combustible'){
+      if(vehicle.ESTADO==='Inactivo')throw new Error('VEHICULO_NO_DISPONIBLE');
+      if(user.ROL_ID!=='ROL-ADMIN'){const own=user.ROL_ID==='ROL-CONDUCTOR'?localDriver(user):null;if(user.ROL_ID==='ROL-CONDUCTOR'&&!own)throw new Error('CONDUCTOR_NO_ASOCIADO');const hasOperation=activeRows(localDb.operations).some(row=>row.VEHICULO_ID===vehicle.ID&&row.ESTADO==='Activa'&&(!own||row.CONDUCTOR_ID===own.ID)),hasRoute=activeRows(localDb.routes).some(row=>row.VEHICULO_ID===vehicle.ID&&['Asignada','En curso'].includes(row.ESTADO)&&(!own||row.CONDUCTOR_ID===own.ID));if(!hasOperation&&!hasRoute)throw new Error('COMBUSTIBLE_ASIGNACION_ACTIVA_REQUERIDA');}
+    }else if(vehicle.ESTADO!=='Disponible')throw new Error('VEHICULO_NO_DISPONIBLE');
+    const authorization=id('QR-AUT');qrAuthorizations.set(authorization,{USUARIO_ID:user.ID,VEHICULO_ID:vehicle.ID,CONTEXTO:context,EXPIRA:Date.now()+300000});const detail=context==='combustible'?'Vehículo validado para carga de combustible':context==='checkin'?'Vehículo validado para check-in':'Vehículo validado para operación';audit(user,'VALIDAR','QR',`${detail}: ${vehicle.PATENTE}`,vehicle.ID);saveLocal();return{row:cleanRow(vehicle),autorizacionQr:authorization,validaPorSegundos:300,contexto:context};
   }
   function localVehicleFilter(payload={},user=null){if(user&&!['ROL-ADMIN','ROL-SUPERVISOR'].includes(user.ROL_ID))return{activo:false,ids:new Set()};const raw=String(payload.vehiculos||payload.VEHICULOS||'').trim();if(!raw)return{activo:false,ids:new Set()};if(raw==='__NINGUNO__')return{activo:true,ids:new Set()};return{activo:true,ids:new Set(raw.split(',').map(value=>value.trim()).filter(Boolean))};}
   function localSaveLocation(payload) {
@@ -1272,6 +1292,54 @@
     const target=trackedUserId?find('users',trackedUserId):null;
     return{seguimiento:{USUARIO_ID:trackedUserId,USUARIO_NOMBRE:target?.NOMBRE||'',USUARIO_CORREO:target?.CORREO||'',VISIBLE:false,RASTRO:[]},persistenciaConfirmada:true};
   }
+  function localConnectionTrackingLive(payload={}){
+    const user=requireLocalUser();requireLocalPermission(user,'CONEXIONES','LEER');
+    const data=payload.data||payload||{},trackedUserId=String(data.USUARIO_ID||data.usuarioId||localStorage.getItem(localConnectionTrackingKey(user))||'').trim();
+    if(!trackedUserId)return{row:null,sinConexion:true,seguimiento:{USUARIO_ID:'',VISIBLE:false,RASTRO:[]},serverTime:iso()};
+    const result=localConnectionsOnline({USUARIO_ID:trackedUserId,LIMITE:20});
+    const row=(result.equipos||[]).filter(item=>item.LATITUD!==''&&item.LONGITUD!=='').sort((a,b)=>new Date(b.FECHA_GPS||b.ULTIMA_CONEXION||0)-new Date(a.FECHA_GPS||a.ULTIMA_CONEXION||0))[0]||(result.equipos||[])[0]||null;
+    return{row,sinConexion:!row,seguimiento:result.seguimiento||{USUARIO_ID:trackedUserId,VISIBLE:false,RASTRO:[]},serverTime:result.serverTime||iso()};
+  }
+  function localSendConnectionsNotice(payload={}){
+    const user=requireLocalUser(),data=payload.data||payload||{},tipoAviso=String(data.TIPO_AVISO||'NOTIFICACION').toUpperCase(),alcance=String(data.ALCANCE||'USUARIO').toUpperCase();
+    if(!['NOTIFICACION','ALERTA'].includes(tipoAviso))throw new Error('TIPO_AVISO_INVALIDO');
+    if(!['USUARIO','CONDUCTORES','CONECTADOS','TODOS'].includes(alcance))throw new Error('ALCANCE_AVISO_INVALIDO');
+    requireLocalPermission(user,tipoAviso==='ALERTA'?'ALERTAS':'NOTIFICACIONES','CREAR');
+    const titulo=String(data.TITULO||'').trim().slice(0,160),mensaje=String(data.MENSAJE||'').trim().slice(0,2000);
+    if(!titulo||!mensaje)throw new Error('TITULO_Y_MENSAJE_REQUERIDOS');
+    const users=activeRows(localDb.users).filter(row=>row.ESTADO==='Activo'),userMap=new Map(users.map(row=>[String(row.ID),row]));
+    const drivers=activeRows(localDb.drivers).filter(row=>row.ESTADO!=='Inactivo'),driverByUser=new Map(drivers.filter(row=>row.USUARIO_ID).map(row=>[String(row.USUARIO_ID),row]));
+    let targets=[];
+    if(alcance==='USUARIO'){
+      const target=userMap.get(String(data.USUARIO_ID||data.DESTINATARIO_USUARIO_ID||''));
+      if(!target)throw new Error('USUARIO_DESTINATARIO_NO_ENCONTRADO');
+      targets=[target];
+    }else if(alcance==='CONDUCTORES'){
+      targets=users.filter(row=>row.ROL_ID==='ROL-CONDUCTOR'||driverByUser.has(String(row.ID)));
+    }else if(alcance==='CONECTADOS'){
+      const limit=Date.now()-(config.ANTIGUEDAD_CONEXION_ACTIVA_MILISEGUNDOS||90000),ids=new Set(activeRows(localDb.connections).filter(row=>new Date(row.ULTIMA_CONEXION||0).getTime()>=limit&&row.ESTADO!=='Desconectado').map(row=>String(row.USUARIO_ID||'')).filter(Boolean));
+      targets=users.filter(row=>ids.has(String(row.ID)));
+    }else targets=users;
+    targets=[...new Map(targets.map(row=>[String(row.ID),row])).values()].slice(0,500);
+    if(!targets.length)throw new Error('SIN_DESTINATARIOS_PARA_EL_ALCANCE');
+    const requestId=String(data.SOLICITUD_CLIENTE_ID||id('AVC')).replace(/[^A-Za-z0-9_-]/g,'').slice(0,120),category=String(data.CATEGORIA||(tipoAviso==='ALERTA'?'Operación':'Información')).slice(0,80);
+    let sent=0,skipped=0;
+    if(tipoAviso==='NOTIFICACION'){
+      targets.forEach(target=>{
+        const driver=driverByUser.get(String(target.ID)),key=`AVISO-CONEXIONES-${requestId}-${target.ID}`;
+        if(activeRows(localDb.notifications).some(row=>row.CLAVE_UNICA===key&&row.DESTINATARIO_USUARIO_ID===target.ID)){skipped+=1;return;}
+        localCreateNotification({DESTINATARIO_USUARIO_ID:target.ID,DESTINATARIO_CONDUCTOR_ID:driver?.ID||'',TITULO:titulo,MENSAJE:mensaje,TIPO:category,PRIORIDAD:['Baja','Normal','Alta','Urgente'].includes(data.PRIORIDAD)?data.PRIORIDAD:'Normal',CLAVE_UNICA:key,CREADO_POR:user.ID});sent+=1;
+      });
+    }else{
+      targets.forEach(target=>{
+        const key=`AVISO-CONEXIONES-${requestId}-${target.ID}`;
+        if(activeRows(localDb.alerts).some(row=>row.CLAVE_UNICA===key)){skipped+=1;return;}
+        const now=iso();localDb.alerts.push({ID:id('ALT'),TIPO:category,NIVEL:['Info','Advertencia','Crítica'].includes(data.NIVEL)?data.NIVEL:'Advertencia',TITULO:titulo,MENSAJE:mensaje,MODULO:'CONEXIONES',REGISTRO_ID:target.ID,CLAVE_UNICA:key,LEIDA:'NO',USUARIO_ID:target.ID,FECHA_HORA:now,CREADO_EN:now,ACTUALIZADO_EN:now,ELIMINADO:'NO'});sent+=1;
+      });
+    }
+    audit(user,tipoAviso==='ALERTA'?'ENVIAR_ALERTA_CONEXIONES':'ENVIAR_NOTIFICACION_CONEXIONES','CONEXIONES',`Alcance: ${alcance}. Destinatarios: ${targets.length}. Enviados: ${sent}. Título: ${titulo}.`,requestId);
+    saveLocal();return{tipoAviso,alcance,destinatarios:targets.length,enviados:sent,omitidos:skipped,solicitudId:requestId};
+  }
   function localConnectionsOnline(payload={}){
     const user=requireLocalUser();
     requireLocalPermission(user,'CONEXIONES','LEER');
@@ -1375,7 +1443,7 @@
       alerts:{nombre:'Alertas',estado:'OK',detalle:`${activeRows(localDb.alerts).length} registros`},
       history:{nombre:'Historiales',estado:'OK',detalle:`${activeRows(localDb.history).length} eventos operativos · ${activeRows(localDb.checkins).length} check-ins`}
     };
-    return{version:'3.15.0',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
+    return{version:'3.17.0',fecha:iso(),correcto:Object.values(modules).every(item=>item.estado==='OK'),modules};
   }
   function localRepairSystem(){
     const user=requireLocalUser();requireLocalPermission(user,'CONFIGURACION','ACTUALIZAR');

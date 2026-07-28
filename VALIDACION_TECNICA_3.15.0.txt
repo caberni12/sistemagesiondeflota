@@ -1,0 +1,13 @@
+Sistema de Gestión de Flotas web 3.15.0
+
+Motor de rendimiento:
+- Agrupación de consultas idénticas.
+- Sin consultas de respaldo múltiples ante tiempo agotado.
+- Filtros inmediatos con sincronización silenciosa.
+- Renderizado diferencial de tabla, lista y seguimiento.
+- Mapa con reutilización de baldosas y dibujo agrupado.
+- Marcadores, círculos y rastros con detección de cambios.
+- Direcciones cacheadas por lote y presupuesto máximo de dos consultas nuevas.
+- Rastro de 40 posiciones actualizado incrementalmente desde caché.
+
+Resultado: APTO PARA PUBLICACIÓN.
